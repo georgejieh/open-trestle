@@ -3,12 +3,10 @@ package main
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
-	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -17,6 +15,7 @@ import (
 	"time"
 
 	"github.com/georgejieh/open-trestle/internal/evidence"
+	"github.com/georgejieh/open-trestle/internal/fileauthority"
 	"github.com/georgejieh/open-trestle/internal/scm"
 	"github.com/georgejieh/open-trestle/internal/syntaxworker"
 	"github.com/georgejieh/open-trestle/repoindex"
@@ -184,15 +183,16 @@ func (s *indexSession) commit(ctx context.Context, ref string) (evidence.Revisio
 	return evidence.NewRevisionIdentity(evidence.RevisionKindGitCommit, evidence.RevisionAlgorithm(s.algorithm), digest)
 }
 
-// build indexes a commit with a pool of syntax workers.
-func (s *indexSession) build(ctx context.Context, revision evidence.RevisionIdentity) (repoindex.Snapshot, error) {
+// builder returns a builder of a commit's tree with a pool of syntax
+// workers, which the returned function stops.
+func (s *indexSession) builder(revision evidence.RevisionIdentity) (repoindex.Builder, *repoindex.GitTree, func(), error) {
 	tree, err := repoindex.NewGitTree(s.store, revision)
 	if err != nil {
-		return repoindex.Snapshot{}, err
+		return repoindex.Builder{}, nil, nil, err
 	}
 	executable, err := os.Executable()
 	if err != nil {
-		return repoindex.Snapshot{}, err
+		return repoindex.Builder{}, nil, nil, err
 	}
 	command := []string{executable, "index", "worker"}
 	if cache, ok := s.compiledModuleFolder(); ok {
@@ -200,10 +200,19 @@ func (s *indexSession) build(ctx context.Context, revision evidence.RevisionIden
 	}
 	pool, err := syntaxworker.NewPool(syntaxworker.Config{Command: command, Environment: workerEnvironment()})
 	if err != nil {
+		return repoindex.Builder{}, nil, nil, err
+	}
+	return repoindex.Builder{Store: s.index, Analyzer: pool, Parallelism: pool.Workers()}, tree, pool.Close, nil
+}
+
+// build indexes a commit.
+func (s *indexSession) build(ctx context.Context, revision evidence.RevisionIdentity) (repoindex.Snapshot, error) {
+	b, tree, stop, err := s.builder(revision)
+	if err != nil {
 		return repoindex.Snapshot{}, err
 	}
-	defer pool.Close()
-	return repoindex.Builder{Store: s.index, Analyzer: pool, Parallelism: pool.Workers()}.Build(ctx, tree)
+	defer stop()
+	return b.Build(ctx, tree)
 }
 
 // compiledModuleFolder is the private folder for compiled grammar modules.
@@ -213,7 +222,7 @@ func (s *indexSession) compiledModuleFolder() (string, bool) {
 		return "", false
 	}
 	folder := filepath.Join(s.index.Directory(), "compiled")
-	if err := os.MkdirAll(folder, 0o700); err != nil {
+	if err := fileauthority.MkdirAllPrivate(folder); err != nil {
 		return "", false
 	}
 	return folder, true
@@ -230,21 +239,19 @@ func workerEnvironment() []string {
 	return environment
 }
 
-// ensureIndexed builds a commit that the index has no snapshot of, or whose
-// damaged records were removed.
+// ensureIndexed loads a commit's graph, building the commit first when the
+// index has no snapshot of it or its records are damaged.
 func (s *indexSession) ensureIndexed(ctx context.Context, revision evidence.RevisionIdentity, stderr io.Writer) (*repoindex.Graph, error) {
-	graph, err := s.index.Load(ctx, s.algorithm, revision.Digest())
-	if err == nil {
-		return graph, nil
-	}
-	if !errors.Is(err, repoindex.ErrNotIndexed) && !errors.Is(err, repoindex.ErrDamaged) {
+	b, tree, stop, err := s.builder(revision)
+	if err != nil {
 		return nil, err
 	}
-	fmt.Fprintf(stderr, "Indexing %s first.\n", shortCommit(revision.Digest()))
-	if _, err := s.build(ctx, revision); err != nil {
-		return nil, err
+	defer stop()
+	graph, built, err := b.Load(ctx, tree)
+	if built && err == nil {
+		fmt.Fprintf(stderr, "Indexed %s first.\n", shortCommit(revision.Digest()))
 	}
-	return s.index.Load(ctx, s.algorithm, revision.Digest())
+	return graph, err
 }
 
 func shortCommit(digest string) string { return digest[:min(12, len(digest))] }
@@ -329,212 +336,4 @@ func runIndexStatus(ctx context.Context, args []string, stdout, stderr io.Writer
 		fmt.Fprintln(stdout, line)
 	}
 	return 0
-}
-
-func writeIndexJSON(stdout, stderr io.Writer, value any) int {
-	encoder := json.NewEncoder(stdout)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(value); err != nil {
-		return indexFail(stderr, 1, "the result could not be written")
-	}
-	return 0
-}
-
-func runIndexQuery(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 {
-		writeIndexUsage(stderr)
-		return 2
-	}
-	kind := args[0]
-	f, positional, err := parseIndexFlags("query "+kind, args[1:], kind == "dependents")
-	wantArgs := 1
-	if kind == "dependents" {
-		wantArgs = 0
-	}
-	if err != nil || len(positional) != wantArgs || kind == "dependents" && f.base == "" {
-		writeIndexUsage(stderr)
-		return 2
-	}
-	switch kind {
-	case "definitions", "references", "tests", "imports", "dependents":
-	default:
-		fmt.Fprintf(stderr, "trestle index: unknown query %q\n", kind)
-		writeIndexUsage(stderr)
-		return 2
-	}
-	s, err := openIndexSession(ctx, f)
-	if err != nil {
-		return indexFail(stderr, 1, "%v", err)
-	}
-	defer s.close()
-	revision, err := s.commit(ctx, f.commit)
-	if err != nil {
-		return indexFail(stderr, 2, "--commit: %v", err)
-	}
-	graph, err := s.ensureIndexed(ctx, revision, stderr)
-	if err != nil {
-		return indexFail(stderr, 1, "%v", err)
-	}
-	if kind == "dependents" {
-		return runIndexDependents(ctx, s, f, graph, stdout, stderr)
-	}
-	return writeIndexJSON(stdout, stderr, indexQueryResult(graph, kind, positional[0]))
-}
-
-type symbolResult struct {
-	Definition repoindex.Symbol `json:"definition"`
-	References []repoindex.Use  `json:"references,omitempty"`
-	Tests      []repoindex.Use  `json:"tests,omitempty"`
-}
-
-// indexQueryResult answers a query. Every answer carries the graph's
-// coverage, since a file the index does not cover can hide a reference.
-func indexQueryResult(graph *repoindex.Graph, kind, argument string) any {
-	if kind == "imports" {
-		imports, unresolved, found := graph.Imports(argument)
-		importers, _ := graph.Importers(argument)
-		return struct {
-			Coverage   repoindex.GraphCoverage `json:"coverage"`
-			Found      bool                    `json:"found"`
-			Imports    []string                `json:"imports"`
-			Unresolved int                     `json:"unresolved"`
-			Importers  []string                `json:"importers"`
-		}{graph.Coverage(), found, imports, unresolved, importers}
-	}
-	results := []symbolResult{}
-	for _, d := range graph.Definitions(argument) {
-		r := symbolResult{Definition: d}
-		switch kind {
-		case "references":
-			r.References = graph.References(d.ID)
-		case "tests":
-			r.Tests = graph.TestReferences(d.ID)
-		}
-		results = append(results, r)
-	}
-	return struct {
-		Coverage    repoindex.GraphCoverage `json:"coverage"`
-		Definitions []symbolResult          `json:"definitions"`
-	}{graph.Coverage(), results}
-}
-
-// runIndexDependents computes the dependents of the change from --base to
-// --commit: the changed lines come from a diff of each changed file's base
-// and head blobs.
-func runIndexDependents(ctx context.Context, s *indexSession, f indexFlags, head *repoindex.Graph, stdout, stderr io.Writer) int {
-	baseRevision, err := s.commit(ctx, f.base)
-	if err != nil {
-		return indexFail(stderr, 2, "--base: %v", err)
-	}
-	base, err := s.ensureIndexed(ctx, baseRevision, stderr)
-	if err != nil {
-		return indexFail(stderr, 1, "%v", err)
-	}
-	changes, err := s.changes(ctx, baseRevision, base.Files(), head.Files())
-	if err != nil {
-		return indexFail(stderr, 1, "the change could not be read: %v", err)
-	}
-	return writeIndexJSON(stdout, stderr, repoindex.Dependents(head, base, changes, repoindex.DefaultDependentsLimits()))
-}
-
-// maxDiffBytes bounds the blob bytes a dependents query reads to find
-// changed lines; a modified file past it counts as changed throughout.
-const maxDiffBytes = 256 << 20
-
-// changes lists the files whose blob differs between two snapshots, with
-// the changed lines of each modified file. A blob that only moved to
-// another path is not a change. A file the diff cannot represent counts as
-// changed throughout.
-func (s *indexSession) changes(ctx context.Context, revision evidence.RevisionIdentity, base, head []repoindex.FileEntry) ([]repoindex.Change, error) {
-	whole := []repoindex.LineRange{{Start: 1, End: math.MaxInt32}}
-	baseObject, headObject := map[string]string{}, map[string]string{}
-	baseBlobs, headBlobs := map[string]bool{}, map[string]bool{}
-	for _, f := range base {
-		baseObject[f.Path], baseBlobs[f.Object] = f.Object, true
-	}
-	for _, f := range head {
-		headObject[f.Path], headBlobs[f.Object] = f.Object, true
-	}
-	changes, pairs := []repoindex.Change{}, []string{}
-	for _, f := range head {
-		object, existed := baseObject[f.Path]
-		switch {
-		case !existed && !baseBlobs[f.Object]:
-			changes = append(changes, repoindex.Change{Path: f.Path, HeadLines: whole})
-		case existed && object != f.Object:
-			changes = append(changes, repoindex.Change{Path: f.Path, BasePath: f.Path, HeadLines: whole, BaseLines: whole})
-			pairs = append(pairs, object, f.Object)
-		}
-	}
-	modified := len(changes)
-	for _, f := range base {
-		if _, kept := headObject[f.Path]; !kept && !headBlobs[f.Object] {
-			changes = append(changes, repoindex.Change{BasePath: f.Path, BaseLines: whole})
-		}
-	}
-	if err := s.diffAll(ctx, revision, changes[:modified], pairs); err != nil {
-		return nil, err
-	}
-	sort.Slice(changes, func(i, j int) bool { return changes[i].Path+changes[i].BasePath < changes[j].Path+changes[j].BasePath })
-	return changes, ctx.Err()
-}
-
-// diffAll reads the base and head blob of each modified file, given in
-// pairs, in shared acquisitions of the object store, and fills in the
-// changed lines of the modified files among changes.
-func (s *indexSession) diffAll(ctx context.Context, revision evidence.RevisionIdentity, changes []repoindex.Change, pairs []string) error {
-	tree, err := repoindex.NewGitTree(s.store, revision)
-	if err != nil {
-		return err
-	}
-	modified := []*repoindex.Change{}
-	for i := range changes {
-		if changes[i].BasePath != "" {
-			modified = append(modified, &changes[i])
-		}
-	}
-	next, read := 0, int64(0)
-	var baseContent []byte
-	baseRead := false
-	return tree.ReadBlobs(ctx, func() (string, bool) {
-		if next >= len(pairs) || read >= maxDiffBytes && next%2 == 0 {
-			return "", false
-		}
-		next++
-		return pairs[next-1], true
-	}, func(content []byte, err error) error {
-		read += int64(len(content))
-		if next%2 == 1 {
-			baseContent, baseRead = content, err == nil
-			return ctx.Err()
-		}
-		c := modified[next/2-1]
-		if baseRead && err == nil {
-			if headLines, baseLines, ok := diffLines(c.Path, baseContent, content); ok {
-				c.HeadLines, c.BaseLines = headLines, baseLines
-			}
-		}
-		return ctx.Err()
-	})
-}
-
-// diffLines returns the changed head and base lines of a modified file.
-func diffLines(path string, baseContent, headContent []byte) (head, base []repoindex.LineRange, ok bool) {
-	patch, err := evidence.GenerateUnifiedFileDiff(path, baseContent, headContent)
-	if err != nil {
-		return nil, nil, false
-	}
-	_, lineMap, err := evidence.ParseUnifiedFileDiff(path, baseContent, headContent, patch)
-	if err != nil {
-		return nil, nil, false
-	}
-	for _, hunk := range lineMap.Hunks() {
-		if n := hunk.HeadLineCount(); n > 0 {
-			head = append(head, repoindex.LineRange{Start: hunk.HeadStartLine(), End: hunk.HeadStartLine() + n - 1})
-		}
-		if n := hunk.BaseLineCount(); n > 0 {
-			base = append(base, repoindex.LineRange{Start: hunk.BaseStartLine(), End: hunk.BaseStartLine() + n - 1})
-		}
-	}
-	return head, base, true
 }

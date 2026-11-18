@@ -2,14 +2,10 @@ package repoindex
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 
@@ -26,9 +22,10 @@ var (
 	ErrBusy = errors.New("repository index is in use by another process")
 	// ErrNotIndexed reports a commit the index has no snapshot of.
 	ErrNotIndexed = errors.New("commit is not indexed")
-	// ErrDamaged reports a damaged record whose segment was removed; a
-	// build of the commit analyses its files again.
-	ErrDamaged = errors.New("a damaged index file was removed; the commit must be indexed again")
+	// ErrDamaged reports a snapshot whose records are damaged or missing.
+	// The damaged segment is removed, so a build of the commit analyses
+	// those files again; Builder.Load does that.
+	ErrDamaged = errors.New("index records of the commit are damaged or missing")
 
 	errCorrupt = errors.New("repository index file is corrupt")
 	errStale   = errors.New("repository index file has another analysis identity")
@@ -57,12 +54,12 @@ const (
 	compactionSlack = 64 << 20
 )
 
-// Store is an index folder. Every file in it is a 0600 regular file owned
-// by this account in a 0700 folder; segment files hold blob records and
-// snapshot files list a commit's files. Every file starts with the format
-// and the analysis identity, so a file of another format or analyzer build
-// is removed when the store is opened. One process uses the folder at a
-// time.
+// Store is an index folder. It is private to this account (mode 0700 on
+// Unix, an owner-only access list on Windows), and so is every file in it:
+// segment files hold blob records and snapshot files list a commit's files.
+// Every file starts with the format and the analysis identity, so a file of
+// another format or analyzer build is removed when the store is opened. One
+// process uses the folder at a time.
 type Store struct {
 	dir      string
 	identity [32]byte
@@ -102,7 +99,7 @@ type session struct {
 
 func (s *Store) prepare(create bool) (*fileauthority.DirectoryPin, error) {
 	if create {
-		if err := os.MkdirAll(s.dir, 0o700); err != nil {
+		if err := fileauthority.MkdirAllPrivate(s.dir); err != nil {
 			return nil, fmt.Errorf("%w: cannot create %s", ErrUnavailable, s.dir)
 		}
 	}
@@ -110,8 +107,8 @@ func (s *Store) prepare(create bool) (*fileauthority.DirectoryPin, error) {
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, ErrNotIndexed
 	}
-	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0o700 {
-		return nil, fmt.Errorf("%w: %s must be a private folder (mode 0700)", ErrUnavailable, s.dir)
+	if err != nil || !fileauthority.PrivateDirectory(s.dir, info) {
+		return nil, fmt.Errorf("%w: %s must be a private folder (%s)", ErrUnavailable, s.dir, fileauthority.PrivateDirectoryRequirement(info))
 	}
 	pin, err := fileauthority.PinDirectory(s.dir)
 	if err != nil {
@@ -183,8 +180,8 @@ func (sess *session) scan() error {
 		name := entry.Name()
 		switch {
 		case strings.HasPrefix(name, "tmp-"):
-			if err := sess.root.Remove(name); err != nil {
-				return ErrUnavailable
+			if err := sess.remove(name); err != nil {
+				return err
 			}
 		case strings.HasPrefix(name, "seg-"):
 			if err := sess.addSegment(name); err != nil {
@@ -201,11 +198,11 @@ func (sess *session) scan() error {
 	return nil
 }
 
-// protected checks that a name in the folder is a protected file.
+// protected checks that a name in the folder is a private regular file.
 func (sess *session) protected(name string) (os.FileInfo, error) {
 	info, err := sess.root.Lstat(name)
-	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 || !fileauthority.TrustedOwner(info) {
-		return nil, fmt.Errorf("%w: %s is not a protected file (a 0600 regular file owned by this account)", ErrUnavailable, name)
+	if err != nil || !fileauthority.PrivateFile(filepath.Join(sess.store.dir, name), info) {
+		return nil, fmt.Errorf("%w: %s is not %s", ErrUnavailable, name, fileauthority.PrivateFileRequirement())
 	}
 	return info, nil
 }
@@ -220,7 +217,7 @@ func (sess *session) openProtected(name string) (*os.File, os.FileInfo, error) {
 		return nil, nil, ErrUnavailable
 	}
 	opened, err := file.Stat()
-	if err != nil || !os.SameFile(before, opened) {
+	if err != nil || !os.SameFile(before, opened) || !fileauthority.PrivateOpenFile(file, opened) {
 		_ = file.Close()
 		return nil, nil, ErrUnavailable
 	}
@@ -249,23 +246,6 @@ func (sess *session) addSegment(name string) error {
 	return nil
 }
 
-// removeSegmentOf removes the segment holding a record and forgets its
-// records.
-func (sess *session) removeSegmentOf(key Key) error {
-	l, ok := sess.records[key]
-	if !ok {
-		return errCorrupt
-	}
-	seg := sess.segments[l.segment]
-	for k, other := range sess.records {
-		if other.segment == l.segment {
-			delete(sess.records, k)
-		}
-	}
-	_ = seg.file.Close()
-	return sess.remove(seg.name)
-}
-
 func (sess *session) remove(name string) error {
 	if err := sess.root.Remove(name); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("%w: cannot remove %s", ErrUnavailable, name)
@@ -281,6 +261,13 @@ func (sess *session) close() {
 	_ = sess.lock.Close()
 }
 
+func (sess *session) syncFolder() error {
+	if err := fileauthority.SyncDirectory(sess.store.dir); err != nil {
+		return fmt.Errorf("%w: cannot sync %s", ErrUnavailable, sess.store.dir)
+	}
+	return nil
+}
+
 func (sess *session) has(key Key) bool {
 	_, ok := sess.records[key]
 	return ok
@@ -288,279 +275,41 @@ func (sess *session) has(key Key) bool {
 
 func (sess *session) recordBytes(key Key) int64 { return sess.records[key].length }
 
+// record reads a record. A record that is missing, or damaged, is damage:
+// see damaged.
 func (sess *session) record(key Key) (blobRecord, error) {
 	l, ok := sess.records[key]
 	if !ok {
-		return blobRecord{}, errCorrupt
+		return blobRecord{}, ErrDamaged
 	}
 	data, err := readRecord(sess.segments[l.segment].file, l)
-	if err != nil {
-		return blobRecord{}, err
+	if err == nil {
+		var record blobRecord
+		if record, err = decodeBlobRecord(data); err == nil {
+			return record, nil
+		}
 	}
-	return decodeBlobRecord(data)
+	return blobRecord{}, sess.damaged(key)
 }
 
-// createTemporary creates a protected temporary file in the folder.
-func (sess *session) createTemporary() (*os.File, string, error) {
-	var random [12]byte
-	_, _ = rand.Read(random[:])
-	name := "tmp-" + hex.EncodeToString(random[:])
-	file, err := sess.root.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return nil, "", fmt.Errorf("%w: cannot write in %s", ErrUnavailable, sess.store.dir)
+// damaged handles a record that failed its check: it removes the segment
+// holding it and forgets that segment's records, so that the next build
+// analyses their files again, and reports ErrDamaged. Every reader of
+// records takes this one path.
+func (sess *session) damaged(key Key) error {
+	l, ok := sess.records[key]
+	if !ok {
+		return ErrDamaged
 	}
-	if err := file.Chmod(0o600); err != nil {
-		_ = file.Close()
-		_ = sess.root.Remove(name)
-		return nil, "", ErrUnavailable
+	seg := sess.segments[l.segment]
+	for k, other := range sess.records {
+		if other.segment == l.segment {
+			delete(sess.records, k)
+		}
 	}
-	return file, name, nil
-}
-
-// install renames a finished temporary file into place.
-func (sess *session) install(temporary, name string) error {
-	if sess.pin.Recheck() != nil {
-		return ErrUnavailable
-	}
-	if err := sess.root.Rename(temporary, name); err != nil {
-		return fmt.Errorf("%w: cannot install %s", ErrUnavailable, name)
-	}
-	return nil
-}
-
-func (sess *session) syncFolder() error {
-	folder, err := sess.root.Open(".")
-	if err != nil {
-		return ErrUnavailable
-	}
-	defer folder.Close()
-	if err := folder.Sync(); err != nil && !errors.Is(err, os.ErrInvalid) {
-		return fmt.Errorf("%w: cannot sync %s", ErrUnavailable, sess.store.dir)
-	}
-	return nil
-}
-
-func (sess *session) newSegment() (*segmentWriter, error) {
-	file, name, err := sess.createTemporary()
-	if err != nil {
-		return nil, err
-	}
-	w, err := newSegmentWriter(file, name, sess.store.identity)
-	if err != nil {
-		sess.discard(&segmentWriter{file: file, name: name})
-		return nil, ErrUnavailable
-	}
-	return w, nil
-}
-
-// discard removes an unfinished segment.
-func (sess *session) discard(w *segmentWriter) {
-	_ = w.file.Close()
-	_ = sess.root.Remove(w.name)
-}
-
-// installSegment finishes a segment and adds its records to the session.
-func (sess *session) installSegment(w *segmentWriter) error {
-	if len(w.keys) == 0 {
-		sess.discard(w)
-		return nil
-	}
-	if err := w.finish(); err != nil {
-		sess.discard(w)
-		return fmt.Errorf("%w: cannot write a segment", ErrUnavailable)
-	}
-	if err := w.file.Close(); err != nil {
-		_ = sess.root.Remove(w.name)
-		return ErrUnavailable
-	}
-	var random [8]byte
-	_, _ = rand.Read(random[:])
-	name := "seg-" + hex.EncodeToString(random[:]) + ".otx"
-	if err := sess.install(w.name, name); err != nil {
-		_ = sess.root.Remove(w.name)
+	_ = seg.file.Close()
+	if err := sess.remove(seg.name); err != nil {
 		return err
 	}
-	return sess.addSegment(name)
-}
-
-func snapshotName(algorithm, commit string) string {
-	return "snap-" + algorithm + "-" + commit + ".otx"
-}
-
-// writeSnapshot installs a snapshot, replacing one of the same commit.
-func (sess *session) writeSnapshot(s Snapshot) error {
-	content := encodeSnapshot(s, sess.store.identity)
-	if len(content) > maxSnapshotFileBytes {
-		return fmt.Errorf("%w: the snapshot is larger than %d bytes", ErrUnavailable, maxSnapshotFileBytes)
-	}
-	file, temporary, err := sess.createTemporary()
-	if err != nil {
-		return err
-	}
-	_, werr := file.Write(content)
-	serr := file.Sync()
-	cerr := file.Close()
-	if werr != nil || serr != nil || cerr != nil {
-		_ = sess.root.Remove(temporary)
-		return fmt.Errorf("%w: cannot write a snapshot", ErrUnavailable)
-	}
-	name := snapshotName(s.Algorithm, s.Commit)
-	if err := sess.install(temporary, name); err != nil {
-		_ = sess.root.Remove(temporary)
-		return err
-	}
-	sess.snapshots[name] = int64(len(content))
-	return nil
-}
-
-// readSnapshot reads a snapshot file. A stale or corrupt one is removed and
-// reported as missing.
-func (sess *session) readSnapshot(name string) (Snapshot, bool, error) {
-	if _, ok := sess.snapshots[name]; !ok {
-		return Snapshot{}, false, nil
-	}
-	file, info, err := sess.openProtected(name)
-	if err != nil {
-		return Snapshot{}, false, err
-	}
-	defer file.Close()
-	if info.Size() > maxSnapshotFileBytes {
-		return Snapshot{}, false, fmt.Errorf("%w: %s is larger than %d bytes", ErrUnavailable, name, maxSnapshotFileBytes)
-	}
-	data, err := io.ReadAll(io.LimitReader(file, maxSnapshotFileBytes+1))
-	if err != nil || int64(len(data)) != info.Size() {
-		return Snapshot{}, false, ErrUnavailable
-	}
-	snapshot, err := decodeSnapshot(data, sess.store.identity)
-	if errors.Is(err, errCorrupt) || errors.Is(err, errStale) || err == nil && name != snapshotName(snapshot.Algorithm, snapshot.Commit) {
-		delete(sess.snapshots, name)
-		return Snapshot{}, false, sess.remove(name)
-	}
-	return snapshot, err == nil, err
-}
-
-// allSnapshots reads every snapshot, newest build first.
-func (sess *session) allSnapshots() ([]Snapshot, error) {
-	names := make([]string, 0, len(sess.snapshots))
-	for name := range sess.snapshots {
-		names = append(names, name)
-	}
-	slices.Sort(names)
-	out := []Snapshot{}
-	for _, name := range names {
-		s, ok, err := sess.readSnapshot(name)
-		if err != nil {
-			return nil, err
-		}
-		if ok {
-			out = append(out, s)
-		}
-	}
-	slices.SortStableFunc(out, func(a, b Snapshot) int { return b.BuiltAt.Compare(a.BuiltAt) })
-	return out, nil
-}
-
-// liveRecords returns the keys of the records the snapshots use that the
-// store holds, and their bytes.
-func (sess *session) liveRecords(snapshots []Snapshot) (map[Key]bool, int64) {
-	live := map[Key]bool{}
-	var bytes int64
-	for _, s := range snapshots {
-		for _, f := range s.Files {
-			if f.Status != StatusIndexed && f.Status != StatusBinary {
-				continue
-			}
-			key := s.key(f)
-			if l, ok := sess.records[key]; ok && !live[key] {
-				live[key] = true
-				bytes += l.length
-			}
-		}
-	}
-	return live, bytes
-}
-
-// evict applies the store limits: it keeps the newest snapshots up to
-// MaxSnapshots, drops the oldest while their records pass MaxBytes (never
-// the newest), and rewrites the segments when they hold records no snapshot
-// uses or the files pass MaxBytes.
-func (sess *session) evict() error {
-	snapshots, err := sess.allSnapshots()
-	if err != nil {
-		return err
-	}
-	limits := sess.store.limits
-	keep := min(len(snapshots), limits.MaxSnapshots)
-	live, liveBytes := sess.liveRecords(snapshots[:keep])
-	for keep > 1 && liveBytes+sess.snapshotBytes(snapshots[:keep]) > limits.MaxBytes {
-		keep--
-		live, liveBytes = sess.liveRecords(snapshots[:keep])
-	}
-	for _, s := range snapshots[keep:] {
-		name := snapshotName(s.Algorithm, s.Commit)
-		delete(sess.snapshots, name)
-		if err := sess.remove(name); err != nil {
-			return err
-		}
-	}
-	var segmentBytes int64
-	for _, seg := range sess.segments {
-		segmentBytes += seg.size
-	}
-	if segmentBytes+sess.snapshotBytes(snapshots[:keep]) <= limits.MaxBytes && len(sess.segments) <= maxSegments && segmentBytes <= liveBytes+compactionSlack {
-		return sess.syncFolder()
-	}
-	return sess.compact(live)
-}
-
-func (sess *session) snapshotBytes(snapshots []Snapshot) int64 {
-	var n int64
-	for _, s := range snapshots {
-		n += sess.snapshots[snapshotName(s.Algorithm, s.Commit)]
-	}
-	return n
-}
-
-// compact writes the live records to one new segment and removes the rest.
-func (sess *session) compact(live map[Key]bool) error {
-	keys := make([]Key, 0, len(live))
-	for key := range live {
-		keys = append(keys, key)
-	}
-	slices.SortFunc(keys, func(a, b Key) int {
-		x, y := sess.records[a], sess.records[b]
-		if x.segment != y.segment {
-			return x.segment - y.segment
-		}
-		return int(x.offset - y.offset)
-	})
-	old := sess.segments
-	w, err := sess.newSegment()
-	if err != nil {
-		return err
-	}
-	for _, key := range keys {
-		l := sess.records[key]
-		data, err := readRecord(old[l.segment].file, l)
-		if err == nil {
-			err = w.add(key, l.flags, data)
-		}
-		if err != nil {
-			sess.discard(w)
-			return fmt.Errorf("%w: cannot compact the index", ErrUnavailable)
-		}
-	}
-	oldRecords := sess.records
-	sess.segments, sess.records = nil, map[Key]location{}
-	if err := sess.installSegment(w); err != nil {
-		sess.segments, sess.records = old, oldRecords
-		return err
-	}
-	for _, seg := range old {
-		_ = seg.file.Close()
-		if err := sess.remove(seg.name); err != nil {
-			return err
-		}
-	}
-	return sess.syncFolder()
+	return ErrDamaged
 }

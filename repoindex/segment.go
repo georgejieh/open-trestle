@@ -27,6 +27,15 @@ const (
 
 var crcTable = crc32.MakeTable(crc32.Castagnoli)
 
+// maxDirectoryBytes and maxRecordBytes bound what one read of a segment
+// allocates, whatever lengths the file claims: a directory of a million
+// records, and a record of the most an analysis within the default limits
+// encodes to, many times over.
+const (
+	maxDirectoryBytes = 64 << 20
+	maxRecordBytes    = 64 << 20
+)
+
 // location is where a record lies in a segment.
 type location struct {
 	segment int
@@ -64,6 +73,9 @@ func newSegmentWriter(file *os.File, name string, identity [32]byte) (*segmentWr
 func (w *segmentWriter) add(key Key, flags byte, record []byte) error {
 	if _, ok := w.entries[key]; ok {
 		return nil
+	}
+	if len(record) > maxRecordBytes {
+		return errCorrupt
 	}
 	if _, err := w.out.Write(record); err != nil {
 		return err
@@ -121,7 +133,7 @@ func readSegmentDirectory(file *os.File, size int64, identity [32]byte, segment 
 		return nil, errCorrupt
 	}
 	at, length := binary.LittleEndian.Uint64(trailer), binary.LittleEndian.Uint64(trailer[8:])
-	if at < uint64(segmentHeader) || length > uint64(size) || at+length != uint64(size)-uint64(segmentTrailer) {
+	if at < uint64(segmentHeader) || length > maxDirectoryBytes || length > uint64(size) || at+length != uint64(size)-uint64(segmentTrailer) {
 		return nil, errCorrupt
 	}
 	directory := make([]byte, length)
@@ -139,7 +151,7 @@ func readSegmentDirectory(file *os.File, size int64, identity [32]byte, segment 
 		key := Key(raw)
 		flags := r.Byte()
 		l := location{segment: segment, offset: int64(r.Uvarint()), length: int64(r.Uvarint()), crc: r.Uint32(), flags: flags}
-		if r.Err() != nil || flags > recordFlags || l.offset < int64(segmentHeader) || l.offset > int64(at) || l.length < 1 || l.length > int64(at)-l.offset {
+		if r.Err() != nil || flags > recordFlags || l.offset < int64(segmentHeader) || l.offset > int64(at) || l.length < 1 || l.length > maxRecordBytes || l.length > int64(at)-l.offset {
 			return nil, errCorrupt
 		}
 		entries[key] = l

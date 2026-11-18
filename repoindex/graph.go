@@ -1,9 +1,8 @@
 package repoindex
 
 import (
-	"context"
-	"errors"
 	"path"
+	"slices"
 	"strings"
 
 	"github.com/georgejieh/open-trestle/syntaxanalysis"
@@ -12,7 +11,7 @@ import (
 // Graph is the symbol graph of one snapshot, built in memory from the
 // stored records. Its layout is compact so that a repository of a hundred
 // thousand files fits: every name is interned once, records refer to names
-// and files by number, and the name indexes are flat posting lists.
+// and files by number, and the indexes are flat posting lists.
 type Graph struct {
 	coverage GraphCoverage
 	files    []graphFile
@@ -22,22 +21,25 @@ type Graph struct {
 	defs     []graphDef
 	refs     []graphRef
 	imports  []graphImport
-	// defsByName and refsByName list definitions and references by name.
-	defsByName, refsByName postings
+	// defsByName lists definitions by name and refsByName references by
+	// name; refsByUnit lists the references of each unit sorted by name.
+	defsByName, refsByName, refsByUnit postings
 	// units group files that see each other's definitions without an
-	// import: a directory for languages with packages, the file otherwise.
+	// import: a package for languages with packages, the file otherwise.
 	unitFiles postings
 	units     map[string]int32
+	// unitPackage is the declared name of each Go package unit, or 0.
+	unitPackage []int32
 	// goModules are the snapshot's Go modules, which map import paths to
 	// directories.
 	goModules []GoModule
-	// goImports maps, per Go file, the name of each imported package to
-	// its unit, or -1 for a package outside the repository.
+	// goImports maps, per Go file, the name each imported package binds to
+	// its unit, or to -1 for a package outside the repository.
 	goImports map[int32]map[string]int32
-	// importEdges lists, per file, the units its imports resolve to, and
-	// importers, per unit, the files that import it.
-	importEdges, importers postings
-	unresolved             []int32
+	// importUnits and importFiles list, per file, the units and the files
+	// its imports resolve to; unitImporters and fileImporters reverse them.
+	importUnits, importFiles, unitImporters, fileImporters postings
+	unresolved                                             []int32
 }
 
 // span is a half-open range of a record slice.
@@ -64,6 +66,16 @@ func (r range32) Range() syntaxanalysis.Range {
 	return syntaxanalysis.Range{StartByte: int(r.startByte), EndByte: int(r.endByte),
 		Start: syntaxanalysis.Position{Line: int(r.startLine), Column: int(r.startColumn)},
 		End:   syntaxanalysis.Position{Line: int(r.endLine), Column: int(r.endColumn)}}
+}
+
+// lines returns the first and last line of a range. A range that ends at
+// column 1 ends on the line before, after its final newline.
+func (r range32) lines() (int32, int32) {
+	end := r.endLine
+	if r.endColumn == 1 && end > r.startLine {
+		end--
+	}
+	return r.startLine, end
 }
 
 type graphDef struct {
@@ -120,6 +132,10 @@ func buildPostings(keys int, n int, keyOf func(int) int32, valueOf func(int) int
 	return postings{offsets: offsets, values: values}
 }
 
+func newGraph(s Snapshot) *Graph {
+	return &Graph{coverage: newCoverage(s), byPath: map[string]int32{}, nameIDs: map[string]int32{}, names: []syntaxanalysis.Text{{}}, goModules: s.Modules}
+}
+
 func (g *Graph) intern(t syntaxanalysis.Text) int32 {
 	v := t.Untrusted()
 	if v == "" {
@@ -134,91 +150,6 @@ func (g *Graph) intern(t syntaxanalysis.Text) int32 {
 	return id
 }
 
-// Snapshot returns the snapshot of an indexed commit.
-func (s *Store) Snapshot(ctx context.Context, algorithm, commit string) (Snapshot, error) {
-	sess, err := s.open(ctx, false)
-	if err != nil {
-		return Snapshot{}, err
-	}
-	defer sess.close()
-	return sess.snapshot(algorithm, commit)
-}
-
-func (sess *session) snapshot(algorithm, commit string) (Snapshot, error) {
-	snapshot, ok, err := sess.readSnapshot(snapshotName(algorithm, commit))
-	if err == nil && !ok {
-		err = ErrNotIndexed
-	}
-	return snapshot, err
-}
-
-// Load builds the graph of an indexed commit.
-func (s *Store) Load(ctx context.Context, algorithm, commit string) (*Graph, error) {
-	sess, err := s.open(ctx, false)
-	if err != nil {
-		return nil, err
-	}
-	defer sess.close()
-	snapshot, err := sess.snapshot(algorithm, commit)
-	if err != nil {
-		return nil, err
-	}
-	g := newGraph(snapshot)
-	for i, f := range snapshot.Files {
-		if i%1024 == 0 && ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		var analysis *syntaxanalysis.FileAnalysis
-		if f.Status == StatusIndexed {
-			key := snapshot.key(f)
-			record, err := sess.record(key)
-			if err == nil && !record.binary {
-				var decoded syntaxanalysis.FileAnalysis
-				if decoded, err = record.decode(f.Path); err == nil {
-					analysis = &decoded
-				}
-			}
-			if errors.Is(err, errCorrupt) {
-				// The next build analyses the files of a removed segment again.
-				if sess.removeSegmentOf(key) == nil {
-					return nil, ErrDamaged
-				}
-			}
-			if err != nil {
-				return nil, ErrUnavailable
-			}
-		}
-		g.add(f, analysis)
-	}
-	g.finish()
-	return g, nil
-}
-
-func newGraph(s Snapshot) *Graph {
-	coverage := GraphCoverage{Commit: s.Commit, Coverage: s.Coverage, Statuses: map[Status]int{}}
-	for _, f := range s.Files {
-		coverage.Statuses[f.Status]++
-	}
-	coverage.Complete = !s.Coverage.TreeTruncated && s.Coverage.InvalidPaths == 0
-	for _, status := range []Status{StatusUnavailable, StatusFileLimit, StatusByteLimit, StatusTimeLimit, StatusStoreLimit, StatusFailed} {
-		coverage.Complete = coverage.Complete && coverage.Statuses[status] == 0
-	}
-	return &Graph{coverage: coverage, byPath: map[string]int32{}, nameIDs: map[string]int32{}, names: []syntaxanalysis.Text{{}}, goModules: s.Modules}
-}
-
-// GraphCoverage says how much of a commit a graph covers. Complete is false
-// when the tree was cut, a path was left out, or a file that should have an
-// analysis has none: a reference in such a file is not seen.
-type GraphCoverage struct {
-	Commit   string         `json:"commit"`
-	Complete bool           `json:"complete"`
-	Statuses map[Status]int `json:"files_by_status"`
-	Coverage Coverage       `json:"build"`
-}
-
-// Coverage returns what the graph covers.
-func (g *Graph) Coverage() GraphCoverage { return g.coverage }
-
 // add appends a file and its analysis. Record indices of the analysis
 // become indices into the graph's slices.
 func (g *Graph) add(f FileEntry, a *syntaxanalysis.FileAnalysis) {
@@ -230,6 +161,7 @@ func (g *Graph) add(f FileEntry, a *syntaxanalysis.FileAnalysis) {
 		gf.analyzer, gf.gaps = a.Analyzer, a.Gaps
 		gf.entry.Language = a.Language
 		gf.family = familyOf(a.Language)
+		g.coverage.addGaps(a.Gaps)
 		global := func(i int) int32 {
 			if i < 0 {
 				return -1
@@ -270,10 +202,43 @@ func (g *Graph) finish() {
 		f.unit = id
 	}
 	g.unitFiles = buildPostings(len(g.units), len(g.files), func(i int) int32 { return g.files[i].unit }, func(i int) int32 { return int32(i) })
+	// refsByName lists references in name order within each name, so the
+	// references of a unit come out sorted by name.
+	byName := g.refsByName.values
+	g.refsByUnit = buildPostings(len(g.units), len(byName), func(i int) int32 { return g.files[g.refs[byName[i]].file].unit }, func(i int) int32 { return byName[i] })
+	g.unitPackage = make([]int32, len(g.units))
+	for i, f := range g.files {
+		if f.family.name == "go" && g.unitPackage[f.unit] == 0 && !strings.HasSuffix(f.entry.Path, "_test.go") {
+			g.unitPackage[f.unit] = g.declaredPackage(int32(i))
+		}
+	}
 	g.resolveImports()
 }
 
+// refsIn returns the references of a unit that have a name.
+func (g *Graph) refsIn(unit, name int32) []int32 {
+	refs := g.refsByUnit.get(unit)
+	lo, _ := slices.BinarySearchFunc(refs, name, func(r, n int32) int { return int(g.refs[r].name - n) })
+	hi := lo
+	for hi < len(refs) && g.refs[refs[hi]].name == name {
+		hi++
+	}
+	return refs[lo:hi]
+}
+
 func unitKey(familyName, scope string) string { return "unit\x00" + familyName + "\x00" + scope }
+
+// declaredPackage returns the name of the first top-level module
+// definition of a file: its package or namespace declaration.
+func (g *Graph) declaredPackage(file int32) int32 {
+	f := g.files[file]
+	for i := f.defs.start; i < f.defs.end; i++ {
+		if g.defs[i].kind == syntaxanalysis.KindModule && g.defs[i].parent < 0 {
+			return g.defs[i].name
+		}
+	}
+	return 0
+}
 
 // packageScope names the package of a file of a language with packages:
 // the declared package or namespace for Java, C# and PHP (the first one a
@@ -282,81 +247,9 @@ func (g *Graph) packageScope(file int32) string {
 	f := g.files[file]
 	switch f.family.name {
 	case "jvm", "dotnet", "php":
-		for i := f.defs.start; i < f.defs.end; i++ {
-			if g.defs[i].kind == syntaxanalysis.KindModule && g.defs[i].parent < 0 {
-				return "pkg:" + g.names[g.defs[i].name].Untrusted()
-			}
+		if name := g.declaredPackage(file); name != 0 {
+			return "pkg:" + g.names[name].Untrusted()
 		}
 	}
 	return "dir:" + path.Dir(f.entry.Path)
-}
-
-// Files returns every file of the graph in tree order.
-func (g *Graph) Files() []FileEntry {
-	out := make([]FileEntry, len(g.files))
-	for i, f := range g.files {
-		out[i] = f.entry
-	}
-	return out
-}
-
-// Symbol is a definition. ID identifies it within its graph.
-type Symbol struct {
-	ID            SymbolID                      `json:"-"`
-	Path          string                        `json:"path"`
-	Role          Role                          `json:"role"`
-	Language      syntaxanalysis.Language       `json:"language"`
-	Kind          syntaxanalysis.DefinitionKind `json:"kind"`
-	Name          syntaxanalysis.Text           `json:"name"`
-	QualifiedName syntaxanalysis.Text           `json:"qualified_name"`
-	Container     syntaxanalysis.Text           `json:"container,omitzero"`
-	Exported      bool                          `json:"exported"`
-	Range         syntaxanalysis.Range          `json:"range"`
-	NameRange     syntaxanalysis.Range          `json:"name_range"`
-}
-
-// SymbolID identifies a definition within one graph.
-type SymbolID int32
-
-func (g *Graph) symbol(i int32) Symbol {
-	d := g.defs[i]
-	f := g.files[d.file]
-	return Symbol{ID: SymbolID(i), Path: f.entry.Path, Role: f.entry.Role, Language: f.entry.Language, Kind: d.kind,
-		Name: g.names[d.name], QualifiedName: g.qualifiedName(i), Container: g.names[d.container],
-		Exported: d.exported, Range: d.rng.Range(), NameRange: d.nameRange.Range()}
-}
-
-func (g *Graph) qualifiedName(i int32) syntaxanalysis.Text {
-	parts := []string{}
-	for depth := 0; i >= 0 && depth < 256; i, depth = g.defs[i].parent, depth+1 {
-		parts = append(parts, g.names[g.defs[i].name].Untrusted())
-	}
-	for l, r := 0, len(parts)-1; l < r; l, r = l+1, r-1 {
-		parts[l], parts[r] = parts[r], parts[l]
-	}
-	return syntaxanalysis.NewText(strings.Join(parts, "."))
-}
-
-// Definitions returns the definitions with exactly this name, in tree
-// order.
-func (g *Graph) Definitions(name string) []Symbol {
-	id, ok := g.nameIDs[name]
-	if !ok {
-		return []Symbol{}
-	}
-	out := []Symbol{}
-	for _, i := range g.defsByName.get(id) {
-		out = append(out, g.symbol(i))
-	}
-	return out
-}
-
-// lines returns the first and last line of a range. A range that ends at
-// column 1 ends on the line before, after its final newline.
-func (r range32) lines() (int32, int32) {
-	end := r.endLine
-	if r.endColumn == 1 && end > r.startLine {
-		end--
-	}
-	return r.startLine, end
 }

@@ -47,6 +47,13 @@ func familyOf(language syntaxanalysis.Language) family {
 	return family{}
 }
 
+// resolution is what an import names: whole units, as a Go or C# package
+// import or a Java wildcard does, or single files.
+type resolution struct {
+	files []int32
+	unit  bool
+}
+
 // resolver finds the files an import names.
 type resolver struct {
 	g      *Graph
@@ -68,76 +75,28 @@ func (g *Graph) newResolver() *resolver {
 	return r
 }
 
-// resolveImports records, per file, the units its imports resolve to and
-// the number of imports that resolve to no file of the repository.
-func (g *Graph) resolveImports() {
-	r := g.newResolver()
-	type edge struct{ file, unit int32 }
-	edges := []edge{}
-	g.goImports = map[int32]map[string]int32{}
-	g.unresolved = make([]int32, len(g.files))
-	for i, f := range g.files {
-		seen := map[int32]bool{}
-		for k := f.imports.start; k < f.imports.end; k++ {
-			targets := r.resolve(int32(i), g.imports[k])
-			if len(targets) == 0 {
-				g.unresolved[i]++
-			}
-			if f.family.name == "go" {
-				g.addGoImportName(int32(i), g.imports[k], targets)
-			}
-			for _, t := range targets {
-				unit := g.files[t].unit
-				if t != int32(i) && !seen[unit] && g.files[t].family.name == f.family.name {
-					seen[unit] = true
-					edges = append(edges, edge{int32(i), unit})
-				}
-			}
-		}
-	}
-	g.importEdges = buildPostings(len(g.files), len(edges), func(i int) int32 { return edges[i].file }, func(i int) int32 { return edges[i].unit })
-	units := len(g.unitFiles.offsets) - 1
-	g.importers = buildPostings(units, len(edges), func(i int) int32 { return edges[i].unit }, func(i int) int32 { return edges[i].file })
-}
-
-// addGoImportName records the name a Go file uses for an imported package:
-// its alias, or the last element of the import path that is not a major
-// version suffix. The unit is -1 for a package outside the repository.
-func (g *Graph) addGoImportName(file int32, imp graphImport, targets []int32) {
-	name := g.names[imp.alias].Untrusted()
-	if name == "" {
-		elements := strings.Split(g.names[imp.source].Untrusted(), "/")
-		name = elements[len(elements)-1]
-		if len(elements) > 1 && len(name) > 1 && name[0] == 'v' && strings.Trim(name[1:], "0123456789") == "" {
-			name = elements[len(elements)-2]
-		}
-	}
-	if name == "" || name == "_" || name == "." {
-		return
-	}
-	unit := int32(-1)
-	if len(targets) > 0 {
-		unit = g.files[targets[0]].unit
-	}
-	if g.goImports[file] == nil {
-		g.goImports[file] = map[string]int32{}
-	}
-	g.goImports[file][name] = unit
-}
-
 func (r *resolver) text(id int32) string { return r.g.names[id].Untrusted() }
 
-func (r *resolver) resolve(file int32, imp graphImport) []int32 {
+func (r *resolver) resolve(file int32, imp graphImport) resolution {
 	f := r.g.files[file]
 	dir := path.Dir(f.entry.Path)
 	source, name := r.text(imp.source), r.text(imp.name)
+	switch {
+	case f.family.name == "go":
+		return resolution{files: r.goPackage(dir, source), unit: true}
+	case f.family.name == "jvm" && name == "*":
+		return resolution{files: r.unit("jvm", "pkg:"+source), unit: true}
+	case f.family.name == "dotnet":
+		return resolution{files: r.unit("dotnet", "pkg:"+source), unit: true}
+	}
+	return resolution{files: r.resolveFile(f, dir, source, name)}
+}
+
+// resolveFile resolves an import that names files.
+func (r *resolver) resolveFile(f graphFile, dir, source, name string) []int32 {
 	switch f.family.name {
-	case "go":
-		return r.goPackage(source)
 	case "jvm":
-		return r.java(source, name)
-	case "dotnet":
-		return r.unit("dotnet", "pkg:"+source)
+		return r.javaClass(source)
 	case "web":
 		if f.entry.Language == syntaxanalysis.LanguageHTML {
 			return r.pageResource(dir, strings.TrimSpace(source))
@@ -190,14 +149,20 @@ func (r *resolver) suffix(p string) []int32 {
 }
 
 // goPackage returns the files of the package an import path names: the
-// directory under the Go module whose path starts the import path, or,
-// without such a module, the longest directory that is the import path or
-// ends it.
-func (r *resolver) goPackage(importPath string) []int32 {
+// directory under the Go module whose path starts the import path. A file
+// inside a known module imports nothing else of the repository, so any
+// other import path stays unresolved. Only a file outside every known module
+// falls back to the longest directory that is the import path or ends it.
+func (r *resolver) goPackage(dir, importPath string) []int32 {
+	inModule := false
 	for _, m := range r.g.goModules {
 		if rest, ok := strings.CutPrefix(importPath, m.Path); ok && (rest == "" || rest[0] == '/') {
 			return r.unit("go", "dir:"+path.Join(m.Dir, strings.TrimPrefix(rest, "/")))
 		}
+		inModule = inModule || m.Dir == "." || dir == m.Dir || strings.HasPrefix(dir, m.Dir+"/")
+	}
+	if inModule {
+		return nil
 	}
 	best := ""
 	for _, d := range r.dirs[path.Base(importPath)] {
@@ -220,12 +185,9 @@ func (r *resolver) unit(familyName, scope string) []int32 {
 	return r.g.unitFiles.get(id)
 }
 
-// java resolves a class import to its file, a static member import to its
-// class's file and a wildcard import to the package.
-func (r *resolver) java(source, name string) []int32 {
-	if name == "*" {
-		return r.unit("jvm", "pkg:"+source)
-	}
+// javaClass resolves a class import to its file, and a static member
+// import to its class's file.
+func (r *resolver) javaClass(source string) []int32 {
 	segments := strings.Split(source, ".")
 	for n := len(segments); n >= 1; n-- {
 		if found := r.suffix(strings.Join(segments[:n], "/") + ".java"); len(found) > 0 {
@@ -342,46 +304,4 @@ func (r *resolver) php(source, name string) []int32 {
 		}
 	}
 	return nil
-}
-
-// Imports returns the files a file's imports resolve to, and the number of
-// its imports that resolve to no file of the repository.
-func (g *Graph) Imports(filePath string) ([]string, int, bool) {
-	id, ok := g.byPath[filePath]
-	if !ok {
-		return nil, 0, false
-	}
-	out := []string{}
-	for _, unit := range g.importEdges.get(id) {
-		for _, f := range g.unitFiles.get(unit) {
-			// The tests of a package are not part of what a non-test file
-			// imports from it.
-			if g.files[f].entry.Role != RoleTest || g.files[id].entry.Role == RoleTest {
-				out = append(out, g.files[f].entry.Path)
-			}
-		}
-	}
-	return out, int(g.unresolved[id]), true
-}
-
-// Importers returns the files whose imports resolve to a file's unit.
-func (g *Graph) Importers(filePath string) ([]string, bool) {
-	id, ok := g.byPath[filePath]
-	if !ok {
-		return nil, false
-	}
-	return g.importersOf(id), true
-}
-
-func (g *Graph) importersOf(file int32) []string {
-	out := []string{}
-	for _, f := range g.importers.get(g.files[file].unit) {
-		out = append(out, g.files[f].entry.Path)
-	}
-	return out
-}
-
-// importsUnit reports whether a file imports a unit.
-func (g *Graph) importsUnit(file, unit int32) bool {
-	return slices.Contains(g.importEdges.get(file), unit)
 }

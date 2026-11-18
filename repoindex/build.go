@@ -3,9 +3,7 @@ package repoindex
 import (
 	"context"
 	"errors"
-	"path"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/georgejieh/open-trestle/syntaxanalysis"
@@ -77,7 +75,7 @@ func (b Builder) Build(ctx context.Context, tree Tree) (Snapshot, error) {
 		return Snapshot{}, err
 	}
 	s.Coverage.TreeEntries, s.Coverage.TreeTruncated, s.Coverage.InvalidPaths = len(s.Files), walk.Truncated, walk.InvalidPaths+invalid
-	if s.Modules, err = goModules(ctx, tree, s.Files); err != nil {
+	if s.Modules, s.Coverage.ModulesLeftOut, err = goModules(ctx, tree, s.Files); err != nil {
 		return Snapshot{}, err
 	}
 
@@ -163,58 +161,6 @@ func (b Builder) Build(ctx context.Context, tree Tree) (Snapshot, error) {
 		return Snapshot{}, err
 	}
 	return s, sess.evict()
-}
-
-// maxGoModFiles and maxGoModBytes bound the go.mod files a build reads.
-const (
-	maxGoModFiles = 1024
-	maxGoModBytes = 1 << 20
-)
-
-// goModules reads the module path of every go.mod file outside vendored
-// code. A go.mod file that cannot be read or declares no module is left out,
-// and its packages resolve by path suffix instead.
-func goModules(ctx context.Context, tree Tree, files []FileEntry) ([]GoModule, error) {
-	found := []FileEntry{}
-	for _, f := range files {
-		if path.Base(f.Path) == "go.mod" && f.Status == StatusNotAnalysed && f.Role != RoleVendored && len(found) < maxGoModFiles {
-			found = append(found, f)
-		}
-	}
-	modules := []GoModule{}
-	next := 0
-	err := tree.ReadBlobs(ctx, func() (string, bool) {
-		if next >= len(found) {
-			return "", false
-		}
-		next++
-		return found[next-1].Object, true
-	}, func(content []byte, err error) error {
-		if err == nil && len(content) <= maxGoModBytes {
-			if module := goModulePath(content); module != "" {
-				modules = append(modules, GoModule{Dir: path.Dir(found[next-1].Path), Path: module})
-			}
-		}
-		return ctx.Err()
-	})
-	slices.SortStableFunc(modules, func(a, b GoModule) int { return len(b.Path) - len(a.Path) })
-	return modules, err
-}
-
-// goModulePath returns the path of a go.mod file's module directive.
-func goModulePath(content []byte) string {
-	for _, line := range strings.Split(string(content), "\n") {
-		line, _, _ = strings.Cut(line, "//")
-		fields := strings.Fields(line)
-		if len(fields) == 2 && fields[0] == "module" {
-			module := strings.Trim(fields[1], "\"`")
-			if syntaxanalysis.ValidPath(module) && !strings.ContainsAny(module, " \\") {
-				return module
-			}
-			return ""
-		}
-	}
-	return ""
 }
 
 // newFileEntry classifies a tree entry. A file to be analysed is left

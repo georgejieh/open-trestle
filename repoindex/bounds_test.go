@@ -414,9 +414,11 @@ func TestStoreDropsStaleAndCorruptFilesAndRefusesUnprotectedOnes(t *testing.T) {
 	}
 	loadGraph(t, store, s)
 
-	if err := os.WriteFile(filepath.Join(store.Directory(), "seg-intruder.otx"), []byte("x"), 0o644); err != nil {
+	intruder := filepath.Join(store.Directory(), "seg-intruder.otx")
+	if err := os.WriteFile(intruder, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	exposeToOthers(t, intruder)
 	if _, err := store.Load(context.Background(), "sha1", tree.commit); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("an unprotected file was accepted: %v", err)
 	}

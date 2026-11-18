@@ -132,7 +132,7 @@ func (r *gitRepository) tree(commit string) *GitTree {
 
 func newTestStore(t *testing.T, limits StoreLimits) *Store {
 	t.Helper()
-	store, err := NewStore(filepath.Join(t.TempDir(), "index"), testIdentity, limits)
+	store, err := NewStore(filepath.Join(privateTempDir(t), "index"), testIdentity, limits)
 	if err != nil {
 		t.Fatal(err)
 	}

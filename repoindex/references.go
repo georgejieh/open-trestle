@@ -1,7 +1,7 @@
 package repoindex
 
 import (
-	"path"
+	"slices"
 
 	"github.com/georgejieh/open-trestle/syntaxanalysis"
 )
@@ -49,11 +49,12 @@ type Use struct {
 // target is what candidates are matched against: a definition of the graph,
 // or one that exists only in another snapshot, such as a removed function.
 type target struct {
-	file     int32 // -1 when the file is not in the graph
-	dir      string
-	family   family
-	name     int32
-	exported bool
+	// file is -1 when the head has no file at the definition's path, and
+	// unit is the definition's unit in the graph, or -1.
+	file, unit int32
+	family     family
+	name       int32
+	exported   bool
 	// topLevel is a definition at the top level of its file that is not a
 	// method or field of a type, which Go reaches only through a package.
 	topLevel bool
@@ -66,21 +67,11 @@ func (g *Graph) targetOf(i int32) target {
 	d := g.defs[i]
 	f := g.files[d.file]
 	member := d.kind == syntaxanalysis.KindMethod || d.kind == syntaxanalysis.KindField || d.container != 0
-	return target{file: d.file, dir: path.Dir(f.entry.Path), family: f.family, name: d.name, exported: d.exported, topLevel: d.parent < 0 && !member}
-}
-
-func (g *Graph) unitOf(t target) int32 {
-	if t.file >= 0 {
-		return g.files[t.file].unit
-	}
-	if id, ok := g.units[unitKey(t.family.name, "dir:"+t.dir)]; ok && t.family.packages {
-		return id
-	}
-	return -1
+	return target{file: d.file, unit: f.unit, family: f.family, name: d.name, exported: d.exported, topLevel: d.parent < 0 && !member}
 }
 
 // scope applies the candidate rules to one reference.
-func (g *Graph) scope(t target, unit int32, r graphRef) Scope {
+func (g *Graph) scope(t target, r graphRef) Scope {
 	from := g.files[r.file]
 	if from.family.name != t.family.name || t.family.name == "" {
 		return ""
@@ -89,16 +80,16 @@ func (g *Graph) scope(t target, unit int32, r graphRef) Scope {
 		return ScopeImport
 	}
 	if t.family.name == "go" {
-		return g.goScope(t, unit, r)
+		return g.goScope(t, r)
 	}
 	switch {
 	case r.file == t.file:
 		return ScopeFile
-	case t.family.packages && unit >= 0 && from.unit == unit:
+	case t.family.packages && t.unit >= 0 && from.unit == t.unit:
 		return ScopePackage
 	case !t.exported:
 		return ""
-	case unit >= 0 && g.importsUnit(r.file, unit):
+	case g.importsTarget(r.file, t):
 		return ScopeImport
 	case t.family.global:
 		return ScopeName
@@ -106,14 +97,14 @@ func (g *Graph) scope(t target, unit int32, r graphRef) Scope {
 	return ""
 }
 
-// goScope applies Go's rules: a reference qualified by the name of an
-// imported package refers to that package only, a top-level definition of
-// another package is reached only through such a qualifier, and a selector
-// on a value may reach a method or field of any package the file imports.
-func (g *Graph) goScope(t target, unit int32, r graphRef) Scope {
+// goScope applies Go's rules: a reference qualified by the name an import
+// binds refers to that package only, a top-level definition of another
+// package is reached only through such a qualifier, and a selector on a
+// value may reach a method or field of any package the file imports.
+func (g *Graph) goScope(t target, r graphRef) Scope {
 	qualifier := g.names[r.qualifier].Untrusted()
 	if imported, ok := g.goImports[r.file][qualifier]; ok && qualifier != "" {
-		if imported == unit && unit >= 0 && t.exported && t.topLevel {
+		if imported == t.unit && t.unit >= 0 && t.exported && t.topLevel {
 			return ScopeImport
 		}
 		return ""
@@ -121,23 +112,61 @@ func (g *Graph) goScope(t target, unit int32, r graphRef) Scope {
 	switch {
 	case r.file == t.file:
 		return ScopeFile
-	case unit >= 0 && g.files[r.file].unit == unit:
+	case t.unit >= 0 && g.files[r.file].unit == t.unit:
 		return ScopePackage
-	case t.exported && !t.topLevel && r.qualifier != 0 && unit >= 0 && g.importsUnit(r.file, unit):
+	case t.exported && !t.topLevel && r.qualifier != 0 && g.importsTarget(r.file, t):
 		return ScopeImport
 	}
 	return ""
 }
 
+// searchUnits are the units whose references can be candidates of a target
+// of a family without repository-wide names: its own unit, and the units of
+// the files that import its file or unit.
+func (g *Graph) searchUnits(t target) []int32 {
+	importers := g.unitImporters.get(t.unit)
+	if t.file >= 0 {
+		importers = g.importersOf(t.file)
+	}
+	units := []int32{}
+	if t.unit >= 0 {
+		units = append(units, t.unit)
+	}
+	for _, f := range importers {
+		units = append(units, g.files[f].unit)
+	}
+	for f := range t.importers {
+		units = append(units, g.files[f].unit)
+	}
+	slices.Sort(units)
+	return slices.Compact(units)
+}
+
 // candidates calls fn for every reference candidate of a target, in tree
-// order, until fn returns false.
-func (g *Graph) candidates(t target, fn func(int32, Scope) bool) {
-	unit := g.unitOf(t)
-	for _, i := range g.refsByName.get(t.name) {
-		if s := g.scope(t, unit, g.refs[i]); s != "" && !fn(i, s) {
-			return
+// order, until fn returns false. Each reference it checks costs one unit of
+// work; with a budget, it stops when the budget is spent and reports false.
+func (g *Graph) candidates(t target, work *int, fn func(int32, Scope) bool) bool {
+	var refs []int32
+	if t.family.global {
+		refs = g.refsByName.get(t.name)
+	} else {
+		for _, unit := range g.searchUnits(t) {
+			refs = append(refs, g.refsIn(unit, t.name)...)
+		}
+		slices.Sort(refs)
+	}
+	for _, i := range refs {
+		if work != nil {
+			if *work <= 0 {
+				return false
+			}
+			*work--
+		}
+		if s := g.scope(t, g.refs[i]); s != "" && !fn(i, s) {
+			return true
 		}
 	}
+	return true
 }
 
 func (g *Graph) use(i int32, s Scope) Use {
@@ -157,7 +186,7 @@ func (g *Graph) References(id SymbolID) []Use {
 	if id < 0 || int(id) >= len(g.defs) {
 		return out
 	}
-	g.candidates(g.targetOf(int32(id)), func(i int32, s Scope) bool {
+	g.candidates(g.targetOf(int32(id)), nil, func(i int32, s Scope) bool {
 		out = append(out, g.use(i, s))
 		return true
 	})

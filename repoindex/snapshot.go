@@ -80,12 +80,14 @@ type Coverage struct {
 	TreeTruncated bool `json:"tree_truncated"`
 	// InvalidPaths counts tree entries left out because their path is not
 	// valid UTF-8 or is too long.
-	InvalidPaths  int           `json:"invalid_paths"`
-	Analysed      int           `json:"analysed"`
-	Reused        int           `json:"reused"`
-	AnalysedBytes int64         `json:"analysed_bytes"`
-	Duration      time.Duration `json:"duration"`
-	Limits        BuildLimits   `json:"limits"`
+	InvalidPaths int `json:"invalid_paths"`
+	// ModulesLeftOut counts go.mod files the build could not use.
+	ModulesLeftOut int           `json:"modules_left_out"`
+	Analysed       int           `json:"analysed"`
+	Reused         int           `json:"reused"`
+	AnalysedBytes  int64         `json:"analysed_bytes"`
+	Duration       time.Duration `json:"duration"`
+	Limits         BuildLimits   `json:"limits"`
 }
 
 // Snapshot is the index of one commit: every file of its tree with its
@@ -119,7 +121,7 @@ func encodeSnapshot(s Snapshot, identity [32]byte) []byte {
 	out = varcodec.AppendString(out, s.Commit)
 	out = varcodec.AppendUvarint(out, uint64(s.BuiltAt.UnixNano()))
 	c := s.Coverage
-	for _, v := range []int64{int64(c.TreeEntries), int64(c.InvalidPaths), int64(c.Analysed), int64(c.Reused), c.AnalysedBytes, int64(c.Duration), int64(c.Limits.MaxEntries), int64(c.Limits.MaxFiles), c.Limits.MaxBytes, int64(c.Limits.MaxDuration)} {
+	for _, v := range []int64{int64(c.TreeEntries), int64(c.InvalidPaths), int64(c.ModulesLeftOut), int64(c.Analysed), int64(c.Reused), c.AnalysedBytes, int64(c.Duration), int64(c.Limits.MaxEntries), int64(c.Limits.MaxFiles), c.Limits.MaxBytes, int64(c.Limits.MaxDuration)} {
 		out = varcodec.AppendUvarint(out, uint64(v))
 	}
 	out = varcodec.AppendBool(out, c.TreeTruncated)
@@ -154,15 +156,15 @@ func decodeSnapshot(data []byte, identity [32]byte) (Snapshot, error) {
 	}
 	r := varcodec.NewReader(body[len(snapshotMagic)+32:])
 	s := Snapshot{Algorithm: r.String(), Commit: r.String(), BuiltAt: time.Unix(0, int64(r.Uvarint())).UTC()}
-	n := make([]int64, 10)
+	n := make([]int64, 11)
 	for i := range n {
 		n[i] = int64(r.Uvarint())
 		if n[i] < 0 || n[i] > maxSnapshotNumber {
 			r.Fail()
 		}
 	}
-	s.Coverage = Coverage{TreeEntries: int(n[0]), InvalidPaths: int(n[1]), Analysed: int(n[2]), Reused: int(n[3]), AnalysedBytes: n[4], Duration: time.Duration(n[5]),
-		Limits: BuildLimits{MaxEntries: int(n[6]), MaxFiles: int(n[7]), MaxBytes: n[8], MaxDuration: time.Duration(n[9])}}
+	s.Coverage = Coverage{TreeEntries: int(n[0]), InvalidPaths: int(n[1]), ModulesLeftOut: int(n[2]), Analysed: int(n[3]), Reused: int(n[4]), AnalysedBytes: n[5], Duration: time.Duration(n[6]),
+		Limits: BuildLimits{MaxEntries: int(n[7]), MaxFiles: int(n[8]), MaxBytes: n[9], MaxDuration: time.Duration(n[10])}}
 	s.Coverage.TreeTruncated = r.Bool()
 	s.Modules = make([]GoModule, r.Count(2))
 	for i := range s.Modules {

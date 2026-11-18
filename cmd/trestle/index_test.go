@@ -79,7 +79,7 @@ func TestIndexBuildsAndAnswersQueries(t *testing.T) {
 		}
 		TestFiles []string `json:"test_files"`
 	}
-	if code != 0 || json.Unmarshal([]byte(stdout), &dependents) != nil || len(dependents.Changed) != 1 || dependents.Changed[0].Name != "Changed" || len(dependents.Dependents) != 2 || len(dependents.TestFiles) != 1 || len(dependents.Gaps) != 0 || !strings.Contains(stderr, "Indexing") {
+	if code != 0 || json.Unmarshal([]byte(stdout), &dependents) != nil || len(dependents.Changed) != 1 || dependents.Changed[0].Name != "Changed" || len(dependents.Dependents) != 2 || len(dependents.TestFiles) != 1 || len(dependents.Gaps) != 0 || !strings.Contains(stderr, "Indexed") {
 		t.Fatalf("dependents query: exit=%d\n%s\n%s", code, stdout, stderr)
 	}
 
@@ -88,5 +88,24 @@ func TestIndexBuildsAndAnswersQueries(t *testing.T) {
 	}
 	if code, _, _ := runIndexCommand(t, "query", "dependents", "--directory", directory); code != 2 {
 		t.Fatal("dependents without --base was accepted")
+	}
+}
+
+// Query output escapes the characters that could reorder or hide text in a
+// terminal, and stays the same JSON data.
+func TestIndexJSONEscapesFormatAndBidirectionalCharacters(t *testing.T) {
+	value := map[string]string{"path": "a‮gnp.exe​\u0085\U000e0001"}
+	var stdout, stderr bytes.Buffer
+	if code := writeIndexJSON(&stdout, &stderr, value); code != 0 {
+		t.Fatal(stderr.String())
+	}
+	for _, hidden := range []string{"‮", "​", "\u0085", "\U000e0001"} {
+		if strings.Contains(stdout.String(), hidden) {
+			t.Fatalf("%q was printed unescaped: %s", hidden, stdout.String())
+		}
+	}
+	var decoded map[string]string
+	if err := json.Unmarshal(stdout.Bytes(), &decoded); err != nil || decoded["path"] != value["path"] {
+		t.Fatalf("decoded = %q, %v", decoded, err)
 	}
 }
