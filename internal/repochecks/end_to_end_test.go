@@ -129,6 +129,7 @@ func TestMaterializeWritesTheCommitTree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer objects.Close()
 	identity, _ := evidence.NewRepositoryIdentity("local", []string{"checkout"}, "repository")
 	store, err := scm.NewLocalGitObjectStoreWithOptions(scm.LocalGitObjectStoreOptions{ObjectsRoot: objects, Repository: identity, Profile: scm.LocalGitObjectStoreProfileLooseAndPackIndexV1, ObjectAlgorithm: evidence.RevisionAlgorithmSHA1})
 	if err != nil {
