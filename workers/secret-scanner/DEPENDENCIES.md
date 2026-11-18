@@ -21,7 +21,7 @@ The adapter selects Betterleaks RE2 before parsing the embedded default config. 
 
 ## Patched copies for the scan guest
 
-The scan guest (`guest/`, a separate Go module) links patched copies of two modules. The copies are in `third_party/`, each with the patch that produced it. The guest's `go.mod` replaces the upstream modules with the copies. This module's `go.mod` has no replace directive, so the native worker links the unmodified upstream modules.
+The scan guest (`guest/`, a separate Go module) links patched copies of two modules. The copies are in `third_party/`, each with the patch that produced it. The guest's `go.mod` replaces the upstream modules with the copies. This module's `go.mod` has no replace directive, so the native reference adapter that tests compare the helper against links the unmodified upstream modules.
 
 | Copy | Upstream | Patch | License |
 | --- | --- | --- | --- |
@@ -52,7 +52,7 @@ in this module (it runs GNU `diff`), then set the patch digest in `MODULES.json`
 `cmd/open-trestle-scan-helper` embeds the guest. The committed `cmd/open-trestle-scan-helper/guest.wasm` is empty, and a helper built from it fails its guest check and exits 70 without scanning. Build a working helper with:
 
 ```text
-go run ./internal/cmd/build-scan-helper -o <directory>
+go run ./internal/cmd/build-scan-helper -o <directory> [-goos <os> -goarch <arch>]
 ```
 
 It builds the guest with `GOOS=wasip1 GOARCH=wasm`, substitutes it for the empty `guest.wasm` through a `go build -overlay` file, and pins its SHA-256 with `-ldflags -X main.expectedGuestSHA256=<hex>`. The helper checks the embedded guest against the pin before compiling it. Tests build both once per test binary through `internal/helperbuild`.
@@ -61,12 +61,6 @@ Two generated files are checked by tests in the guest module:
 
 - `internal/regexhost/pinned-patterns.json`, the patterns the host compiles for a guest. Regenerate it with `go test ./internal/pinnedpatterns -run TestHostTableEqualsRulesetPatterns -update` in `guest/` and set `PinnedPatternsSHA256` in `internal/regexhost/pinned.go` to its new digest.
 - `guest/internal/bpe/cl100k_base.bin`, the flat cl100k_base BPE table. Regenerate it with `go test ./internal/bpe -run TestFlatTableEqualsUpstreamRanks -update` in `guest/`.
-
-## Launcher toolchain and static runtime
-
-The production launcher uses only the official Zig 0.14.1 x86_64 Linux archive pinned in `launcher/toolchain-v1.json`. The verified archive and extracted-tree digests bind the compiler, bundled LLD linker, headers, x86_64 musl sysroot, and generated static libraries. The fixed target is `x86_64-linux-musl`; host GCC, host libc, `PATH`, and a mutable sysroot are not build inputs.
-
-The linked launcher contains musl 1.2.5 and Zig compiler-rt 0.14.1. Both are MIT licensed. Their complete legal texts and reviewed component inventory are in `THIRD_PARTY_LICENSES/secret-scanner-launcher/`. Linux UAPI headers from the same pinned archive are compile-time inputs under `GPL-2.0 WITH Linux-syscall-note`; no Linux kernel code is linked into the launcher.
 
 ## Module inventory input
 

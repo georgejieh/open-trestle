@@ -42,18 +42,13 @@ const (
 // helper through the host regex interface.
 const HostRE2BuildProfile = "public_detect_run_re2_host_go1.26.11_wasip1_wasm_v1"
 
-// go12610BuildProfile is the scanner profile that preceded BuildProfile. No
-// new scan emits it, but responses and receipts recorded under it stay valid.
-const go12610BuildProfile = "public_detect_run_re2_purego_go1.26.10_linux_amd64_v1"
-
 var ErrInvalidProtocol = errors.New("invalid secret scan protocol")
 
-// KnownBuildProfile reports whether a recorded response or receipt names one
-// of the exactly three readable scanner profiles: BuildProfile, which native
-// scans emit, HostRE2BuildProfile, which scan helper scans emit, or the
-// go1.26.10 profile. A live scan requires the profile of the scanner it ran.
+// KnownBuildProfile reports whether profile is BuildProfile, the profile of
+// the native reference adapter that tests compare the scan helper against,
+// or HostRE2BuildProfile, the profile the scan helper emits.
 func KnownBuildProfile(profile string) bool {
-	return profile == BuildProfile || profile == HostRE2BuildProfile || profile == go12610BuildProfile
+	return profile == BuildProfile || profile == HostRE2BuildProfile
 }
 
 type Source struct {

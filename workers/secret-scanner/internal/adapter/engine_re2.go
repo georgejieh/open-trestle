@@ -7,9 +7,10 @@ import (
 	"github.com/georgejieh/open-trestle/workers/secret-scanner/internal/protocol"
 )
 
-// New returns the native adapter, which runs regular expressions with
-// Betterleaks' RE2 engine. The WebAssembly guest does not link it, because
-// go-re2 cannot run inside a wasip1 guest.
+// New returns the native reference adapter, which runs regular expressions
+// with Betterleaks' RE2 engine. No shipped program uses it: tests compare the
+// scan helper's results against it. The WebAssembly guest does not link it,
+// because go-re2 cannot run inside a wasip1 guest.
 func New() (*Adapter, error) {
 	return newWithEngine(re2.RE2{}, "re2", protocol.BuildProfile, internalScanDeadline)
 }
