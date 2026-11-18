@@ -452,7 +452,7 @@ func TestControlPlaneV5InputPreparedSchema(t *testing.T) {
 	}
 	input := schemaFixtureMap(t, root["input_descriptor"])
 	fields := schemaFixtureMap(t, input["properties"])
-	assertExactSchemaFields(t, input, fields, "packet_prepared_event_identity packet_artifact_identity lease_identity lease_event_identity request receipt input receipt_identity scanner_launcher_digest scanner_worker_digest generation_input_identity authorization_identity selection_receipt_identity routing_input_identity selected_record_identity policy_identity route_pair_identity authorizer_identity sanitizer_identity registry_revision performance_revision")
+	assertExactSchemaFields(t, input, fields, "packet_prepared_event_identity packet_artifact_identity lease_identity lease_event_identity request receipt input receipt_identity scanner_helper_digest generation_input_identity authorization_identity selection_receipt_identity routing_input_identity selected_record_identity policy_identity route_pair_identity authorizer_identity sanitizer_identity registry_revision performance_revision")
 	for _, name := range []string{"request", "receipt", "input"} {
 		object := schemaFixtureMap(t, fields[name])
 		parts := schemaFixtureMap(t, object["properties"])

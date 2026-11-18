@@ -464,7 +464,7 @@ func TestVerificationResultSchemaClosesVersionedEgressFields(t *testing.T) {
 			} `json:"else"`
 		} `json:"allOf"`
 	}
-	if json.Unmarshal(encoded, &schema) != nil || len(schema.Properties.SchemaVersion.Enum) != 2 || len(schema.AllOf) != 1 || len(schema.AllOf[0].Then.Required) != 8 || len(schema.AllOf[0].Else.Not.AnyOf) != 8 {
+	if json.Unmarshal(encoded, &schema) != nil || len(schema.Properties.SchemaVersion.Enum) != 2 || len(schema.AllOf) != 1 || len(schema.AllOf[0].Then.Required) != 7 || len(schema.AllOf[0].Else.Not.AnyOf) != 7 {
 		t.Fatal("verification result schema does not close v1 and v2 egress fields")
 	}
 	for index, field := range schema.AllOf[0].Then.Required {

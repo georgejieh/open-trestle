@@ -35,7 +35,7 @@ func TestSanitizedGenerationHandlerIdentityMatchesEnrolledHandler(t *testing.T) 
 	if err != nil || identity == legacy.HandlerIdentity() {
 		t.Fatal("sanitized identity aliases legacy handler")
 	}
-	for _, changed := range []review.ScannerBinaryDigests{{HelperSHA256: strings.Repeat("c", 64)}, {HelperSHA256: expected.HelperSHA256}} {
+	for _, changed := range []review.ScannerBinaryDigests{{HelperSHA256: strings.Repeat("c", 64)}} {
 		current, err := SanitizedGenerationHandlerIdentity(catalog, changed)
 		if err != nil || current == identity {
 			t.Fatal("scanner lineage omitted")

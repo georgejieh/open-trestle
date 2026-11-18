@@ -156,7 +156,7 @@ func TestRemoteReviewScansThroughTheScanHelper(t *testing.T) {
 			t.Fatalf("review exit=%d out=%s err=%s", code, stdout, stderr)
 		}
 		if len(transport.bodies) != 2 || !slices.Equal(transport.inner.requests, []string{"candidate_generation:gemma4:31b", "candidate_verification:qwen3.5:397b"}) {
-			t.Fatalf("requests = %v", transport.inner.requests)
+			t.Fatalf("requests = %v: out=%s err=%s", transport.inner.requests, stdout, stderr)
 		}
 		for _, body := range transport.bodies {
 			if bytes.Contains(body, []byte(token)) || !bytes.Contains(body, []byte("Changed")) {

@@ -192,7 +192,7 @@ func TestSanitizedEgressReceiptCanonicalRoundTripClosesScannerFieldsAndCounts(t 
 		t.Fatalf("parsed=(%#v,%v) fields=%#v", parsed, err, fields)
 	}
 	scanner := parsed.Scanner()
-	if scanner.WorkerProtocol != 1 || scanner.Scanner != secretscan.ScannerName || scanner.BuildProfile != secretscan.BuildProfile || scanner.HelperSHA256 != strings.Repeat("b", 64) || scanner.HelperSHA256 != strings.Repeat("c", 64) || !parsed.Initial().Complete || !parsed.Residual().Complete || parsed.Residual().MatchCount != 0 {
+	if scanner.WorkerProtocol != 1 || scanner.Scanner != secretscan.ScannerName || scanner.BuildProfile != secretscan.BuildProfile || scanner.HelperSHA256 != strings.Repeat("b", 64) || !parsed.Initial().Complete || !parsed.Residual().Complete || parsed.Residual().MatchCount != 0 {
 		t.Fatalf("scanner=%#v initial=%#v residual=%#v", scanner, parsed.Initial(), parsed.Residual())
 	}
 }
@@ -353,7 +353,7 @@ func TestSanitizedEgressArtifactsRequireAuthoritativeBinaryDigests(t *testing.T)
 	f := sanitizedFixture(t)
 	for _, expected := range []ScannerBinaryDigests{
 		{HelperSHA256: strings.Repeat("d", 64)},
-		{HelperSHA256: f.expected.HelperSHA256},
+		{HelperSHA256: strings.Repeat("0", 64)},
 	} {
 		if err := ValidateSanitizedEgressArtifacts(f.rawArtifact, f.requestArtifact, f.receiptArtifact, expected); err == nil {
 			t.Fatal("wrong nonzero binary digest accepted")
