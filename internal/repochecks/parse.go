@@ -163,7 +163,7 @@ func parseJUnit(report []byte) parsed {
 	}
 }
 
-var tapLine = regexp.MustCompile(`^(\s*)(not ok|ok)\b\s*\d*\s*(?:-\s*)?(.*?)\s*$`)
+var tapLine = regexp.MustCompile(`^(\s*)(not ok|ok)\b\s*(\d*)\s*(?:-\s*)?(.*?)\s*$`)
 var tapSubtest = regexp.MustCompile(`^(\s*)# Subtest: (.*)$`)
 
 // parseTAP reads TAP results; a nested test is named by the subtests that
@@ -183,7 +183,10 @@ func parseTAP(stdout []byte) parsed {
 			continue
 		}
 		level := depth(match[1])
-		description, directive, _ := strings.Cut(match[3], " # ")
+		description, directive, _ := strings.Cut(match[4], " # ")
+		if strings.TrimSpace(description) == "" {
+			description = "test " + match[3]
+		}
 		name := strings.Join(append(append([]string{}, stack[:min(level, len(stack))]...), description), " > ")
 		outcome := Pass
 		if match[2] == "not ok" {

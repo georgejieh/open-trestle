@@ -65,6 +65,10 @@ func TestParseTAPNamesNestedTests(t *testing.T) {
 	})
 }
 
+func TestParseTAPNamesAnUnnamedTestByNumber(t *testing.T) {
+	requireTests(t, parseRun(FormatTAP, "node --test", 1, []byte("ok 1\nnot ok 2 - \n"), nil, nil), map[string]Outcome{"test 1": Pass, "test 2": Fail})
+}
+
 func TestParseUnittestReadsOnlyStandardError(t *testing.T) {
 	requireTests(t, parseRun(FormatUnittest, "unittest", 1, []byte("test_fake (x.Y.test_fake) ... ok\n"), fixture(t, "unittest.txt"), nil), map[string]Outcome{
 		"test_sample.Sample.test_error": Fail,
