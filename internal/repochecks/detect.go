@@ -208,7 +208,9 @@ func detectNode(files []string, read func(string) []byte, scope Scope) []Check {
 }
 
 // detectPython runs pytest when the repository configures it, and
-// unittest discovery otherwise, when the tree has Python tests.
+// unittest discovery otherwise, when the tree has Python tests and a Python
+// file changed. Either runs the whole suite: which tests cover a changed
+// module is not known here.
 func detectPython(files []string, read func(string) []byte, scope Scope) []Check {
 	var tests []string
 	pytest := false
@@ -232,21 +234,8 @@ func detectPython(files []string, read func(string) []byte, scope Scope) []Check
 	if !pytest {
 		return []Check{{Name: "python -m unittest", Stack: "python", Tool: "python", Dir: ".", Args: []string{"-m", "unittest", "discover", "-v", "-b"}, Format: FormatUnittest}}
 	}
-	var selected []string
-	if !scope.whole() {
-		for _, file := range scope.paths() {
-			if isPythonTest(file) && slices.Contains(files, file) && !slices.Contains(selected, file) {
-				selected = append(selected, file)
-			}
-		}
-	}
-	sort.Strings(selected)
-	name := "pytest"
-	if len(selected) > 0 {
-		name += " " + strings.Join(selected, " ")
-	}
-	args := append([]string{"-m", "pytest", "-p", "no:cacheprovider", "-q", "--junitxml=$TMPDIR/pytest-report.xml"}, selected...)
-	return []Check{{Name: name, Stack: "python", Tool: "python", Dir: ".", Args: args, Format: FormatJUnit, Report: "pytest-report.xml"}}
+	args := []string{"-m", "pytest", "-p", "no:cacheprovider", "-q", "--junitxml=$TMPDIR/pytest-report.xml"}
+	return []Check{{Name: "pytest", Stack: "python", Tool: "python", Dir: ".", Args: args, Format: FormatJUnit, Report: "pytest-report.xml"}}
 }
 
 func isPythonTest(file string) bool {

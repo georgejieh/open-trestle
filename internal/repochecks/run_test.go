@@ -118,6 +118,19 @@ func TestRunTreatsAFailingExitAsARegressionWhenEveryTestClaimsToPass(t *testing.
 	}
 }
 
+func TestRunTreatsTestsThatStopRunningOnHeadAsRegressions(t *testing.T) {
+	report := runFake(t, func(side string, _ int, spec checksandbox.Spec) (checksandbox.Result, error) {
+		if side == "head" && spec.Args[1] == "test" {
+			// TestMain exited before any test ran.
+			return checksandbox.Result{}, nil
+		}
+		return checksandbox.Result{Stdout: goEvents(map[string]string{"TestA": "pass"})}, nil
+	})
+	if got := report.Results[0].Regressions; !slices.Equal(got, []string{"m/a.TestA (did not run on head)"}) {
+		t.Fatalf("regressions %v", got)
+	}
+}
+
 func TestRunTreatsAHeadBuildFailureAsARegression(t *testing.T) {
 	report := runFake(t, func(side string, _ int, spec checksandbox.Spec) (checksandbox.Result, error) {
 		if side == "base" || spec.Args[1] == "vet" {

@@ -117,7 +117,7 @@ func TestDetectPython(t *testing.T) {
 	}
 	tree := writeTree(t, map[string]string{"pyproject.toml": "[tool.pytest.ini_options]\n", "pkg/mod.py": "", "tests/test_mod.py": "", "tests/test_other.py": ""})
 	scoped, _ := Detect(tree, Scope{Changed: []string{"pkg/mod.py"}, Dependents: []string{"tests/test_mod.py"}})
-	if !slices.Equal(names(scoped), []string{"pytest tests/test_mod.py"}) || scoped[0].Format != FormatJUnit || scoped[0].Report != "pytest-report.xml" {
+	if !slices.Equal(names(scoped), []string{"pytest"}) || scoped[0].Format != FormatJUnit || scoped[0].Report != "pytest-report.xml" {
 		t.Fatalf("got %+v", scoped)
 	}
 	untouched, _ := Detect(tree, Scope{Changed: []string{"README.md"}})

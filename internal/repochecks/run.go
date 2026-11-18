@@ -10,7 +10,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"sort"
@@ -136,8 +138,9 @@ func runCheck(ctx context.Context, machine host, input Input, check Check, base,
 		Dir: filepath.FromSlash(check.Dir), Args: append(append([]string{program}, platformArgs(check)...), check.Args...),
 		Path: chain.path, ReadOnly: chain.readOnly, Env: chain.env, Report: check.Report, Limits: input.Limits,
 	}
+	trees := []string{base, head}
 	var sides [2][2]map[string]Outcome
-	for index, tree := range []string{base, head} {
+	for index, tree := range trees {
 		if index == 0 && !isDir(filepath.Join(tree, filepath.FromSlash(check.Dir))) {
 			// The check is new on head; nothing of it exists on base.
 			sides[0] = [2]map[string]Outcome{{}, {}}
@@ -145,7 +148,7 @@ func runCheck(ctx context.Context, machine host, input Input, check Check, base,
 		}
 		for attempt := range 2 {
 			spec.Tree = tree
-			tests, reason := runOnce(ctx, input.Runner, spec, check)
+			tests, reason := runOnce(ctx, input.Runner, spec, check, trees)
 			if reason != "" {
 				result.Reason = reason
 				return result
@@ -154,8 +157,37 @@ func runCheck(ctx context.Context, machine host, input Input, check Check, base,
 		}
 	}
 	result.Ran = true
-	compare(&result, sides)
+	compare(&result, sides, !removesTests(input.Scope, head))
 	return result
+}
+
+// removesTests reports whether the change deletes or renames a test file,
+// or whether that cannot be known.
+func removesTests(scope Scope, head string) bool {
+	if scope.whole() {
+		return true
+	}
+	for _, file := range scope.Changed {
+		if isTestFile(file) && !isFile(filepath.Join(head, filepath.FromSlash(file))) {
+			return true
+		}
+	}
+	return false
+}
+
+func isTestFile(file string) bool {
+	base := path.Base(file)
+	for _, marker := range []string{"_test.go", ".test.", ".spec.", "_test.rs"} {
+		if strings.Contains(base, marker) {
+			return true
+		}
+	}
+	return isPythonTest(file) || strings.Contains("/"+file, "/tests/") || strings.Contains("/"+file, "/test/")
+}
+
+func isFile(name string) bool {
+	info, err := os.Stat(name)
+	return err == nil && info.Mode().IsRegular()
 }
 
 // platformArgs are flags a toolchain needs inside this system's sandbox.
@@ -171,7 +203,7 @@ func platformArgs(check Check) []string {
 
 // runOnce runs the check once and returns its results, or the reason it
 // could not run.
-func runOnce(ctx context.Context, runner Runner, spec checksandbox.Spec, check Check) (map[string]Outcome, string) {
+func runOnce(ctx context.Context, runner Runner, spec checksandbox.Spec, check Check, trees []string) (map[string]Outcome, string) {
 	if ctx.Err() != nil {
 		return nil, "the review's time for checks ran out"
 	}
@@ -191,6 +223,9 @@ func runOnce(ctx context.Context, runner Runner, spec checksandbox.Spec, check C
 		return nil, "it filled its scratch space"
 	}
 	parsed := parseRun(check.Format, check.Name, outcome.ExitCode, outcome.Stdout, outcome.Stderr, outcome.Report)
+	// A module the repository itself provides is not a missing dependency:
+	// a change that renamed or removed it broke the tests that use it.
+	parsed.missing = slices.DeleteFunc(parsed.missing, func(name string) bool { return repositoryProvides(name, trees) })
 	if len(parsed.missing) > 0 {
 		sort.Strings(parsed.missing)
 		return nil, "missing dependency: " + strings.Join(parsed.missing, ", ")
@@ -207,12 +242,15 @@ func runOnce(ctx context.Context, runner Runner, spec checksandbox.Spec, check C
 	return parsed.tests, ""
 }
 
+// exitStatusSuffix marks the result recordExitStatus adds.
+const exitStatusSuffix = " (exit status)"
+
 // recordExitStatus adds the command's own result: a pass on exit status
 // zero, and a failure when it exited otherwise although no reported test
 // failed. Output that claims every test passed therefore cannot hide a
 // failing run.
 func recordExitStatus(parsed parsed, name string, exitCode int) {
-	id := name + " (exit status)"
+	id := name + exitStatusSuffix
 	if exitCode == 0 {
 		parsed.record(id, Pass)
 		return
@@ -225,9 +263,58 @@ func recordExitStatus(parsed parsed, name string, exitCode int) {
 	parsed.record(id, Fail)
 }
 
+// repositoryProvides reports whether name is part of the repository: a path
+// (a test runner names a file it could not load), a Python package or
+// module at the top of either tree, or a package of a Go module declared in
+// either tree.
+func repositoryProvides(name string, trees []string) bool {
+	if filepath.IsAbs(name) || strings.HasPrefix(name, "/") {
+		return true
+	}
+	if strings.HasPrefix(name, ".") {
+		return filepath.IsLocal(filepath.Clean(name))
+	}
+	top := strings.SplitN(name, ".", 2)[0]
+	for _, tree := range trees {
+		if isDir(filepath.Join(tree, top)) || isFile(filepath.Join(tree, top+".py")) || isDir(filepath.Join(tree, "src", top)) {
+			return true
+		}
+		for _, module := range goModules(tree) {
+			if name == module || strings.HasPrefix(name, module+"/") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+var moduleLine = regexp.MustCompile(`(?m)^module\s+"?([^\s"]+)"?\s*$`)
+
+// goModules are the module paths of the go.mod files in tree.
+func goModules(tree string) []string {
+	files, err := listFiles(tree)
+	if err != nil {
+		return nil
+	}
+	var modules []string
+	for _, file := range files {
+		if path.Base(file) != "go.mod" {
+			continue
+		}
+		if data, err := os.ReadFile(filepath.Join(tree, filepath.FromSlash(file))); err == nil {
+			if match := moduleLine.FindSubmatch(data); match != nil {
+				modules = append(modules, string(match[1]))
+			}
+		}
+	}
+	return modules
+}
+
 // compare drops tests whose two runs on one side disagree and classifies
-// the rest.
-func compare(result *Result, sides [2][2]map[string]Outcome) {
+// the rest. With vanished set, a test that passed on base and of whose
+// group (its package, class or file) head reported nothing at all is a
+// regression too: something on head stopped the tests from running.
+func compare(result *Result, sides [2][2]map[string]Outcome, vanished bool) {
 	stable := func(runs [2]map[string]Outcome) (map[string]Outcome, map[string]bool) {
 		kept, flaky := map[string]Outcome{}, map[string]bool{}
 		for id, first := range runs[0] {
@@ -269,8 +356,36 @@ func compare(result *Result, sides [2][2]map[string]Outcome) {
 			result.NewFailures = append(result.NewFailures, id)
 		}
 	}
+	if vanished {
+		reported := map[string]bool{}
+		for _, run := range sides[1] {
+			for id := range run {
+				// A result for a whole package or file names its group too.
+				reported[id], reported[testGroup(id)] = true, true
+			}
+		}
+		for id, outcome := range base {
+			if outcome == Pass && !dropped[id] && !reported[testGroup(id)] && !strings.HasSuffix(id, exitStatusSuffix) {
+				result.Regressions = append(result.Regressions, id+" (did not run on head)")
+			}
+		}
+	}
 	slices.Sort(result.Regressions)
 	slices.Sort(result.NewFailures)
+}
+
+// testGroup is the package, class, module or file a test ID names.
+func testGroup(id string) string {
+	if group, _, ok := strings.Cut(id, "::"); ok {
+		return group
+	}
+	if group, _, ok := strings.Cut(id, " > "); ok {
+		return group
+	}
+	if index := strings.LastIndex(id, "."); index > 0 {
+		return id[:index]
+	}
+	return ""
 }
 
 // passedWithin reports whether base has a passing test inside id, as when

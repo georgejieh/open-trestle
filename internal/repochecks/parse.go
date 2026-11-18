@@ -211,7 +211,7 @@ func parseTAP(stdout []byte) parsed {
 	return result
 }
 
-var unittestLine = regexp.MustCompile(`^(\w+) \(([\w.]+)\) \.\.\. (ok|FAIL|ERROR|skipped|expected failure|unexpected success)`)
+var unittestLine = regexp.MustCompile(`^([\w.]+) \(([\w.]+)\) \.\.\. (ok|FAIL|ERROR|skipped|expected failure|unexpected success)`)
 
 // parseUnittest reads the verbose result lines that unittest writes to
 // standard error.

@@ -79,6 +79,20 @@ func TestEndToEndPythonRegression(t *testing.T) {
 	}
 }
 
+func TestEndToEndRenamedPythonModuleIsARegression(t *testing.T) {
+	files := map[string]string{
+		"shop/__init__.py":    "",
+		"shop/price.py":       "def total(prices):\n    return sum(prices)\n",
+		"tests/__init__.py":   "",
+		"tests/test_price.py": "import unittest\n\nfrom shop.price import total\n\n\nclass Total(unittest.TestCase):\n    def test_sum(self):\n        self.assertEqual(total([1, 2]), 3)\n",
+	}
+	head := map[string]string{"shop/__init__.py": "", "shop/prices.py": files["shop/price.py"], "tests/__init__.py": "", "tests/test_price.py": files["tests/test_price.py"]}
+	result := endToEnd(t, files, head, []string{"shop/price.py", "shop/prices.py"})
+	if !result.Ran || !slices.Contains(result.Regressions, "tests.test_price.Total.test_sum (did not run on head)") {
+		t.Fatalf("result %+v", result)
+	}
+}
+
 func TestEndToEndNodeRegression(t *testing.T) {
 	files := map[string]string{
 		"package.json":   `{"type": "module", "scripts": {"test": "node --test"}}`,

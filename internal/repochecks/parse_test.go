@@ -86,6 +86,11 @@ func TestParseLibtestIgnoresCapturedOutput(t *testing.T) {
 	})
 }
 
+func TestParseUnittestImportFailure(t *testing.T) {
+	stderr := []byte("tests.test_price (unittest.loader._FailedTest.tests.test_price) ... ERROR\n")
+	requireTests(t, parseRun(FormatUnittest, "unittest", 1, nil, stderr, nil), map[string]Outcome{"unittest.loader._FailedTest.tests.test_price": Fail})
+}
+
 func TestParseKeepsAFailureThatLaterOutputClaimsPassed(t *testing.T) {
 	stderr := []byte("test_a (__main__.T.test_a) ... FAIL\ntest_b (__main__.T.test_b) ... ok\ntest_a (__main__.T.test_a) ... ok\n")
 	requireTests(t, parseRun(FormatUnittest, "unittest", 1, nil, stderr, nil), map[string]Outcome{"__main__.T.test_a": Fail, "__main__.T.test_b": Pass})
