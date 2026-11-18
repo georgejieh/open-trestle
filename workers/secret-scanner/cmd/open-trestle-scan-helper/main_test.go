@@ -87,7 +87,7 @@ func buildBinaries() error {
 	}
 	built.directory = directory
 	module := filepath.Join("..", "..")
-	result, err := helperbuild.Build(ctx, module, directory)
+	result, err := helperbuild.Build(ctx, module, directory, helperbuild.HostTarget())
 	if err != nil {
 		return err
 	}
@@ -102,12 +102,12 @@ func buildBinaries() error {
 	}
 	built.hostile = hostile.Helper
 	wrong := sha256.Sum256([]byte("another guest"))
-	wrongPin, err := helperbuild.BuildHelperWithPin(ctx, module, built.guest, hex.EncodeToString(wrong[:]), directory, "wrong-pin-helper")
+	wrongPin, err := helperbuild.BuildHelperWithPin(ctx, module, built.guest, hex.EncodeToString(wrong[:]), directory, "wrong-pin-helper", helperbuild.HostTarget())
 	if err != nil {
 		return err
 	}
 	built.wrongPin = wrongPin.Helper
-	unpinned, err := helperbuild.BuildHelperWithPin(ctx, module, filepath.Join(module, "cmd", "open-trestle-scan-helper", "guest.wasm"), "", directory, "unpinned-helper")
+	unpinned, err := helperbuild.BuildHelperWithPin(ctx, module, filepath.Join(module, "cmd", "open-trestle-scan-helper", "guest.wasm"), "", directory, "unpinned-helper", helperbuild.HostTarget())
 	if err != nil {
 		return err
 	}
