@@ -9,12 +9,11 @@ import (
 
 // finishPHP marks constructors and applies PHP's visibility: anything at
 // file or namespace level is reachable from other files, a class member is
-// public unless it carries a private or protected modifier, and interface
-// members are always public. Members of a type that is not exported, and
-// declarations inside a function, are not exported. It also drops the
+// public unless it carries a private or protected modifier, and
+// declarations inside a function are not exported. It also drops the
 // relative class names self, static and parent, which name no declaration.
 func finishPHP(content []byte, _ syntaxanalysis.RawFile, a *syntaxanalysis.FileAnalysis) {
-	phpFoldNamespaces(content, a)
+	extendToFileScopes(content, a, phpUnbracedNamespaces(content, a))
 	for i := range a.Definitions {
 		d := &a.Definitions[i]
 		if d.Kind == syntaxanalysis.KindMethod && strings.EqualFold(d.Name.Untrusted(), "__construct") {
@@ -33,7 +32,7 @@ func finishPHP(content []byte, _ syntaxanalysis.RawFile, a *syntaxanalysis.FileA
 		case parent.Kind == syntaxanalysis.KindModule:
 			d.Exported = true
 		case parent.Kind.Container():
-			d.Exported = parent.Exported && (parent.Kind == syntaxanalysis.KindInterface || !phpRestricted(content, d.Range.StartByte, d.NameRange.StartByte))
+			d.Exported = !phpRestricted(content, d.Range.StartByte, d.NameRange.StartByte)
 		default:
 			d.Exported = false
 		}
@@ -103,9 +102,9 @@ func phpRestricted(content []byte, start, end int) bool {
 			} else {
 				i = end
 			}
-		case isWordByte(c):
+		case identByte(c) || c == '\\':
 			j := i
-			for j < end && isWordByte(content[j]) {
+			for j < end && (identByte(content[j]) || content[j] == '\\') {
 				j++
 			}
 			word := string(content[i:j])
@@ -144,48 +143,17 @@ func skipBracketed(content []byte, open, end int) int {
 	return end
 }
 
-func isWordByte(c byte) bool {
-	return c == '_' || c == '\\' || c >= 0x80 || (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
-}
-
-// phpFoldNamespaces extends a namespace declared without braces to the next
-// namespace declaration or the end of the file, as PHP scopes it, and makes
-// the definitions, references and imports in that stretch belong to it.
-func phpFoldNamespaces(content []byte, a *syntaxanalysis.FileAnalysis) {
-	var spaces []int
+// phpUnbracedNamespaces returns the namespaces declared without braces,
+// each covering the file up to the next one, as PHP scopes them.
+func phpUnbracedNamespaces(content []byte, a *syntaxanalysis.FileAnalysis) []fileScope {
+	var scopes []fileScope
 	for i, d := range a.Definitions {
 		if d.Kind == syntaxanalysis.KindModule && d.Parent < 0 && d.Range.EndByte > 0 && content[d.Range.EndByte-1] == ';' {
-			spaces = append(spaces, i)
+			if n := len(scopes); n > 0 {
+				scopes[n-1].end = d.Range.StartByte
+			}
+			scopes = append(scopes, fileScope{index: i, end: len(content)})
 		}
 	}
-	for n, i := range spaces {
-		d := &a.Definitions[i]
-		end := len(content)
-		if n+1 < len(spaces) {
-			end = a.Definitions[spaces[n+1]].Range.StartByte
-		}
-		d.Range.EndByte = end
-		d.Range.End = phpPosition(content, end)
-		for j := i + 1; j < len(a.Definitions) && a.Definitions[j].Range.StartByte < end; j++ {
-			if a.Definitions[j].Parent < 0 {
-				a.Definitions[j].Parent = i
-			}
-		}
-		for j := range a.References {
-			if r := &a.References[j]; r.Enclosing < 0 && r.Range.StartByte >= d.Range.StartByte && r.Range.StartByte < end {
-				r.Enclosing = i
-			}
-		}
-		for j := range a.Imports {
-			if m := &a.Imports[j]; m.Enclosing < 0 && m.Range.StartByte >= d.Range.StartByte && m.Range.StartByte < end {
-				m.Enclosing = i
-			}
-		}
-	}
-}
-
-// phpPosition returns the 1-based line and byte column of an offset.
-func phpPosition(content []byte, offset int) syntaxanalysis.Position {
-	line := 1 + bytes.Count(content[:offset], []byte{'\n'})
-	return syntaxanalysis.Position{Line: line, Column: offset - bytes.LastIndexByte(content[:offset], '\n')}
+	return scopes
 }

@@ -1,7 +1,6 @@
 package syntaxwasm
 
 import (
-	"bytes"
 	"path"
 	"strings"
 
@@ -20,7 +19,8 @@ func finishCPP(content []byte, _ syntaxanalysis.RawFile, a *syntaxanalysis.FileA
 
 // finishCFamily drops declarations that belong to function bodies, names
 // constructors and out-of-line methods, removes cast operators from the
-// call references, and sets the exported flag.
+// call references, sets the exported flag and gives each declarator of a
+// declaration its own range.
 //
 // A declaration inside a preprocessor conditional matches the same query
 // shape whether it sits at file scope or in a block, so the block ones are
@@ -32,6 +32,7 @@ func finishCFamily(content []byte, a *syntaxanalysis.FileAnalysis) {
 	markConstants(content, a)
 	nameConstructors(a)
 	setExported(content, a)
+	splitDeclarators(content, a)
 }
 
 func isFunctionLike(k syntaxanalysis.DefinitionKind) bool {
@@ -61,7 +62,7 @@ func dropBlockDeclarations(content []byte, a *syntaxanalysis.FileAnalysis) {
 		default:
 			continue
 		}
-		if inBlock[i] && d.Range.EndByte > d.Range.StartByte && d.Range.EndByte <= len(content) && content[d.Range.EndByte-1] == ';' {
+		if inBlock[i] && d.Range.EndByte > d.Range.StartByte && content[d.Range.EndByte-1] == ';' {
 			drop[i] = true
 			found = true
 		}
@@ -69,45 +70,6 @@ func dropBlockDeclarations(content []byte, a *syntaxanalysis.FileAnalysis) {
 	if found {
 		removeDefinitions(a, drop)
 	}
-}
-
-// removeDefinitions deletes the marked definitions. Records inside a
-// deleted definition move to its nearest remaining ancestor.
-func removeDefinitions(a *syntaxanalysis.FileAnalysis, drop []bool) {
-	index := make([]int, len(a.Definitions))
-	kept := 0
-	for i := range a.Definitions {
-		if drop[i] {
-			index[i] = -1
-			continue
-		}
-		index[i] = kept
-		kept++
-	}
-	resolve := func(i int) int {
-		for i >= 0 && drop[i] {
-			i = a.Definitions[i].Parent
-		}
-		if i < 0 {
-			return -1
-		}
-		return index[i]
-	}
-	out := a.Definitions[:0:0]
-	for i, d := range a.Definitions {
-		if drop[i] {
-			continue
-		}
-		d.Parent = resolve(d.Parent)
-		out = append(out, d)
-	}
-	for i := range a.References {
-		a.References[i].Enclosing = resolve(a.References[i].Enclosing)
-	}
-	for i := range a.Imports {
-		a.Imports[i].Enclosing = resolve(a.Imports[i].Enclosing)
-	}
-	a.Definitions = out
 }
 
 // dropCastCalls removes the C++ cast keywords, which parse as calls.
@@ -125,23 +87,40 @@ func dropCastCalls(a *syntaxanalysis.FileAnalysis) {
 	a.References = kept
 }
 
+// declarationPrefix returns the text of a definition before its name, at
+// most maxLeadingBytes from its start; the specifiers come first.
+func declarationPrefix(content []byte, d *syntaxanalysis.Definition) []byte {
+	return content[d.Range.StartByte:min(d.NameRange.StartByte, d.Range.StartByte+maxLeadingBytes)]
+}
+
+const maxLeadingBytes = 512
+
 // markConstants turns the variables of a file or namespace, and the static
 // data members of a class, into constants when nothing can reassign them: a
 // const that qualifies the declared type (not a pointed-to type), a const
-// pointer, or constexpr.
+// pointer, or constexpr. Only the specifiers and the definition's own
+// declarator count; the initializers of earlier declarators are skipped.
 func markConstants(content []byte, a *syntaxanalysis.FileAnalysis) {
 	for i := range a.Definitions {
 		d := &a.Definitions[i]
 		if d.Kind != syntaxanalysis.KindVariable && d.Kind != syntaxanalysis.KindField {
 			continue
 		}
-		start, end := d.Range.StartByte, min(d.NameRange.StartByte, d.Range.StartByte+maxLeadingBytes)
-		if start < 0 || end > len(content) || end <= start {
-			continue
-		}
-		static, constexpr, specConst, afterStarConst, star := false, false, false, false, false
-		angle := 0
-		lexCode(content[start:end], func(token byte, _ int, word string) bool {
+		static, constexpr, specConst, afterStarConst, star, initializer := false, false, false, false, false, false
+		angle, depth := 0, 0
+		lexCode(declarationPrefix(content, d), func(token byte, _ int, word string) bool {
+			switch token {
+			case '(', '[', '{':
+				depth++
+			case ')', ']', '}':
+				depth = max(0, depth-1)
+			}
+			if initializer {
+				if token == ',' && depth == 0 {
+					initializer, star, afterStarConst = false, false, false
+				}
+				return true
+			}
 			switch token {
 			case 'w':
 				switch word {
@@ -160,6 +139,8 @@ func markConstants(content []byte, a *syntaxanalysis.FileAnalysis) {
 				star, afterStarConst = true, false
 			case ',':
 				star, afterStarConst = false, false
+			case '=':
+				initializer = depth == 0
 			case '<':
 				angle++
 			case '>':
@@ -182,7 +163,7 @@ func markConstants(content []byte, a *syntaxanalysis.FileAnalysis) {
 // type references inside such a member are macro arguments and go with it.
 func dropMacroMembers(content []byte, a *syntaxanalysis.FileAnalysis) {
 	drop := make([]bool, len(a.Definitions))
-	var spans []syntaxanalysis.Range
+	var spans []syntaxanalysis.Span
 	for i, d := range a.Definitions {
 		if d.Kind != syntaxanalysis.KindFunction && d.Kind != syntaxanalysis.KindMethod || d.Parent < 0 || !isClassLike(a.Definitions[d.Parent].Kind) {
 			continue
@@ -192,7 +173,7 @@ func dropMacroMembers(content []byte, a *syntaxanalysis.FileAnalysis) {
 			continue
 		}
 		typed := false
-		for word := range leadingWords(content, &a.Definitions[i]) {
+		for word := range codeWords(declarationPrefix(content, &a.Definitions[i])) {
 			switch word {
 			case "explicit", "constexpr", "consteval", "inline":
 			default:
@@ -201,25 +182,17 @@ func dropMacroMembers(content []byte, a *syntaxanalysis.FileAnalysis) {
 		}
 		if !typed && isPlainName(name) {
 			drop[i] = true
-			spans = append(spans, d.Range)
+			spans = append(spans, syntaxanalysis.Span{Start: d.Range.StartByte, End: d.Range.EndByte})
 		}
 	}
 	if len(spans) == 0 {
 		return
 	}
 	removeDefinitions(a, drop)
+	merged := mergeSpans(spans)
 	kept := a.References[:0]
 	for _, r := range a.References {
-		inside := false
-		if r.Kind == syntaxanalysis.ReferenceType {
-			for _, s := range spans {
-				if r.Range.StartByte >= s.StartByte && r.Range.EndByte <= s.EndByte {
-					inside = true
-					break
-				}
-			}
-		}
-		if !inside {
+		if r.Kind != syntaxanalysis.ReferenceType || !insideSpans(merged, r.Range.StartByte) {
 			kept = append(kept, r)
 		}
 	}
@@ -228,8 +201,7 @@ func dropMacroMembers(content []byte, a *syntaxanalysis.FileAnalysis) {
 
 func isPlainName(name string) bool {
 	for i := 0; i < len(name); i++ {
-		c := name[i]
-		if c != '_' && (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') && c < 0x80 {
+		if !identByte(name[i]) {
 			return false
 		}
 	}
@@ -244,7 +216,10 @@ func nameConstructors(a *syntaxanalysis.FileAnalysis) {
 	for _, d := range a.Definitions {
 		if d.Kind == syntaxanalysis.KindModule {
 			name := d.Name.Untrusted()
-			namespaces[name[strings.LastIndex(name, "::")+1:]] = true
+			if at := strings.LastIndex(name, "::"); at >= 0 {
+				name = name[at+2:]
+			}
+			namespaces[name] = true
 		}
 	}
 	for i := range a.Definitions {
@@ -264,23 +239,21 @@ func nameConstructors(a *syntaxanalysis.FileAnalysis) {
 	}
 }
 
-// setExported decides what other files can reach:
+// setExported decides what other files can reach, apart from the owners,
+// which exportThroughOwners applies:
 //
-//   - a member of a class or struct is exported when its class is and its
-//     access is public; a struct member is public by default and a class
-//     member private;
-//   - an enumerator follows its enumeration;
-//   - a function, variable or constant at file or namespace scope is
-//     exported unless it is static or in an anonymous namespace, and a
-//     const C++ variable only when it is extern (or declared in a header);
-//   - a type, macro, namespace or alias is exported when it is declared in
-//     a header and not in an anonymous namespace;
-//   - nothing inside a function is exported.
+//   - a member of a class or struct when its access is public; a struct
+//     member is public by default and a class member private;
+//   - an enumerator;
+//   - a function, variable or constant at file or namespace scope unless it
+//     is static, and a const C++ variable only when it is extern or
+//     declared in a header;
+//   - a type, macro or alias declared in a header;
+//   - a namespace unless it is anonymous; nothing inside a function.
 func setExported(content []byte, a *syntaxanalysis.FileAnalysis) {
 	header := isHeaderPath(a.Path)
 	cpp := a.Language == syntaxanalysis.LanguageCPP
 	access := memberAccess(content, a)
-	anonymous := anonymousNamespaces(a)
 	for i := range a.Definitions {
 		d := &a.Definitions[i]
 		d.Exported = false
@@ -290,18 +263,17 @@ func setExported(content []byte, a *syntaxanalysis.FileAnalysis) {
 		}
 		switch {
 		case parent != nil && parent.Kind == syntaxanalysis.KindEnum:
-			d.Exported = parent.Exported
+			d.Exported = true
 		case parent != nil && isClassLike(parent.Kind):
-			d.Exported = parent.Exported && access[i] == "public"
+			d.Exported = access[i] == "public"
 		case parent != nil && parent.Kind != syntaxanalysis.KindModule:
 			// Inside a function, a variable or another definition.
-		case anonymous[i]:
 		default:
 			switch d.Kind {
 			case syntaxanalysis.KindModule:
-				d.Exported = header && d.Name.Untrusted() != "namespace"
+				d.Exported = d.Name.Untrusted() != "namespace"
 			case syntaxanalysis.KindFunction, syntaxanalysis.KindMethod, syntaxanalysis.KindConstructor, syntaxanalysis.KindVariable, syntaxanalysis.KindConstant:
-				words := leadingWords(content, d)
+				words := codeWords(declarationPrefix(content, d))
 				d.Exported = !words["static"]
 				if d.Kind == syntaxanalysis.KindConstant && cpp && !header {
 					d.Exported = words["extern"]
@@ -321,272 +293,156 @@ func isHeaderPath(p string) bool {
 	return false
 }
 
-// anonymousNamespaces marks the definitions that have an anonymous
-// namespace among their ancestors. Parents come before their children.
-func anonymousNamespaces(a *syntaxanalysis.FileAnalysis) []bool {
-	inside := make([]bool, len(a.Definitions))
-	for i, d := range a.Definitions {
-		if d.Parent >= 0 {
-			parent := a.Definitions[d.Parent]
-			inside[i] = inside[d.Parent] || (parent.Kind == syntaxanalysis.KindModule && parent.Name.Untrusted() == "namespace")
-		}
-	}
-	return inside
-}
-
-const maxLeadingBytes = 512
-
-// leadingWords returns the words that come before the name of a
-// definition, such as static and extern. Only the first bytes count, since
-// the specifiers come first.
-func leadingWords(content []byte, d *syntaxanalysis.Definition) map[string]bool {
-	words := map[string]bool{}
-	start, end := d.Range.StartByte, min(d.NameRange.StartByte, d.Range.StartByte+maxLeadingBytes)
-	if start < 0 || end > len(content) || end <= start {
-		return words
-	}
-	lexCode(content[start:end], func(token byte, _ int, word string) bool {
-		if token == 'w' {
-			words[word] = true
-		}
-		return true
-	})
-	return words
-}
-
 // memberAccess returns the access of every member of a class or struct,
 // indexed like the definitions: the last access label before the member in
-// the class body, or the default of the kind. Each class body is read once,
-// up to its last member, and the total reading is bounded; a member that is
-// not reached gets no access, so it is not exported.
+// its class body, or the default of the kind. It reads the file once, in
+// source order, keeping the classes whose bodies are open.
 func memberAccess(content []byte, a *syntaxanalysis.FileAnalysis) []string {
+	type open struct {
+		class, end, bodyDepth int
+		current               string
+	}
 	access := make([]string, len(a.Definitions))
-	children := map[int][]int{}
-	for i, d := range a.Definitions {
-		if d.Parent >= 0 && isClassLike(a.Definitions[d.Parent].Kind) {
-			children[d.Parent] = append(children[d.Parent], i)
+	var stack []open
+	next, depth, pending := 0, 0, ""
+	enter := func(pos int) {
+		for next < len(a.Definitions) && a.Definitions[next].Range.StartByte <= pos {
+			d := a.Definitions[next]
+			for len(stack) > 0 && stack[len(stack)-1].end <= d.Range.StartByte {
+				stack = stack[:len(stack)-1]
+			}
+			if d.Parent >= 0 && isClassLike(a.Definitions[d.Parent].Kind) {
+				for k := len(stack) - 1; k >= 0; k-- {
+					if stack[k].class == d.Parent {
+						access[next] = stack[k].current
+						break
+					}
+				}
+			}
+			if isClassLike(d.Kind) {
+				current := "public"
+				if d.Kind == syntaxanalysis.KindClass {
+					current = "private"
+				}
+				stack = append(stack, open{class: next, end: d.Range.EndByte, bodyDepth: depth + 1, current: current})
+			}
+			next++
 		}
 	}
-	budget := 8*len(content) + 1<<20
-	for parent, members := range children {
-		p := a.Definitions[parent]
-		start, end := p.Range.StartByte, a.Definitions[members[len(members)-1]].Range.StartByte
-		if start < 0 || end > len(content) || end < start || end-start > budget {
-			continue
+	lexCode(content, func(token byte, pos int, word string) bool {
+		enter(pos)
+		for len(stack) > 0 && stack[len(stack)-1].end <= pos {
+			stack = stack[:len(stack)-1]
 		}
-		budget -= end - start
-		current := "public"
-		if p.Kind == syntaxanalysis.KindClass {
-			current = "private"
-		}
-		next, depth, pending := 0, 0, ""
-		assign := func(pos int) {
-			for next < len(members) && a.Definitions[members[next]].Range.StartByte <= start+pos {
-				access[members[next]] = current
-				next++
-			}
-		}
-		lexCode(content[start:end], func(token byte, pos int, word string) bool {
-			assign(pos)
-			switch token {
-			case '{':
-				depth++
-			case '}':
-				depth--
-			case 'w':
-				pending = ""
-				if depth == 1 && (word == "public" || word == "private" || word == "protected") {
-					pending = word
-				}
-				return true
-			case ':':
-				if pending != "" {
-					current = pending
-				}
-			}
+		switch token {
+		case '{':
+			depth++
+		case '}':
+			depth--
+		case 'w':
 			pending = ""
+			if n := len(stack); n > 0 && depth == stack[n-1].bodyDepth && (word == "public" || word == "private" || word == "protected") {
+				pending = word
+			}
 			return true
-		})
-		assign(end - start)
-	}
+		case ':':
+			if n := len(stack); n > 0 && pending != "" {
+				stack[n-1].current = pending
+			}
+		}
+		pending = ""
+		return true
+	})
+	enter(len(content))
 	return access
 }
 
-// lexCode walks C and C++ text and reports words ('w'), scope operators
-// ('S'), and each other punctuation byte as itself, so a single colon is ':'.
-// Comments, string and character literals, raw strings and preprocessor
-// lines are skipped. The visitor returns false to stop.
-func lexCode(b []byte, visit func(token byte, pos int, word string) bool) {
-	isWord := func(c byte) bool {
-		return c == '_' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c >= 0x80
+// splitDeclarators gives each variable, constant or field declared in one
+// declaration with others, as in `int a = f(), b = g();`, the range of its
+// own declarator, from the comma before it, so that each initializer is
+// enclosed by its own definition. The first keeps the specifiers. A
+// declaration that also holds other definitions keeps its shared range.
+func splitDeclarators(content []byte, a *syntaxanalysis.FileAnalysis) {
+	var lines syntaxanalysis.LineIndex
+	indexed := false
+	defs := a.Definitions
+	for i := 0; i < len(defs); {
+		j := i + 1
+		for j < len(defs) && defs[j].Range.StartByte == defs[i].Range.StartByte && defs[j].Range.EndByte == defs[i].Range.EndByte && defs[j].Parent == defs[i].Parent {
+			j++
+		}
+		group := defs[i:j]
+		if len(group) < 2 || !declaratorKinds(group) || (j < len(defs) && defs[j].Range.StartByte < defs[i].Range.EndByte) {
+			i = j
+			continue
+		}
+		if !indexed {
+			lines, indexed = syntaxanalysis.NewLineIndex(content), true
+		}
+		start, end := group[0].Range.StartByte, group[0].Range.EndByte
+		cuts := topLevelCommas(content[start:end])
+		for k := range group {
+			name := group[k].NameRange.StartByte - start
+			from, to := 0, end-start
+			for _, c := range cuts {
+				if c < name {
+					from = c
+				} else {
+					to = c
+					break
+				}
+			}
+			group[k].Range = lines.Range(syntaxanalysis.Span{Start: start + from, End: start + to})
+		}
+		for r := range a.References {
+			if at := a.References[r].Range.StartByte; at >= start && at < end {
+				a.References[r].Enclosing = a.EnclosingDefinition(at)
+			}
+		}
+		i = j
 	}
-	lineStart := true
-	for i := 0; i < len(b); {
-		c := b[i]
-		switch {
-		case c == '\n':
-			lineStart = true
-			i++
-		case c == ' ' || c == '\t' || c == '\r':
-			i++
-		case c == '/' && i+1 < len(b) && b[i+1] == '/':
-			for i < len(b) && b[i] != '\n' {
-				i++
-			}
-		case c == '/' && i+1 < len(b) && b[i+1] == '*':
-			i += 2
-			for i+1 < len(b) && !(b[i] == '*' && b[i+1] == '/') {
-				i++
-			}
-			i += 2
-		case c == '#' && lineStart:
-			for i < len(b) && b[i] != '\n' {
-				if b[i] == '\\' && i+1 < len(b) {
-					i++
-				}
-				i++
-			}
-		case c == '"' || c == '\'':
-			i = skipLiteral(b, i)
-			lineStart = false
-		case isWord(c):
-			start := i
-			for i < len(b) && isWord(b[i]) {
-				i++
-			}
-			word := string(b[start:i])
-			if i < len(b) && b[i] == '"' && strings.HasSuffix(word, "R") && len(word) <= 3 {
-				i = skipRawString(b, i)
-				lineStart = false
-				continue
-			}
-			if c >= '0' && c <= '9' {
-				// A number, possibly with digit separators.
-				for i < len(b) && (isWord(b[i]) || b[i] == '\'' || b[i] == '.') {
-					i++
-				}
-				lineStart = false
-				continue
-			}
-			lineStart = false
-			if !visit('w', start, word) {
-				return
-			}
-		case c == ':':
-			lineStart = false
-			if i+1 < len(b) && b[i+1] == ':' {
-				i += 2
-				if !visit('S', i-2, "") {
-					return
-				}
-				continue
-			}
-			i++
-			if !visit(':', i-1, "") {
-				return
-			}
+}
+
+func declaratorKinds(group []syntaxanalysis.Definition) bool {
+	for _, d := range group {
+		switch d.Kind {
+		case syntaxanalysis.KindVariable, syntaxanalysis.KindConstant, syntaxanalysis.KindField:
 		default:
-			lineStart = false
-			i++
-			if !visit(c, i-1, "") {
-				return
+			return false
+		}
+	}
+	return true
+}
+
+// topLevelCommas returns the offsets of the commas that separate the
+// declarators of a declaration: outside brackets, template arguments and
+// initializers' nested expressions.
+func topLevelCommas(b []byte) []int {
+	var cuts []int
+	depth, angle, initializer := 0, 0, false
+	lexCode(b, func(token byte, pos int, _ string) bool {
+		switch token {
+		case '(', '[', '{':
+			depth++
+		case ')', ']', '}':
+			depth = max(0, depth-1)
+		case '<':
+			if !initializer {
+				angle++
+			}
+		case '>':
+			if !initializer {
+				angle = max(0, angle-1)
+			}
+		case '=':
+			initializer = initializer || depth == 0 && angle == 0
+		case ',':
+			if depth == 0 && angle == 0 {
+				cuts = append(cuts, pos)
+				initializer = false
 			}
 		}
-	}
-}
-
-// skipLiteral returns the index after the string or character literal that
-// starts at b[i].
-func skipLiteral(b []byte, i int) int {
-	quote := b[i]
-	i++
-	for i < len(b) && b[i] != quote && b[i] != '\n' {
-		if b[i] == '\\' {
-			i++
-		}
-		i++
-	}
-	if i < len(b) {
-		i++
-	}
-	return i
-}
-
-// skipRawString returns the index after the raw string literal whose
-// opening quote is b[i].
-func skipRawString(b []byte, i int) int {
-	i++
-	start := i
-	for i < len(b) && b[i] != '(' && b[i] != '\n' {
-		i++
-	}
-	if i >= len(b) || b[i] != '(' {
-		return i
-	}
-	closing := ")" + string(b[start:i]) + "\""
-	if at := bytes.Index(b[i:], []byte(closing)); at >= 0 {
-		return i + at + len(closing)
-	}
-	return len(b)
-}
-
-// cppSniffBytes bounds the text read to decide the language of a .h file.
-const cppSniffBytes = 256 << 10
-
-// headerLanguage returns the language to analyse a C source as: C++ for a
-// .h file whose first bytes use syntax that C does not have, C otherwise.
-// The signals are namespace and using declarations, templates, class
-// declarations, access labels, operator overloads and the scope operator
-// outside C23 attribute brackets, and the noexcept and virtual keywords.
-// Comments, literals and preprocessor lines are skipped, so an extern "C"
-// guard leaves a C header as C.
-func headerLanguage(p string, content []byte) syntaxanalysis.Language {
-	if strings.ToLower(path.Ext(p)) != ".h" || !looksLikeCPP(content[:min(len(content), cppSniffBytes)]) {
-		return syntaxanalysis.LanguageC
-	}
-	return syntaxanalysis.LanguageCPP
-}
-
-func looksLikeCPP(b []byte) bool {
-	found := false
-	// previous holds the last two tokens: a word as itself, punctuation as
-	// its byte.
-	var previous [2]string
-	attribute := 0
-	lexCode(b, func(token byte, pos int, word string) bool {
-		current := word
-		if token != 'w' {
-			current = string(token)
-		}
-		last, beforeLast := previous[0], previous[1]
-		switch {
-		case token == '[' && last == "[":
-			attribute++
-		case token == ']' && last == "]" && attribute > 0:
-			attribute--
-		case token == 'S' && attribute == 0:
-			found = true
-		case last == "namespace" && (token == 'w' || token == '{'):
-			found = true
-		case last == "template" && token == '<':
-			found = true
-		case last == "using" && (word == "namespace" || token == 'w'):
-			found = true
-		case beforeLast == "class" && isIdentifier(last) && (token == '{' || token == ':' || token == ';' || word == "final"):
-			found = true
-		case token == ':' && (last == "public" || last == "private" || last == "protected") && (beforeLast == "{" || beforeLast == ";" || beforeLast == "}" || beforeLast == ":"):
-			found = true
-		case last == "operator" && token != 'w' && token != ';' && token != ',' && token != ')':
-			found = true
-		case token == 'w' && (word == "noexcept" || word == "virtual"):
-			found = true
-		}
-		previous[1], previous[0] = last, current
-		return !found
+		return true
 	})
-	return found
-}
-
-func isIdentifier(s string) bool {
-	return s != "" && (s[0] == '_' || s[0] >= 'a' && s[0] <= 'z' || s[0] >= 'A' && s[0] <= 'Z' || s[0] >= 0x80)
+	return cuts
 }

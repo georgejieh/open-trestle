@@ -1,0 +1,13 @@
+# definitions
+1:1-4:2 interface "Codec" exported
+  2:5-2:33 method "Codec.encode" exported
+  3:5-3:61 method "Codec.normalize"
+6:1-8:2 class "Hidden"
+  7:5-7:25 method "Hidden.run"
+# references
+2:5 type "String" in "Codec.encode"
+2:19 type "String" in "Codec.encode"
+3:13 type "String" in "Codec.normalize"
+3:30 type "String" in "Codec.normalize"
+# imports
+# gaps

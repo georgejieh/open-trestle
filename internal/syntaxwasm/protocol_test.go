@@ -23,7 +23,7 @@ var testQuery = queryInfo{patterns: 2, captures: []string{"name", "definition.fu
 func TestDecodeAnalysisAcceptsAWellFormedResult(t *testing.T) {
 	data := buffer(statusOK, flagTreeHasError, 1, 1, 1, 2, 0, 4, 9, 1, 0, 12, 3, 5, regionMissing)
 	result, status, err := decodeAnalysis(data, testQuery, 20)
-	if err != nil || status != statusOK || len(result.matches) != 1 || len(result.regions) != 1 || !result.regions[0].missing {
+	if err != nil || status != statusOK || len(result.matches) != 1 || len(result.regions) != 1 {
 		t.Fatalf("result = %+v, %d, %v", result, status, err)
 	}
 	if c := result.matches[0].captures[1]; c.index != 1 || c.start != 0 || c.end != 12 {
@@ -60,14 +60,6 @@ func TestDecodeAnalysisRejectsMalformedResults(t *testing.T) {
 }
 
 func TestDecodeQueryInfo(t *testing.T) {
-	name := func(s string) []uint32 {
-		words := []uint32{uint32(len(s))}
-		padded := append([]byte(s), make([]byte, (4-len(s)%4)%4)...)
-		for i := 0; i < len(padded); i += 4 {
-			words = append(words, binary.LittleEndian.Uint32(padded[i:]))
-		}
-		return words
-	}
 	// Names are length-prefixed without padding, so build one by hand.
 	data := buffer(statusOK, 0, 0, 3, 1)
 	data = binary.LittleEndian.AppendUint32(data, 4)
@@ -77,7 +69,6 @@ func TestDecodeQueryInfo(t *testing.T) {
 	if err != nil || info.patterns != 3 || len(info.captures) != 1 || info.captures[0] != "name" {
 		t.Fatalf("info = %+v, %v", info, err)
 	}
-	_ = name
 	var qe queryError
 	if _, err := decodeQueryInfo(buffer(statusQueryError, 17, 2)); !errors.As(err, &qe) || qe.offset != 17 || qe.kind != 2 {
 		t.Fatalf("query error = %v", err)

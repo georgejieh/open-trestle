@@ -12,7 +12,7 @@
   17:3-17:66 method "Repo.get"
   18:3-18:24 field "Repo.size"
 21:1-21:63 module "Util"
-  21:25-21:61 function "Util.id" exported
+  21:25-21:61 function "Util.id"
 22:9-22:45 function "external"
 # references
 4:24 type "T" in "Store"

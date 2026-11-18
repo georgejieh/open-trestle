@@ -15,15 +15,15 @@
 // the error-region walk, and the host answers from the call's context; this
 // costs almost nothing. wazero's own termination checks, which call into Go
 // on every loop iteration, would make a parse several times slower. A guest
-// that stops asking, which only a defect in tree-sitter or a grammar could
+// that does not stop, which only a defect in tree-sitter or a grammar could
 // cause, is caught by a watchdog at twice the deadline (at least one second
 // more): the file gets a deadline gap at once, the call is abandoned so
-// that its next stop check traps it, the instance is closed when the call
-// ends, and the family switches for the rest of the process to code
-// compiled with wazero's termination checks, which stops every later call
-// at its deadline. A guest that loops without ever reaching a stop check
-// cannot be interrupted in fast code; its goroutine runs until the loop
-// ends or the process exits.
+// that its next stop check traps it, and the family switches for the rest
+// of the process to code compiled with wazero's termination checks, which
+// stops every later call at its deadline. A guest that loops without ever
+// reaching a stop check keeps its goroutine, CPU and memory until the
+// process exits; AbandonedCalls counts such calls, so that a host running
+// analysis in a worker process can replace the worker.
 //
 // Compiling a query takes up to a few seconds inside the guest. The first
 // instance of a family that compiles a query, before it sees any repository
@@ -40,7 +40,6 @@ import (
 	"errors"
 	"runtime"
 	"sync"
-	"time"
 
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/imports/wasi_snapshot_preview1"
@@ -64,6 +63,8 @@ const (
 	// does not keep its memory for the life of the process.
 	recycleMemoryBytes = 64 << 20
 )
+
+var errUnavailable = errors.New("the wazero compiler did not start")
 
 var (
 	// ErrInvalidConfig reports a configuration value outside its range.
@@ -108,9 +109,7 @@ type Analyzer struct {
 	// (guarded by mu). While one runs, the runtimes stay open: closing a
 	// runtime unmaps the code a call is executing. Close leaves them to the
 	// last orphan to end.
-	orphans int
-	// stalls counts the calls whose watchdog fired (guarded by mu).
-	stalls      int
+	orphans     int
 	unavailable bool
 
 	// calls is held for reading by every analysis and for writing by
@@ -195,28 +194,38 @@ func New(ctx context.Context, config Config) (*Analyzer, error) {
 		a.cache = cache
 	}
 	if a.runtime, err = a.newRuntime(ctx, false); err != nil {
-		_ = a.Close(ctx)
-		return nil, err
+		// The compiler did not start here, for example because the
+		// platform refuses executable memory.
+		a.unavailable = true
 	}
 	return a, nil
 }
 
+// newWazeroRuntime creates a runtime; tests replace it to inject an engine
+// failure.
+var newWazeroRuntime = wazero.NewRuntimeWithConfig
+
 // newRuntime returns a compiler runtime with the WASI and ot_host imports.
 // With terminating set, compiled code checks for a closed module on every
 // loop iteration, so a context deadline stops it.
-func (a *Analyzer) newRuntime(ctx context.Context, terminating bool) (wazero.Runtime, error) {
+func (a *Analyzer) newRuntime(ctx context.Context, terminating bool) (r wazero.Runtime, err error) {
+	defer func() {
+		if recover() != nil {
+			r, err = nil, errUnavailable
+		}
+	}()
 	config := wazero.NewRuntimeConfigCompiler().
 		WithMemoryLimitPages(a.memoryPages).
 		WithCloseOnContextDone(terminating)
 	if a.cache != nil {
 		config = config.WithCompilationCache(a.cache)
 	}
-	r := wazero.NewRuntimeWithConfig(ctx, config)
+	r = newWazeroRuntime(ctx, config)
 	if _, err := wasi_snapshot_preview1.Instantiate(ctx, r); err != nil {
 		_ = r.Close(ctx)
 		return nil, err
 	}
-	_, err := r.NewHostModuleBuilder("ot_host").
+	_, err = r.NewHostModuleBuilder("ot_host").
 		NewFunctionBuilder().
 		WithFunc(func(ctx context.Context) uint32 {
 			if callAbandoned(ctx) {
@@ -263,6 +272,16 @@ func (a *Analyzer) terminatingRuntime(ctx context.Context) (wazero.Runtime, erro
 // Available reports whether analysis can run on this platform. When it
 // cannot, every supported file gets an analysis_unavailable gap.
 func (a *Analyzer) Available() bool { return !a.unavailable }
+
+// AbandonedCalls returns the number of guest calls that the watchdog gave
+// up on and that are still running. Such a call holds a goroutine, CPU and
+// memory until it returns, which a guest that never reaches a stop check
+// does only when the process exits.
+func (a *Analyzer) AbandonedCalls() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.orphans
+}
 
 // Supports reports whether a family module has a grammar for the language.
 // A supported language without a query pack yields a no_query_pack gap.
@@ -325,180 +344,4 @@ func (a *Analyzer) isClosed() bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.closed
-}
-
-// Analyze implements syntaxanalysis.Analyzer. Every analysis failure is a
-// coverage gap; the error result is only for an unsupported language and
-// for cancellation of ctx.
-func (a *Analyzer) Analyze(ctx context.Context, source syntaxanalysis.Source) (syntaxanalysis.FileAnalysis, error) {
-	entry, ok := a.languages[source.Language()]
-	if !ok || source.Path() == "" {
-		return syntaxanalysis.FileAnalysis{}, syntaxanalysis.ErrInvalidInput
-	}
-	if err := ctx.Err(); err != nil {
-		return syntaxanalysis.FileAnalysis{}, err
-	}
-	gap := func(reason syntaxanalysis.GapReason, limit syntaxanalysis.Limit) (syntaxanalysis.FileAnalysis, error) {
-		return syntaxanalysis.WholeFileGap(source, Identity, reason, limit), nil
-	}
-	switch {
-	case entry.pack == nil:
-		return gap(syntaxanalysis.GapNoQueryPack, "")
-	case a.unavailable || a.isClosed():
-		return gap(syntaxanalysis.GapAnalysisUnavailable, "")
-	case source.Size() > a.limits.MaxFileBytes:
-		return gap(syntaxanalysis.GapLimitExceeded, syntaxanalysis.LimitFileSize)
-	}
-	content := source.Content()
-	if source.Language() == syntaxanalysis.LanguageC && headerLanguage(source.Path(), content) == syntaxanalysis.LanguageCPP {
-		// A .h file is C by its name; one written in C++ is analysed and
-		// reported as C++.
-		cpp, err := syntaxanalysis.NewSource(source.Path(), syntaxanalysis.LanguageCPP, content)
-		if cppEntry, ok := a.languages[syntaxanalysis.LanguageCPP]; err == nil && ok && cppEntry.pack != nil {
-			source, entry = cpp, cppEntry
-		}
-	}
-	started := time.Now()
-	raw, embedded, failure := a.parse(ctx, entry, source.Language(), content, a.limits, syntaxanalysis.Span{})
-	if failure != nil {
-		if err := ctx.Err(); err != nil {
-			return syntaxanalysis.FileAnalysis{}, err
-		}
-		return gap(failure.reason, failure.limit)
-	}
-	if entry.pack.filter != nil {
-		entry.pack.filter(content, &raw)
-	}
-	for _, e := range embedded {
-		if err := a.addEmbedded(ctx, content, e, &raw, started); err != nil {
-			return syntaxanalysis.FileAnalysis{}, err
-		}
-	}
-	analysis := syntaxanalysis.Assemble(source, Identity, raw, a.limits)
-	if entry.pack.finish != nil && !hasGap(analysis, syntaxanalysis.GapAnalysisFailed) {
-		entry.pack.finish(content, raw, &analysis)
-	}
-	return analysis, nil
-}
-
-// parse runs one guest analysis of content and turns its result into raw
-// records. The gaps for the guest's limits cover scope, or the whole file
-// when scope is empty.
-func (a *Analyzer) parse(ctx context.Context, entry languageEntry, language syntaxanalysis.Language, content []byte, limits syntaxanalysis.Limits, scope syntaxanalysis.Span) (syntaxanalysis.RawFile, []embeddedCode, *failure) {
-	a.calls.RLock()
-	if a.isClosed() {
-		a.calls.RUnlock()
-		return syntaxanalysis.RawFile{}, nil, &failure{reason: syntaxanalysis.GapAnalysisUnavailable}
-	}
-	result, roles, fail := entry.family.analyze(ctx, language, entry.pack, content, limits)
-	a.calls.RUnlock()
-	if fail != nil {
-		return syntaxanalysis.RawFile{}, nil, fail
-	}
-	raw, embedded, err := rawFile(content, result, roles)
-	if err != nil {
-		return syntaxanalysis.RawFile{}, nil, &failure{reason: syntaxanalysis.GapAnalysisFailed}
-	}
-	if result.flags&flagMatchLimit != 0 {
-		raw.Gaps = append(raw.Gaps, syntaxanalysis.RawGap{Reason: syntaxanalysis.GapLimitExceeded, Limit: syntaxanalysis.LimitMatches, Span: scope})
-	}
-	if result.flags&flagResultLimit != 0 {
-		raw.Gaps = append(raw.Gaps, syntaxanalysis.RawGap{Reason: syntaxanalysis.GapLimitExceeded, Limit: syntaxanalysis.LimitRecords, Span: tailSpan(result, len(content))})
-	}
-	if result.flags&flagErrorLimit != 0 {
-		raw.Gaps = append(raw.Gaps, syntaxanalysis.RawGap{Reason: syntaxanalysis.GapLimitExceeded, Limit: syntaxanalysis.LimitErrorRegions, Span: scope})
-	}
-	if result.flags&flagTreeHasError != 0 && len(result.regions) == 0 && result.flags&flagErrorLimit == 0 {
-		// The tree reports an error the region walk did not find; the
-		// whole file is then not trustworthy.
-		raw.Gaps = append(raw.Gaps, syntaxanalysis.RawGap{Reason: syntaxanalysis.GapParseError, Span: syntaxanalysis.Span{Start: 0, End: len(content)}})
-	}
-	return raw, embedded, nil
-}
-
-// addEmbedded analyses code embedded in a file, such as an inline HTML
-// script, with the pack of its language, and adds its records to the
-// file's at their offsets in the file. It shares the file's deadline. A
-// failure becomes a gap over the embedded code; only cancellation of ctx
-// is an error.
-func (a *Analyzer) addEmbedded(ctx context.Context, content []byte, e embeddedCode, raw *syntaxanalysis.RawFile, started time.Time) error {
-	language, ok := htmlScriptLanguage(content[e.tag.Start:e.tag.End])
-	entry, known := a.languages[language]
-	if !ok || !known || entry.pack == nil || e.code.Empty() {
-		return nil
-	}
-	limits := a.limits
-	limits.FileDeadline -= time.Since(started)
-	if limits.FileDeadline <= 0 {
-		raw.Gaps = append(raw.Gaps, syntaxanalysis.RawGap{Reason: syntaxanalysis.GapDeadlineExceeded, Span: e.code})
-		return nil
-	}
-	code := content[e.code.Start:e.code.End]
-	embedded, _, fail := a.parse(ctx, entry, language, code, limits, syntaxanalysis.Span{Start: 0, End: len(code)})
-	if fail != nil {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		raw.Gaps = append(raw.Gaps, syntaxanalysis.RawGap{Reason: fail.reason, Limit: fail.limit, Span: e.code})
-		return nil
-	}
-	if entry.pack.filter != nil {
-		entry.pack.filter(code, &embedded)
-	}
-	// The script's export list, if any, names its own bindings and not the
-	// page's, so embedded.Exports is left out.
-	at := e.code.Start
-	shift := func(s syntaxanalysis.Span) syntaxanalysis.Span {
-		if s.Empty() {
-			return s
-		}
-		return syntaxanalysis.Span{Start: s.Start + at, End: s.End + at}
-	}
-	for _, d := range embedded.Definitions {
-		d.Name, d.Node, d.Container = shift(d.Name), shift(d.Node), shift(d.Container)
-		raw.Definitions = append(raw.Definitions, d)
-	}
-	for _, r := range embedded.References {
-		r.Name, r.Qualifier = shift(r.Name), shift(r.Qualifier)
-		raw.References = append(raw.References, r)
-	}
-	for _, i := range embedded.Imports {
-		i.Source, i.Name, i.Alias, i.Node = shift(i.Source), shift(i.Name), shift(i.Alias), shift(i.Node)
-		raw.Imports = append(raw.Imports, i)
-	}
-	for _, g := range embedded.Gaps {
-		switch {
-		case g.Reason == syntaxanalysis.GapParseError:
-			// A missing token is a parse error of zero width.
-			g.Span = syntaxanalysis.Span{Start: g.Span.Start + at, End: g.Span.End + at}
-		case g.Span.Empty():
-			g.Span = e.code
-		default:
-			g.Span = shift(g.Span)
-		}
-		raw.Gaps = append(raw.Gaps, g)
-	}
-	return nil
-}
-
-// tailSpan covers the source from the last returned match to the end, the
-// part the match limit may have cut.
-func tailSpan(result analysisResult, size int) syntaxanalysis.Span {
-	start := 0
-	if n := len(result.matches); n > 0 && len(result.matches[n-1].captures) > 0 {
-		start = result.matches[n-1].captures[0].start
-	}
-	if start >= size {
-		return syntaxanalysis.Span{}
-	}
-	return syntaxanalysis.Span{Start: start, End: size}
-}
-
-func hasGap(a syntaxanalysis.FileAnalysis, reason syntaxanalysis.GapReason) bool {
-	for _, g := range a.Gaps {
-		if g.Reason == reason {
-			return true
-		}
-	}
-	return false
 }

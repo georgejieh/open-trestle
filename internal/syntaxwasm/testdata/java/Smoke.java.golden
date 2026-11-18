@@ -6,7 +6,7 @@
   12:5-15:6 constructor "Outer.Outer" exported
   17:5-21:6 method "Outer.run" exported
   23:5-23:48 interface "Outer.Callback"
-    23:26-23:46 method "Outer.Callback.done" exported
+    23:26-23:46 method "Outer.Callback.done"
   25:5-25:29 enum "Outer.Mode"
     25:17-25:21 constant "Outer.Mode.FAST"
     25:23-25:27 constant "Outer.Mode.SLOW"

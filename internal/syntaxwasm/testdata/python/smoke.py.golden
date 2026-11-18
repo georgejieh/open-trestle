@@ -1,5 +1,5 @@
 # definitions
-6:1-6:29 variable "__all__"
+6:1-6:29 variable "__all__" exported
 7:1-7:15 constant "MAX_ITEMS"
 8:1-8:6 variable "cache"
 8:8-8:13 variable "store"

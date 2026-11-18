@@ -1,26 +1,26 @@
 # definitions
-10:1-85:2 module "Outer.Inner"
-  14:5-14:47 module "Outer.Inner.Deep"
+10:1-85:2 module "Outer.Inner" exported
+  14:5-14:47 module "Outer.Inner.Deep" exported
     14:22-14:45 class "Outer.Inner.Deep.Marker" exported
   16:5-16:66 interface "Outer.Inner.IShape" exported
     16:31-16:51 field "Outer.Inner.IShape.Area" exported
     16:52-16:64 method "Outer.Inner.IShape.Draw" exported
   18:5-32:6 class "Outer.Inner.Hidden"
     20:9-20:28 constructor "Outer.Inner.Hidden.Hidden"
-    21:9-21:28 constructor "Outer.Inner.Hidden.Hidden" exported
+    21:9-21:28 constructor "Outer.Inner.Hidden.Hidden"
     22:31-22:36 field "Outer.Inner.Hidden.count"
-    23:36-23:45 constant "Outer.Inner.Hidden.Limit" exported
+    23:36-23:45 constant "Outer.Inner.Hidden.Limit"
     24:29-24:38 constant "Outer.Inner.Hidden.Other"
-    25:29-25:39 constant "Outer.Inner.Hidden.Name" exported
-    25:41-25:52 constant "Outer.Inner.Hidden.Alias" exported
+    25:29-25:39 constant "Outer.Inner.Hidden.Name"
+    25:41-25:52 constant "Outer.Inner.Hidden.Alias"
     26:13-26:14 field "Outer.Inner.Hidden.a"
     26:16-26:21 field "Outer.Inner.Hidden.b"
-    27:9-27:48 type "Outer.Inner.Hidden.Factory" exported
-    28:35-28:42 field "Outer.Inner.Hidden.Changed" exported
-    28:44-28:51 field "Outer.Inner.Hidden.Cleared" exported
-    29:9-29:42 field "Outer.Inner.Hidden.this" exported
-    30:9-30:77 method "Outer.Inner.Hidden.++" exported
-    31:9-31:70 method "Outer.Inner.Hidden.int" exported
+    27:9-27:48 type "Outer.Inner.Hidden.Factory"
+    28:35-28:42 field "Outer.Inner.Hidden.Changed"
+    28:44-28:51 field "Outer.Inner.Hidden.Cleared"
+    29:9-29:42 field "Outer.Inner.Hidden.this"
+    30:9-30:77 method "Outer.Inner.Hidden.++"
+    31:9-31:70 method "Outer.Inner.Hidden.int"
   34:5-59:6 class "Outer.Inner.Circle" exported
     36:9-36:35 field "Outer.Inner.Circle.Area"
     37:9-37:52 method "Outer.Inner.Circle.Draw"
@@ -46,7 +46,7 @@
     76:32-76:55 method "Outer.Inner.ReleaseOnly.Trace" exported
   80:5-83:6 class "Outer.Inner.Tools" exported
     82:9-82:66 method "Outer.Inner.Tools.Many" exported
-87:1-87:37 module "Flat.A.B"
+87:1-87:37 module "Flat.A.B" exported
   87:22-87:35 class "Flat.A.B.InB"
 # references
 18:43 type "IShape" in "Outer.Inner.Hidden"

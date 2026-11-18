@@ -29,20 +29,30 @@ const (
 	gateWarmRuns    = 15
 )
 
-var gateFixtures = map[syntaxanalysis.Language]string{
-	syntaxanalysis.LanguageJava:       "testdata/java/InventoryService.java",
-	syntaxanalysis.LanguageJavaScript: "testdata/javascript/event-bus.js",
-	syntaxanalysis.LanguageTypeScript: "testdata/typescript/repository.ts",
-	syntaxanalysis.LanguageTSX:        "testdata/tsx/Dashboard.tsx",
-	syntaxanalysis.LanguagePython:     "testdata/python/scheduler.py",
-	syntaxanalysis.LanguageC:          "testdata/c/kvstore.c",
-	syntaxanalysis.LanguageCPP:        "testdata/cpp/scheduler.cpp",
-	syntaxanalysis.LanguageCSharp:     "testdata/csharp/OrderProcessor.cs",
-	syntaxanalysis.LanguageRust:       "testdata/rust/ledger.rs",
-	syntaxanalysis.LanguageSwift:      "testdata/swift/TaskQueue.swift",
-	syntaxanalysis.LanguagePHP:        "testdata/php/OrderService.php",
-	syntaxanalysis.LanguageRuby:       "testdata/ruby/job_queue.rb",
-	syntaxanalysis.LanguageHTML:       "testdata/html/dashboard.html",
+// gateFixture is the realistic fixture a language's gate file repeats.
+// Lines starting with one of once appear only in the first copy, and a page
+// with body set repeats only the lines inside its body, so that every
+// repetition still parses.
+type gateFixture struct {
+	path string
+	once []string
+	body bool
+}
+
+var gateFixtures = map[syntaxanalysis.Language]gateFixture{
+	syntaxanalysis.LanguageJava:       {path: "testdata/java/InventoryService.java", once: []string{"package ", "import "}},
+	syntaxanalysis.LanguageJavaScript: {path: "testdata/javascript/event-bus.js"},
+	syntaxanalysis.LanguageTypeScript: {path: "testdata/typescript/repository.ts"},
+	syntaxanalysis.LanguageTSX:        {path: "testdata/tsx/Dashboard.tsx"},
+	syntaxanalysis.LanguagePython:     {path: "testdata/python/scheduler.py"},
+	syntaxanalysis.LanguageC:          {path: "testdata/c/kvstore.c"},
+	syntaxanalysis.LanguageCPP:        {path: "testdata/cpp/scheduler.cpp"},
+	syntaxanalysis.LanguageCSharp:     {path: "testdata/csharp/OrderProcessor.cs", once: []string{"using ", "global using ", "namespace "}},
+	syntaxanalysis.LanguageRust:       {path: "testdata/rust/ledger.rs"},
+	syntaxanalysis.LanguageSwift:      {path: "testdata/swift/TaskQueue.swift"},
+	syntaxanalysis.LanguagePHP:        {path: "testdata/php/OrderService.php", once: []string{"<?php", "declare("}},
+	syntaxanalysis.LanguageRuby:       {path: "testdata/ruby/job_queue.rb"},
+	syntaxanalysis.LanguageHTML:       {path: "testdata/html/dashboard.html", body: true},
 }
 
 type gateResult struct {
@@ -58,34 +68,33 @@ type gateResult struct {
 	Gaps           int     `json:"gaps"`
 }
 
-// gateSource repeats a fixture until it reaches the gate size. Repeated Java
-// and C# files drop their package, namespace and import lines so the result
-// still parses.
+// gateSource repeats a fixture until it reaches the gate size.
 func gateSource(t testing.TB, language syntaxanalysis.Language) []byte {
 	t.Helper()
-	content, err := os.ReadFile(gateFixtures[language])
+	fixture := gateFixtures[language]
+	content, err := os.ReadFile(fixture.path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out, ok := gateScriptSource(language, content); ok {
-		return out
+	head, tail := "", ""
+	text := string(content)
+	if fixture.body {
+		start := strings.Index(text, "<body")
+		start += strings.Index(text[start:], "\n") + 1
+		end := strings.LastIndex(text, "</body>")
+		head, text, tail = text[:start], text[start:end], text[end:]
 	}
-	body := content
-	if language == syntaxanalysis.LanguageJava || language == syntaxanalysis.LanguageCSharp {
-		var kept []string
-		for _, line := range strings.Split(string(content), "\n") {
-			if !strings.HasPrefix(line, "package ") && !strings.HasPrefix(line, "import ") && !strings.HasPrefix(line, "using ") && !strings.HasPrefix(line, "global using ") && !strings.HasPrefix(line, "namespace ") {
-				kept = append(kept, line)
-			}
+	var body []string
+	for _, line := range strings.Split(text, "\n") {
+		if !slices.ContainsFunc(fixture.once, func(prefix string) bool { return strings.HasPrefix(line, prefix) }) {
+			body = append(body, line)
 		}
-		body = []byte(strings.Join(kept, "\n"))
 	}
-	out := append([]byte(nil), content...)
-	for len(out) < gateFileBytes {
-		out = append(out, '\n')
-		out = append(out, body...)
+	out := head + text
+	for len(out)+len(tail) < gateFileBytes {
+		out += "\n" + strings.Join(body, "\n")
 	}
-	return out
+	return []byte(out + tail)
 }
 
 // TestSyntaxGate runs each language in a fresh process, twice: first with an
@@ -151,7 +160,7 @@ func TestSyntaxGateChild(t *testing.T) {
 	}
 	defer a.Close(ctx)
 	content := gateSource(t, language)
-	path := strings.TrimPrefix(gateFixtures[language], "testdata/")
+	path := strings.TrimPrefix(gateFixtures[language].path, "testdata/")
 	f := a.languages[language].family
 	started := time.Now()
 	if _, _, err := f.compile(ctx, modeFast); err != nil {
@@ -218,7 +227,7 @@ func BenchmarkAnalyze(b *testing.B) {
 	a := testAnalyzer(b)
 	for language, fixture := range gateFixtures {
 		content := gateSource(b, language)
-		path := strings.TrimPrefix(fixture, "testdata/")
+		path := strings.TrimPrefix(fixture.path, "testdata/")
 		_ = analyze(b, a, path, content)
 		b.Run(string(language), func(b *testing.B) {
 			b.SetBytes(int64(len(content)))

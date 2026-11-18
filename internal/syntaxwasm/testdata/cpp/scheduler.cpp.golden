@@ -1,7 +1,7 @@
 # definitions
 23:1-23:42 type "Millis"
 25:1-26:1 macro "SCHED_ASSERT"
-27:1-323:2 module "sched"
+27:1-323:2 module "sched" exported
   29:1-29:35 constant "sched.kDefaultWorkers"
   30:1-30:43 constant "sched.kMaxQueue"
   31:1-31:45 constant "sched.kVersion"
@@ -82,10 +82,10 @@
   232:1-242:2 method "sched.shutdown" exported container="Scheduler"
   244:1-249:2 method "sched.on_error" exported container="Scheduler"
   251:1-269:2 method "sched.run_worker" exported container="Scheduler"
-  271:1-295:2 module "sched.detail"
+  271:1-295:2 module "sched.detail" exported
     274:1-283:2 function "sched.detail.find_last" exported
     285:1-293:2 function "sched.detail.describe" exported
-  297:1-321:2 module "sched.tools"
+  297:1-321:2 module "sched.tools" exported
     299:1-310:2 class "sched.tools.LoggingScheduler"
       304:5-309:6 method "sched.tools.LoggingScheduler.on_error"
     312:1-319:2 function "sched.tools.report" exported

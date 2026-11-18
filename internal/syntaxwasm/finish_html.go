@@ -2,6 +2,7 @@ package syntaxwasm
 
 import (
 	"bytes"
+	"sort"
 	"strings"
 
 	"github.com/georgejieh/open-trestle/syntaxanalysis"
@@ -21,22 +22,40 @@ func filterHTML(content []byte, raw *syntaxanalysis.RawFile) {
 		}
 	}
 	raw.References = references
+	tagStarts := htmlTagStarts(content)
 	imports := raw.Imports[:0]
 	for _, i := range raw.Imports {
-		if htmlResource(string(content[i.Source.Start:i.Source.End])) && htmlTagBefore(content, i.Node.Start) != "base" {
+		if htmlResource(string(content[i.Source.Start:i.Source.End])) && htmlTagBefore(content, tagStarts, i.Node.Start) != "base" {
 			imports = append(imports, i)
 		}
 	}
 	raw.Imports = imports
 }
 
+// htmlTagStarts returns the offsets of every '<' in content, in order.
+func htmlTagStarts(content []byte) []int {
+	var starts []int
+	for at := 0; ; {
+		next := bytes.IndexByte(content[at:], '<')
+		if next < 0 {
+			return starts
+		}
+		starts = append(starts, at+next)
+		at += next + 1
+	}
+}
+
 // htmlScriptLanguage returns the language of an inline script from its
 // start tag: TypeScript or TSX for a lang attribute that names it, or a
 // TypeScript type, and JavaScript for no type, a JavaScript type or module.
 // Other types, such as JSON, import maps and templates, are not code to
-// analyse.
+// analyse, whatever lang says.
 func htmlScriptLanguage(tag []byte) (syntaxanalysis.Language, bool) {
 	attributes := htmlAttributes(tag)
+	typed, ok := htmlScriptType(attributes["type"])
+	if !ok {
+		return "", false
+	}
 	if lang, ok := attributes["lang"]; ok {
 		switch lang {
 		case "ts", "typescript":
@@ -48,7 +67,13 @@ func htmlScriptLanguage(tag []byte) (syntaxanalysis.Language, bool) {
 		}
 		return "", false
 	}
-	switch attributes["type"] {
+	return typed, true
+}
+
+// htmlScriptType returns the language a script type names, if it names
+// code.
+func htmlScriptType(value string) (syntaxanalysis.Language, bool) {
+	switch value {
 	case "", "module", "text/javascript", "application/javascript", "text/ecmascript", "application/ecmascript",
 		"application/x-javascript", "application/x-ecmascript", "text/x-javascript", "text/x-ecmascript",
 		"text/jscript", "text/livescript", "text/jsx", "text/babel":
@@ -155,12 +180,13 @@ func htmlResource(value string) bool {
 
 // htmlTagBefore returns the lower-case name of the tag that opens the last
 // start tag before offset, which is the element that owns an attribute
-// starting there.
-func htmlTagBefore(content []byte, offset int) string {
-	open := bytes.LastIndexByte(content[:offset], '<')
-	if open < 0 {
+// starting there. tagStarts are the offsets of every '<'.
+func htmlTagBefore(content []byte, tagStarts []int, offset int) string {
+	at := sort.SearchInts(tagStarts, offset) - 1
+	if at < 0 {
 		return ""
 	}
+	open := tagStarts[at]
 	name := content[open+1 : offset]
 	if end := bytes.IndexAny(name, " \t\r\n/>"); end >= 0 {
 		name = name[:end]

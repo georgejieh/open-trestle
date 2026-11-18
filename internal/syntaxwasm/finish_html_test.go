@@ -11,20 +11,21 @@ import (
 
 func TestScriptLanguageFollowsTheStartTag(t *testing.T) {
 	cases := map[string]syntaxanalysis.Language{
-		"<script>":                                 syntaxanalysis.LanguageJavaScript,
-		`<script type="module">`:                   syntaxanalysis.LanguageJavaScript,
-		`<script type='text/javascript' defer>`:    syntaxanalysis.LanguageJavaScript,
-		"<SCRIPT TYPE=Module>":                     syntaxanalysis.LanguageJavaScript,
-		`<script lang="ts">`:                       syntaxanalysis.LanguageTypeScript,
-		`<script setup lang="tsx">`:                syntaxanalysis.LanguageTSX,
-		`<script type="text/typescript">`:          syntaxanalysis.LanguageTypeScript,
-		`<script lang="ts" type="module">`:         syntaxanalysis.LanguageTypeScript,
-		`<script data-x="a>b" type="module">`:      syntaxanalysis.LanguageJavaScript,
-		`<script type="module" type="importmap">`:  syntaxanalysis.LanguageJavaScript,
-		`<script type="application/json">`:         "",
-		`<script type="importmap">`:                "",
-		`<script type="text/x-template" id="row">`: "",
-		`<script lang="coffee">`:                   "",
+		"<script>":                                   syntaxanalysis.LanguageJavaScript,
+		`<script type="module">`:                     syntaxanalysis.LanguageJavaScript,
+		`<script type='text/javascript' defer>`:      syntaxanalysis.LanguageJavaScript,
+		"<SCRIPT TYPE=Module>":                       syntaxanalysis.LanguageJavaScript,
+		`<script lang="ts">`:                         syntaxanalysis.LanguageTypeScript,
+		`<script setup lang="tsx">`:                  syntaxanalysis.LanguageTSX,
+		`<script type="text/typescript">`:            syntaxanalysis.LanguageTypeScript,
+		`<script lang="ts" type="module">`:           syntaxanalysis.LanguageTypeScript,
+		`<script data-x="a>b" type="module">`:        syntaxanalysis.LanguageJavaScript,
+		`<script type="module" type="importmap">`:    syntaxanalysis.LanguageJavaScript,
+		`<script type="application/json">`:           "",
+		`<script type="application/json" lang="js">`: "",
+		`<script type="importmap">`:                  "",
+		`<script type="text/x-template" id="row">`:   "",
+		`<script lang="coffee">`:                     "",
 	}
 	for tag, want := range cases {
 		got, ok := htmlScriptLanguage([]byte(tag))
@@ -51,7 +52,7 @@ func TestInlineScriptsShareTheFileDeadline(t *testing.T) {
 		t.Fatalf("raw = %+v", raw)
 	}
 	raw = syntaxanalysis.RawFile{}
-	if err := a.addEmbedded(context.Background(), content, e, &raw, time.Now()); err != nil {
+	if err := a.addEmbedded(context.Background(), content, e, &raw, time.Now().Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	if len(raw.Definitions) != 1 || raw.Definitions[0].Name.Start != code+len("function ") {

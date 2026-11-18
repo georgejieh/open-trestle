@@ -3,6 +3,7 @@ package syntaxwasm
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 )
 
 // Constants shared with shim/analyze.c.
@@ -78,12 +79,9 @@ func newReader(data []byte) (*reader, error) {
 	return r, nil
 }
 
-type describedLanguage struct {
-	name       string
-	abiVersion uint32
-}
-
-func decodeDescribe(data []byte) ([]describedLanguage, error) {
+// decodeDescribe returns the language names a module describes. Each comes
+// with its grammar's ABI version, which ts_parser_set_language checks.
+func decodeDescribe(data []byte) ([]string, error) {
 	r, err := newReader(data)
 	if err != nil {
 		return nil, err
@@ -92,17 +90,16 @@ func decodeDescribe(data []byte) ([]describedLanguage, error) {
 	if err != nil || count == 0 || uint64(count)*8 > uint64(r.remaining()) {
 		return nil, errProtocol
 	}
-	out := make([]describedLanguage, 0, count)
+	out := make([]string, 0, count)
 	for range count {
-		abi, err := r.u32()
-		if err != nil {
+		if _, err := r.u32(); err != nil {
 			return nil, err
 		}
 		name, err := r.bytes()
 		if err != nil || len(name) == 0 || len(name) > 64 {
 			return nil, errProtocol
 		}
-		out = append(out, describedLanguage{name: string(name), abiVersion: abi})
+		out = append(out, string(name))
 	}
 	if r.remaining() != 0 {
 		return nil, errProtocol
@@ -116,12 +113,14 @@ type queryInfo struct {
 }
 
 // queryError reports a query the guest refused to compile, with the byte
-// offset the runtime gave. It is a defect in a query pack.
+// offset and error kind the runtime gave. It is a defect in a query pack.
 type queryError struct {
 	status, offset, kind uint32
 }
 
-func (e queryError) Error() string { return "syntax query was rejected" }
+func (e queryError) Error() string {
+	return fmt.Sprintf("syntax query was rejected with status %d at byte %d, error kind %d", e.status, e.offset, e.kind)
+}
 
 func decodeQueryInfo(data []byte) (queryInfo, error) {
 	r, err := newReader(data)
@@ -174,13 +173,11 @@ type capture struct {
 }
 
 type match struct {
-	pattern  uint32
 	captures []capture
 }
 
 type region struct {
 	start, end int
-	missing    bool
 }
 
 type analysisResult struct {
@@ -239,7 +236,7 @@ func decodeAnalysis(data []byte, info queryInfo, sourceSize int) (analysisResult
 		if err != nil || count == 0 || count > maxCapturesPerMatch || uint64(count)*12 > uint64(r.remaining()) {
 			return analysisResult{}, 0, errProtocol
 		}
-		m := match{pattern: pattern, captures: make([]capture, 0, count)}
+		m := match{captures: make([]capture, 0, count)}
 		for range count {
 			index, err := r.u32()
 			if err != nil || uint64(index) >= uint64(len(info.captures)) {
@@ -274,7 +271,7 @@ func decodeAnalysis(data []byte, info queryInfo, sourceSize int) (analysisResult
 		if err != nil || (kind != regionError && kind != regionMissing) {
 			return analysisResult{}, 0, errProtocol
 		}
-		result.regions = append(result.regions, region{start: start, end: end, missing: kind == regionMissing})
+		result.regions = append(result.regions, region{start: start, end: end})
 	}
 	return result, statusOK, nil
 }

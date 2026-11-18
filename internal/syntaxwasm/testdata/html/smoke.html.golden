@@ -1,14 +1,14 @@
 # definitions
-1:1-1:77 variable "unquoted"
+1:1-1:26 variable "unquoted"
 4:6-4:31 variable "selfclosed"
-6:1-6:34 variable "s"
-7:1-7:22 variable "st"
+6:1-6:25 variable "s"
+7:1-7:14 variable "st"
 # references
 2:2 construct "custom-tag"
 4:7 construct "x-slot" in "selfclosed"
 # imports
-1:29-1:43 source="page.html" in "unquoted"
-1:54-1:70 source="single.png" in "unquoted"
+1:29-1:43 source="page.html"
+1:54-1:70 source="single.png"
 5:4-5:26 source="  spaced.html  "
 6:14-6:24 source="lib.js" in "s"
 # gaps

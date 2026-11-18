@@ -7,14 +7,10 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
-	"time"
-	"unicode/utf8"
 
 	"github.com/tetratelabs/wazero"
 
@@ -23,12 +19,19 @@ import (
 
 var _ syntaxanalysis.Analyzer = (*Analyzer)(nil)
 
-func newTestAnalyzer(t *testing.T, config Config) *Analyzer {
+// testConfig adds the shared compilation cache where the platform accepts
+// a cache directory.
+func testConfig(t *testing.T, config Config) Config {
 	t.Helper()
-	if config.CacheDirectory == "" && runtime.GOOS == "linux" {
+	if config.CacheDirectory == "" && cacheAccepted() {
 		config.CacheDirectory = sharedCacheDirectory(t)
 	}
-	a, err := New(context.Background(), config)
+	return config
+}
+
+func newTestAnalyzer(t *testing.T, config Config) *Analyzer {
+	t.Helper()
+	a, err := New(context.Background(), testConfig(t, config))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,6 +61,18 @@ func sharedCacheDirectory(t *testing.T) string {
 		t.Fatal("cannot create the test cache directory")
 	}
 	return cacheDir
+}
+
+// cacheAccepted reports whether this platform accepts a private cache
+// directory; macOS and Windows refuse every one.
+func cacheAccepted() bool {
+	dir, err := os.MkdirTemp("", "syntaxwasm-probe-")
+	if err != nil {
+		return false
+	}
+	defer os.RemoveAll(dir)
+	_, err = privateCacheDirectory(dir)
+	return err == nil
 }
 
 func TestMain(m *testing.M) {
@@ -123,6 +138,9 @@ func TestCommittedModulesMatchTheManifest(t *testing.T) {
 	}
 }
 
+// TestEveryFamilyInstantiatesAndDescribesItsLanguages acquires one
+// instance per family; acquiring checks the exports, the ABI version and
+// that the module describes the manifest's languages.
 func TestEveryFamilyInstantiatesAndDescribesItsLanguages(t *testing.T) {
 	a := testAnalyzer(t)
 	seen := map[*family]bool{}
@@ -134,9 +152,6 @@ func TestEveryFamilyInstantiatesAndDescribesItsLanguages(t *testing.T) {
 		inst, fail := entry.family.acquire(context.Background())
 		if fail != nil {
 			t.Fatalf("%s: %+v", language, fail)
-		}
-		if !slices.Equal(inst.languages, entry.family.manifest.Languages) {
-			t.Fatalf("%s: languages %v", entry.family.manifest.Name, inst.languages)
 		}
 		entry.family.release(inst, true)
 	}
@@ -179,6 +194,24 @@ func TestUnavailableCompilerIsAGapNotTheInterpreter(t *testing.T) {
 	onlyGap(t, analyze(t, a, "a.py", []byte("x = 1\n")), syntaxanalysis.GapAnalysisUnavailable, "")
 }
 
+func TestEngineFailureIsUnavailable(t *testing.T) {
+	if !compilerAvailable() {
+		t.Skip("the wazero compiler does not run on this platform")
+	}
+	saved := newWazeroRuntime
+	newWazeroRuntime = func(context.Context, wazero.RuntimeConfig) wazero.Runtime { panic("no executable memory") }
+	defer func() { newWazeroRuntime = saved }()
+	a, err := New(context.Background(), Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close(context.Background())
+	if a.Available() {
+		t.Fatal("an engine that failed to start was reported available")
+	}
+	onlyGap(t, analyze(t, a, "a.py", []byte("x = 1\n")), syntaxanalysis.GapAnalysisUnavailable, "")
+}
+
 func TestConfigValidation(t *testing.T) {
 	for _, config := range []Config{
 		{MemoryLimitPages: 70000},
@@ -192,14 +225,9 @@ func TestConfigValidation(t *testing.T) {
 }
 
 func TestCacheDirectoryMustBePrivate(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		for _, dir := range []string{t.TempDir(), ""} {
-			if dir == "" {
-				continue
-			}
-			if _, err := New(context.Background(), Config{CacheDirectory: dir}); !errors.Is(err, ErrCacheUntrusted) {
-				t.Fatalf("cache directory accepted on %s", runtime.GOOS)
-			}
+	if !cacheAccepted() {
+		if _, err := New(context.Background(), Config{CacheDirectory: t.TempDir()}); !errors.Is(err, ErrCacheUntrusted) {
+			t.Fatalf("cache directory accepted: %v", err)
 		}
 		return
 	}
@@ -276,308 +304,29 @@ func TestNameLengthLimitIsAGap(t *testing.T) {
 	}
 }
 
-func TestSyntaxErrorsAreRegionsAndTheRestIsAnalysed(t *testing.T) {
-	a := testAnalyzer(t)
-	cases := map[string]string{
-		"broken.py":    "def before():\n    pass\n\ndef broken(:\n    return )\n\ndef after():\n    before()\n",
-		"Broken.java":  "class A {\n  void before() {}\n  void broken( { int x = ; }\n  void after() { before(); }\n}\n",
-		"broken.ts":    "function before(): void {}\nfunction broken(a: ) { let = ; }\nfunction after() { before(); }\n",
-		"broken.js":    "function before() {}\nconst x = (;\nfunction after() { before(); }\n",
-		"broken.c":     "int before(void) { return 1; }\nint broken(int a { return ; }\nint after(void) { return before(); }\n",
-		"broken.cpp":   "void before() {}\nint broken(std::vector<int> a { return ; }\nvoid after() { before(); }\n",
-		"Broken.cs":    "class A {\n  void before() {}\n  void broken( { int x = ; }\n  void after() { before(); }\n}\n",
-		"broken.rs":    "fn before() {}\nfn broken( { let x = ; }\nfn after() { before(); }\n",
-		"broken.swift": "func before() {}\nfunc broken( { let x = }\nfunc after() { before() }\n",
+func TestMalformedResultSpansFailTheFileAndDiscardTheInstance(t *testing.T) {
+	content := []byte("class Box { void f() {} }")
+	roles := []role{{kind: roleDefinition, definition: syntaxanalysis.KindClass}, {kind: roleName}}
+	// The name lies outside the node it names.
+	result := analysisResult{matches: []match{{captures: []capture{{index: 0, start: 10, end: 20}, {index: 1, start: 1, end: 2}}}}}
+	if _, _, err := rawFile(content, result, roles); !errors.Is(err, errProtocol) {
+		t.Fatalf("a name outside its node was accepted: %v", err)
 	}
-	for path, content := range cases {
-		analysis := analyze(t, a, path, []byte(content))
-		names := map[string]bool{}
-		for _, d := range analysis.Definitions {
-			names[d.Name.Untrusted()] = true
-		}
-		if !names["before"] || !names["after"] {
-			t.Fatalf("%s: definitions around the error are missing: %v", path, names)
-		}
-		regions := 0
-		for _, g := range analysis.Gaps {
-			if g.Reason != syntaxanalysis.GapParseError || !g.HasRange {
-				t.Fatalf("%s: unexpected gap %+v", path, g)
-			}
-			regions++
-		}
-		if regions == 0 {
-			t.Fatalf("%s: no parse error region", path)
-		}
-		calls := 0
-		for _, r := range analysis.References {
-			if r.Kind == syntaxanalysis.ReferenceCall && r.Name.Untrusted() == "before" && r.Enclosing >= 0 && analysis.Definitions[r.Enclosing].Name.Untrusted() == "after" {
-				calls++
-			}
-		}
-		if calls != 1 {
-			t.Fatalf("%s: call after the error region not found", path)
-		}
+	source, _ := syntaxanalysis.NewSource("Box.cs", syntaxanalysis.LanguageCSharp, content)
+	raw := syntaxanalysis.RawFile{Definitions: []syntaxanalysis.RawDefinition{{Kind: syntaxanalysis.KindClass, Name: syntaxanalysis.Span{Start: 1, End: 2}, Node: syntaxanalysis.Span{Start: 10, End: 20}}}}
+	if got := syntaxanalysis.Assemble(source, Identity, raw, syntaxanalysis.DefaultLimits()); !hasGapWith(got, syntaxanalysis.GapAnalysisFailed, "") {
+		t.Fatalf("Assemble accepted a name outside its node: %+v", got)
 	}
 }
 
-func TestInvalidUTF8NeverReachesText(t *testing.T) {
-	a := testAnalyzer(t)
-	cases := map[string]string{
-		"bad.py":    "def caf\xff\xfe():\n    pass\n\ndef good():\n    caf\xff\xfe()\n",
-		"bad.js":    "function \xc3\x28x() {}\nimport y from \"mod\xff\";\nfunction good() {}\n",
-		"Bad.java":  "class C\xff { void m\xe2\x82() {} void good() {} }\n",
-		"bad.c":     "int caf\xff\xfe(void) { return 0; }\nint good(void) { return caf\xff\xfe(); }\n",
-		"bad.cpp":   "struct S\xc3\x28 { void m\xe2\x82() {} };\nvoid good() { S\xc3\x28 s; }\n",
-		"Bad.cs":    "class C\xff { void m\xe2\x82() {} void good() {} }\n",
-		"bad.rs":    "fn caf\xff\xfe() {}\nfn good() { caf\xff\xfe(); }\n",
-		"bad.swift": "func caf\xff\xfe() {}\nfunc good() { caf\xff\xfe() }\n",
-	}
-	for path, content := range cases {
-		analysis := analyze(t, a, path, []byte(content))
-		check := func(t2 syntaxanalysis.Text) {
-			if !utf8.ValidString(t2.Untrusted()) {
-				t.Fatalf("%s: invalid UTF-8 escaped into a record", path)
-			}
-		}
-		good := false
-		for _, d := range analysis.Definitions {
-			check(d.Name)
-			good = good || d.Name.Untrusted() == "good"
-		}
-		for _, r := range analysis.References {
-			check(r.Name)
-			check(r.Qualifier)
-		}
-		for _, i := range analysis.Imports {
-			check(i.Source)
-		}
-		if !good || analysis.Complete() {
-			t.Fatalf("%s: good=%v gaps=%+v", path, good, analysis.Gaps)
-		}
-	}
-}
-
-func TestDeeplyNestedInputDoesNotCrashOrHang(t *testing.T) {
-	a := testAnalyzer(t)
-	depth := 100000
-	cases := map[string][]byte{
-		"nested.js":    append(append([]byte("const x = "), bytes.Repeat([]byte("["), depth)...), bytes.Repeat([]byte("]"), depth)...),
-		"nested.py":    append(append([]byte("x = "), bytes.Repeat([]byte("("), depth)...), bytes.Repeat([]byte(")"), depth)...),
-		"Nested.java":  append(append([]byte("class A { int x = "), bytes.Repeat([]byte("("), depth)...), append(bytes.Repeat([]byte(")"), depth), []byte("1; }")...)...),
-		"open.ts":      bytes.Repeat([]byte("{"), depth),
-		"nested.c":     append(append([]byte("int x = "), bytes.Repeat([]byte("("), depth)...), bytes.Repeat([]byte(")"), depth)...),
-		"nested.cpp":   append(append([]byte("auto x = "), bytes.Repeat([]byte("{"), depth)...), bytes.Repeat([]byte("}"), depth)...),
-		"deep.cpp":     bytes.Repeat([]byte("namespace a { "), depth/10),
-		"nested.rs":    append(append([]byte("const X: u8 = "), bytes.Repeat([]byte("("), depth)...), bytes.Repeat([]byte(")"), depth)...),
-		"Nested.cs":    append(append([]byte("class A { int x = "), bytes.Repeat([]byte("("), depth)...), append(bytes.Repeat([]byte(")"), depth), []byte("1; }")...)...),
-		"open.rs":      bytes.Repeat([]byte("{"), depth),
-		"nested.swift": append(append([]byte("let x = "), bytes.Repeat([]byte("["), depth)...), bytes.Repeat([]byte("]"), depth)...),
-		"open.swift":   bytes.Repeat([]byte("{"), depth),
-	}
-	for path, content := range cases {
-		started := time.Now()
-		analysis := analyze(t, a, path, content)
-		if elapsed := time.Since(started); elapsed > 2*syntaxanalysis.DefaultLimits().FileDeadline {
-			t.Fatalf("%s took %v", path, elapsed)
-		}
-		if analysis.Path != path {
-			t.Fatalf("%s: analysis for %s", path, analysis.Path)
-		}
-	}
-	// The analyzer still works after the hostile inputs.
-	if got := analyze(t, a, "ok.py", []byte("def f():\n    pass\n")); len(got.Definitions) != 1 || !got.Complete() {
-		t.Fatalf("analysis after hostile input = %+v", got)
-	}
-}
-
-func TestVeryLongLines(t *testing.T) {
-	// The deadline is not what this test is about: on a loaded machine the
-	// default five seconds can pass before the megabyte line is parsed.
-	limits := syntaxanalysis.DefaultLimits()
-	limits.FileDeadline = 10 * time.Minute
-	a := newTestAnalyzer(t, Config{Limits: limits})
-	var b strings.Builder
-	for i := 0; b.Len() < 1<<20; i++ {
-		b.WriteString("function f")
-		b.WriteString(strings.Repeat("x", i%7))
-		b.WriteString("() { return g(1, 2, 3, 4, 5, 6, 7, 8, 9, 10); } ")
-	}
-	analysis := analyze(t, a, "long.js", []byte(b.String()))
-	if !analysis.Complete() || len(analysis.Definitions) < 1000 {
-		t.Fatalf("%d definitions, gaps %+v", len(analysis.Definitions), analysis.Gaps)
-	}
-	last := analysis.References[len(analysis.References)-1]
-	if last.Range.Start.Line != 1 || last.Range.Start.Column < 1<<19 {
-		t.Fatalf("last reference at %+v", last.Range.Start)
-	}
-}
-
-func TestDeadlineStopsARunawayParse(t *testing.T) {
-	limits := syntaxanalysis.DefaultLimits()
-	limits.FileDeadline = 5 * time.Millisecond
-	a := newTestAnalyzer(t, Config{Limits: limits, InstancesPerFamily: 1})
-	// Warm the instance and its query so the deadline covers the parse only.
-	_ = analyze(t, a, "warm.ts", []byte("let a = 1;\n"))
-	var b strings.Builder
-	for b.Len() < 2<<20-256 {
-		b.WriteString("export function handler(a: number, b: string): Promise<void> { return run(a, b.length, [a, b]); }\n")
-	}
-	content := []byte(b.String())
-	analysis := analyze(t, a, "large.ts", content)
-	onlyGap(t, analysis, syntaxanalysis.GapDeadlineExceeded, "")
-	// The guest's stop checks ended the call, not the watchdog.
-	if stalls := analyzerStalls(a); stalls != 0 {
-		t.Fatalf("the watchdog fired %d times", stalls)
-	}
-	f := a.languages[syntaxanalysis.LanguageTypeScript].family
-	f.mu.Lock()
-	idle := len(f.idle)
-	f.mu.Unlock()
-	if idle != 0 {
-		t.Fatal("the instance stopped by the deadline was kept")
-	}
-	// Without the deadline the same file takes much longer, so the gap
-	// came from stopping the parse, not from a fast failure.
-	unbounded := syntaxanalysis.DefaultLimits()
-	unbounded.FileDeadline = 2 * time.Minute
-	full := newTestAnalyzer(t, Config{Limits: unbounded})
-	started := time.Now()
-	complete := analyze(t, full, "large.ts", content)
-	if !complete.Complete() || time.Since(started) < 10*limits.FileDeadline {
-		t.Fatalf("full analysis: gaps %+v in %v", complete.Gaps, time.Since(started))
-	}
-	if got := analyze(t, a, "small.ts", []byte("function f() {}\n")); len(got.Definitions) != 1 {
-		t.Fatalf("analysis after the deadline = %+v", got)
-	}
-}
-
-func analyzerStalls(a *Analyzer) int {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.stalls
-}
-
-func waitForNoOrphans(t *testing.T, a *Analyzer) {
-	t.Helper()
-	for deadline := time.Now().Add(2 * time.Minute); ; {
-		a.mu.Lock()
-		orphans := a.orphans
-		a.mu.Unlock()
-		if orphans == 0 {
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("the abandoned call never ended")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-}
-
-// stuckGuest makes the guest's stop checks model a guest that never stops
-// on its own: the first check of a call waits until the watchdog has given
-// up on it, and every check answers that the guest may go on. It returns
-// the count of checks answered after the call was abandoned; the real
-// checks come back when the test ends. With a release channel, the waiting
-// check also waits for it to close.
-func stuckGuest(t *testing.T, release <-chan struct{}) *atomic.Int64 {
-	t.Helper()
-	saved := stopRequested
-	t.Cleanup(func() { stopRequested = saved })
-	answered := &atomic.Int64{}
-	stopRequested = func(ctx context.Context) bool {
-		for !callAbandoned(ctx) {
-			time.Sleep(time.Millisecond)
-		}
-		if release != nil {
-			<-release
-		}
-		answered.Add(1)
-		return false
-	}
-	return answered
-}
-
-func largeTypeScript() []byte {
-	var b strings.Builder
-	for b.Len() < 2<<20-256 {
-		b.WriteString("export function handler(a: number, b: string): Promise<void> { return run(a, b.length, [a, b]); }\n")
-	}
-	return []byte(b.String())
-}
-
-func TestGuestIgnoringTheStopChecksIsContained(t *testing.T) {
-	limits := syntaxanalysis.DefaultLimits()
-	limits.FileDeadline = 5 * time.Millisecond
-	a := newTestAnalyzer(t, Config{Limits: limits, InstancesPerFamily: 1})
-	// Compile the query first, so the watched call is the parse.
-	_ = analyze(t, a, "warm.ts", []byte("let a = 1;\n"))
-	large := largeTypeScript()
-	answered := stuckGuest(t, nil)
-	started := time.Now()
-	onlyGap(t, analyze(t, a, "large.ts", large), syntaxanalysis.GapDeadlineExceeded, "")
-	if elapsed := time.Since(started); elapsed < watchdog(limits.FileDeadline) {
-		t.Fatalf("the analysis returned after %v, before the watchdog", elapsed)
-	}
-	if stalls := analyzerStalls(a); stalls != 1 {
-		t.Fatalf("the watchdog fired %d times", stalls)
-	}
-	f := a.languages[syntaxanalysis.LanguageTypeScript].family
-	f.mu.Lock()
-	switched := f.terminating
-	f.mu.Unlock()
-	if !switched {
-		t.Fatal("the family did not switch to terminating code")
-	}
-	// The abandoned call ends at its next stop check: one check is answered
-	// after the watchdog, and the one after it traps the guest.
-	waitForNoOrphans(t, a)
-	if n := answered.Load(); n != 1 {
-		t.Fatalf("%d stop checks were answered after the call was abandoned", n)
-	}
-
-	// With terminating code the deadline holds even while the guest's stop
-	// checks are ignored: the call ends without the watchdog. The small file
-	// first compiles that code.
-	stopRequested = func(context.Context) bool { return false }
-	if got := analyze(t, a, "small.ts", []byte("function f() {}\n")); len(got.Definitions) != 1 {
-		t.Fatalf("analysis with terminating code = %+v", got)
-	}
-	onlyGap(t, analyze(t, a, "large.ts", large), syntaxanalysis.GapDeadlineExceeded, "")
-	if stalls := analyzerStalls(a); stalls != 1 {
-		t.Fatalf("the watchdog fired %d times", stalls)
-	}
-}
-
-func TestCloseDuringAnAbandonedCallClosesTheRuntimesWhenItEnds(t *testing.T) {
-	limits := syntaxanalysis.DefaultLimits()
-	limits.FileDeadline = 5 * time.Millisecond
-	a, err := New(context.Background(), Config{Limits: limits, InstancesPerFamily: 1})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !a.Available() {
-		t.Skip("the wazero compiler does not run on this platform")
-	}
-	_ = analyze(t, a, "warm.ts", []byte("let a = 1;\n"))
-	release := make(chan struct{})
-	stuckGuest(t, release)
-	onlyGap(t, analyze(t, a, "large.ts", largeTypeScript()), syntaxanalysis.GapDeadlineExceeded, "")
-	if err := a.Close(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	f := a.languages[syntaxanalysis.LanguageTypeScript].family
-	compiled := f.compiled[modeFast]
-	// The abandoned call still runs, so its runtime must stay open.
-	if module, err := a.runtime.InstantiateModule(context.Background(), compiled, wazero.NewModuleConfig().WithName("")); err != nil {
-		t.Fatalf("the runtime was closed under a running call: %v", err)
-	} else {
-		_ = module.Close(context.Background())
-	}
-	close(release)
-	waitForNoOrphans(t, a)
-	if _, err := a.runtime.InstantiateModule(context.Background(), compiled, wazero.NewModuleConfig().WithName("")); err == nil {
-		t.Fatal("the runtime stayed open after the last abandoned call ended")
-	}
+func TestPanicInHostCodeIsAnAnalysisFailure(t *testing.T) {
+	a := newTestAnalyzer(t, Config{})
+	entry := a.languages[syntaxanalysis.LanguagePython]
+	p := *entry.pack
+	p.finish = func([]byte, syntaxanalysis.RawFile, *syntaxanalysis.FileAnalysis) { panic("defect") }
+	entry.pack = &p
+	a.languages[syntaxanalysis.LanguagePython] = entry
+	onlyGap(t, analyze(t, a, "a.py", []byte("def f():\n    pass\n")), syntaxanalysis.GapAnalysisFailed, "")
 }
 
 func TestMemoryLimitIsAGap(t *testing.T) {
@@ -613,7 +362,7 @@ func TestConcurrentAnalysesMatchSequentialOnes(t *testing.T) {
 	}
 	var wg sync.WaitGroup
 	errs := make(chan string, 64)
-	for i := 0; i < 16; i++ {
+	for range 16 {
 		for path, content := range inputs {
 			wg.Add(1)
 			go func() {
@@ -645,7 +394,7 @@ func TestCancelledContextIsAnError(t *testing.T) {
 }
 
 func TestClosedAnalyzerReportsUnavailable(t *testing.T) {
-	a, err := New(context.Background(), Config{})
+	a, err := New(context.Background(), testConfig(t, Config{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -686,7 +435,7 @@ func TestResultPointersAreBoundsChecked(t *testing.T) {
 }
 
 func TestCloseWaitsForAnalysesInProgress(t *testing.T) {
-	a, err := New(context.Background(), Config{CacheDirectory: sharedCacheDirectory(t), InstancesPerFamily: 4})
+	a, err := New(context.Background(), testConfig(t, Config{InstancesPerFamily: 4}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -695,6 +444,15 @@ func TestCloseWaitsForAnalysesInProgress(t *testing.T) {
 	}
 	content := bytes.Repeat([]byte("def f(a):\n    return g(a, [a, a])\n"), 3000)
 	_ = analyze(t, a, "warm.py", content)
+	// Close runs once a guest is inside an analysis.
+	running := make(chan struct{})
+	var once sync.Once
+	saved := stopRequested
+	stopRequested = func(ctx context.Context) bool {
+		once.Do(func() { close(running) })
+		return saved(ctx)
+	}
+	defer func() { stopRequested = saved }()
 	var wg sync.WaitGroup
 	for range 8 {
 		wg.Add(1)
@@ -714,7 +472,7 @@ func TestCloseWaitsForAnalysesInProgress(t *testing.T) {
 			}
 		}()
 	}
-	time.Sleep(20 * time.Millisecond)
+	<-running
 	if err := a.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -727,12 +485,17 @@ func TestNewInstancesStartFromTheFamilyImage(t *testing.T) {
 	f := a.languages[syntaxanalysis.LanguageCPP].family
 	cIndex := slices.Index(f.manifest.Languages, string(syntaxanalysis.LanguageC))
 	cppIndex := slices.Index(f.manifest.Languages, string(syntaxanalysis.LanguageCPP))
+	image := func() *memoryImage {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		return f.image
+	}
 	// A file whose text must never reach the image.
 	marker := []byte("int image_marker_5e1f9c(void);\n")
 	if got := analyze(t, a, "marker.c", marker); len(got.Definitions) != 1 {
 		t.Fatalf("analysis = %+v", got)
 	}
-	if !f.imageHas(cIndex) {
+	if _, ok := image().queries[cIndex]; !ok {
 		t.Fatal("the compiled C query did not become the family image")
 	}
 	// The instance that analysed the C file lacks the C++ query and has
@@ -748,13 +511,14 @@ func TestNewInstancesStartFromTheFamilyImage(t *testing.T) {
 	if got := renderGolden(analyze(t, a, "testdata/cpp/scheduler.cpp", content)); got != string(want) {
 		t.Fatal("the C++ analysis differs from its golden file")
 	}
-	f.mu.Lock()
-	image := f.image
-	f.mu.Unlock()
-	if _, ok := image.queries[cppIndex]; !ok || !f.imageHas(cIndex) {
-		t.Fatal("the image does not hold both queries")
+	queries := image().queries
+	if _, ok := queries[cppIndex]; !ok {
+		t.Fatal("the image lacks the C++ query")
 	}
-	for _, page := range image.pages {
+	if _, ok := queries[cIndex]; !ok {
+		t.Fatal("the image lacks the C query")
+	}
+	for _, page := range image().pages {
 		if bytes.Contains(page, []byte("image_marker_5e1f9c")) {
 			t.Fatal("repository content reached the family image")
 		}

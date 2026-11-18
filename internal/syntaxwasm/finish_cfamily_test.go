@@ -204,46 +204,55 @@ TEST(Box, Works) {
 }
 
 func TestHeadersInCPlusPlusAreAnalysedAsCPlusPlus(t *testing.T) {
+	a := testAnalyzer(t)
 	cpp := []string{
-		"namespace a { int f(); }\n",
+		"namespace ui {\nclass Widget {\npublic:\n  void draw();\n};\n}\n",
 		"template <typename T> T id(T v);\n",
-		"class Widget;\n",
-		"class Widget : public Base {};\n",
-		"struct S {\npublic:\n  int x;\n};\n",
 		"std::string name(void);\n",
-		"using namespace std;\n",
 		"struct V { virtual ~V(); };\n",
-		"bool operator==(const A &, const A &);\n",
 	}
 	c := []string{
 		"#ifdef __cplusplus\nextern \"C\" {\n#endif\nint f(void);\n#ifdef __cplusplus\n}\n#endif\n",
+		"int virtual;\n",
+		"struct bits { unsigned virtual : 1; };\n",
+		"struct ops { int operator; };\n",
+		"int noexcept;\n",
 		"struct node { struct node *new; int class; };\n",
 		"[[gnu::unused]] static int counter;\n",
-		"/* namespace a { class B {}; } */\nint g(void);\n",
-		"const char *s = \"std::string\";\n",
-		"struct flags { unsigned public : 1; };\n",
-		"#define CLASS class X {\nint h(void);\n",
 	}
 	for _, text := range cpp {
-		if got := headerLanguage("x.h", []byte(text)); got != syntaxanalysis.LanguageCPP {
-			t.Errorf("%q: %s", text, got)
+		if got := analyze(t, a, "x.h", []byte(text)); got.Language != syntaxanalysis.LanguageCPP || !got.Complete() || len(got.Definitions) == 0 {
+			t.Errorf("%q: language %s, gaps %+v, %d definitions", text, got.Language, got.Gaps, len(got.Definitions))
 		}
-		if got := headerLanguage("x.c", []byte(text)); got != syntaxanalysis.LanguageC {
-			t.Errorf("%q in a .c file: %s", text, got)
+		if got := analyze(t, a, "x.c", []byte(text)); got.Language != syntaxanalysis.LanguageC {
+			t.Errorf("%q in a .c file: %s", text, got.Language)
 		}
 	}
 	for _, text := range c {
-		if got := headerLanguage("x.h", []byte(text)); got != syntaxanalysis.LanguageC {
-			t.Errorf("%q: %s", text, got)
+		if got := analyze(t, a, "x.h", []byte(text)); got.Language != syntaxanalysis.LanguageC {
+			t.Errorf("%q: %s", text, got.Language)
 		}
 	}
+}
+
+func TestMemberAccessCoversDeeplyNestedClasses(t *testing.T) {
 	a := testAnalyzer(t)
-	header := analyze(t, a, "widget.h", []byte("namespace ui {\nclass Widget {\npublic:\n  void draw();\n};\n}\n"))
-	if header.Language != syntaxanalysis.LanguageCPP || !header.Complete() || len(header.Definitions) != 3 {
-		t.Fatalf("C++ header: language %s, gaps %+v, %d definitions", header.Language, header.Gaps, len(header.Definitions))
+	var b strings.Builder
+	const depth = 64
+	for i := range depth {
+		fmt.Fprintf(&b, "struct S%d {\n  int m%d;\nprivate:\n  int p%d;\npublic:\n", i, i, i)
 	}
-	plain := analyze(t, a, "plain.h", []byte("struct point { int x; };\nint area(struct point p);\n"))
-	if plain.Language != syntaxanalysis.LanguageC || !plain.Complete() {
-		t.Fatalf("C header: language %s, gaps %+v", plain.Language, plain.Gaps)
+	b.WriteString("/*" + strings.Repeat(" long comment ", 7000) + "*/\n")
+	for range depth {
+		b.WriteString("};\n")
+	}
+	analysis := analyze(t, a, "nested.hpp", []byte(b.String()))
+	if !analysis.Complete() {
+		t.Fatalf("gaps %+v", analysis.Gaps)
+	}
+	for i, d := range analysis.Definitions {
+		if want := d.Name.Untrusted()[0] != 'p'; d.Exported != want {
+			t.Errorf("%s exported %v, want %v", analysis.QualifiedName(i).Untrusted(), d.Exported, want)
+		}
 	}
 }

@@ -3,40 +3,46 @@ package syntaxwasm
 import (
 	"slices"
 	"strings"
-	"unicode"
 
 	"github.com/georgejieh/open-trestle/syntaxanalysis"
 )
 
-// finishRust applies the visibility that members take from their owner and
-// removes what the syntax only seems to define. The members of a trait take
-// the trait's visibility, enum variants take the enum's, and the members of
-// an impl of a trait are exported because the query marks such an impl
-// exported; a member of an inherent impl is exported only by its own `pub`.
-// An impl named after one of its own type parameters, as in a blanket
-// impl, is not a definition of any type. The name Self is a keyword for the
-// enclosing type, so it is not kept as a reference.
+// finishRust sets the visibility the syntax implies and removes what it
+// only seems to define. The members of a trait and the variants of an enum
+// are as visible as their owner, and so are the members of an impl of a
+// trait, because the trait decides who can call them; a member of an
+// inherent impl is exported by its own `pub`. An impl block has no
+// visibility of its own. An impl named after one of its own type
+// parameters, as in a blanket impl, is not a definition of any type. The
+// name Self is a keyword for the enclosing type, so it is not kept as a
+// reference.
 func finishRust(content []byte, _ syntaxanalysis.RawFile, a *syntaxanalysis.FileAnalysis) {
+	drop := make([]bool, len(a.Definitions))
 	for i := range a.Definitions {
 		d := &a.Definitions[i]
+		if d.Kind == syntaxanalysis.KindClass {
+			// The query marks the impl of a trait exported.
+			traitImpl := d.Exported
+			d.Exported = true
+			drop[i] = rustImplParameters(content, *d)[d.Name.Untrusted()]
+			for j := i + 1; j < len(a.Definitions) && a.Definitions[j].Range.StartByte < d.Range.EndByte; j++ {
+				if a.Definitions[j].Parent == i && traitImpl {
+					a.Definitions[j].Exported = true
+				}
+			}
+			continue
+		}
 		if d.Parent < 0 {
 			continue
 		}
-		if parent := a.Definitions[d.Parent]; parent.Exported {
-			switch parent.Kind {
-			case syntaxanalysis.KindInterface, syntaxanalysis.KindClass:
-				d.Exported = true
-			case syntaxanalysis.KindEnum:
-				d.Exported = d.Exported || d.Kind == syntaxanalysis.KindConstant
-			}
+		switch a.Definitions[d.Parent].Kind {
+		case syntaxanalysis.KindInterface:
+			d.Exported = true
+		case syntaxanalysis.KindEnum:
+			d.Exported = d.Exported || d.Kind == syntaxanalysis.KindConstant
 		}
 	}
-	for i := len(a.Definitions) - 1; i >= 0; i-- {
-		d := a.Definitions[i]
-		if d.Kind == syntaxanalysis.KindClass && rustImplParameters(content, d)[d.Name.Untrusted()] {
-			removeDefinition(a, i)
-		}
-	}
+	removeDefinitions(a, drop)
 	a.References = slices.DeleteFunc(a.References, func(r syntaxanalysis.Reference) bool {
 		return r.Name.Untrusted() == "Self"
 	})
@@ -59,9 +65,9 @@ func rustImplParameters(content []byte, d syntaxanalysis.Definition) map[string]
 		if text == "" || text[0] == '\'' {
 			return
 		}
-		end = strings.IndexFunc(text, func(r rune) bool { return r != '_' && !unicode.IsLetter(r) && !unicode.IsDigit(r) })
-		if end < 0 {
-			end = len(text)
+		end = 0
+		for end < len(text) && identByte(text[end]) {
+			end++
 		}
 		params[text[:end]] = true
 	}
@@ -88,29 +94,4 @@ func rustImplParameters(content []byte, d syntaxanalysis.Definition) map[string]
 		}
 	}
 	return map[string]bool{}
-}
-
-// removeDefinition drops one definition and keeps every index that referred
-// to it or to a later definition valid: its members move up to its parent.
-func removeDefinition(a *syntaxanalysis.FileAnalysis, at int) {
-	up := a.Definitions[at].Parent
-	remap := func(i int) int {
-		switch {
-		case i == at:
-			return up
-		case i > at:
-			return i - 1
-		}
-		return i
-	}
-	a.Definitions = slices.Delete(a.Definitions, at, at+1)
-	for i := range a.Definitions {
-		a.Definitions[i].Parent = remap(a.Definitions[i].Parent)
-	}
-	for i := range a.References {
-		a.References[i].Enclosing = remap(a.References[i].Enclosing)
-	}
-	for i := range a.Imports {
-		a.Imports[i].Enclosing = remap(a.Imports[i].Enclosing)
-	}
 }

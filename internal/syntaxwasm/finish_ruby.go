@@ -2,6 +2,7 @@ package syntaxwasm
 
 import (
 	"bytes"
+	"slices"
 	"sort"
 
 	"github.com/georgejieh/open-trestle/syntaxanalysis"
@@ -48,13 +49,20 @@ func finishRuby(content []byte, _ syntaxanalysis.RawFile, a *syntaxanalysis.File
 	a.References = kept
 }
 
+// rubySingletonClass reports whether the definition starting at start is
+// written class << self. A singleton class of another object stays a
+// class named after that object.
 func rubySingletonClass(content []byte, start int) bool {
-	rest := content[start:]
-	if !bytes.HasPrefix(rest, []byte("class")) {
+	rest, ok := bytes.CutPrefix(content[start:], []byte("class"))
+	if !ok {
 		return false
 	}
-	rest = bytes.TrimLeft(rest[len("class"):], " \t")
-	return bytes.HasPrefix(rest, []byte("<<"))
+	rest, ok = bytes.CutPrefix(bytes.TrimLeft(rest, " \t"), []byte("<<"))
+	if !ok {
+		return false
+	}
+	rest, ok = bytes.CutPrefix(bytes.TrimLeft(rest, " \t"), []byte("self"))
+	return ok && (len(rest) == 0 || !identByte(rest[0]))
 }
 
 // rubySelfMethod reports whether the definition starting at start is
@@ -170,9 +178,9 @@ func rubyVisibility(content []byte, a *syntaxanalysis.FileAnalysis) {
 		case syntaxanalysis.KindField:
 			d.Exported = false
 		case syntaxanalysis.KindFunction, syntaxanalysis.KindMethod, syntaxanalysis.KindConstructor:
-			d.Exported = parent.Exported && scope.methodVisibility(content, d) == "public"
+			d.Exported = scope.methodVisibility(content, d) == "public"
 		default:
-			d.Exported = parent.Exported && (scope == nil || !scope.hidden[d.Name.Untrusted()])
+			d.Exported = scope == nil || !scope.hidden[d.Name.Untrusted()]
 		}
 	}
 }
@@ -233,7 +241,7 @@ func rubyArguments(content []byte, pos int) (int, []string) {
 	var symbols []string
 	for i < len(content) && content[i] == ':' {
 		j := i + 1
-		for j < len(content) && ((isWordByte(content[j]) && content[j] != '\\') || content[j] == '?' || content[j] == '!') {
+		for j < len(content) && (identByte(content[j]) || content[j] == '?' || content[j] == '!') {
 			j++
 		}
 		if j < len(content) && content[j] == '=' && (j+1 >= len(content) || content[j+1] != '>') {
@@ -252,44 +260,18 @@ func rubyArguments(content []byte, pos int) (int, []string) {
 	return start, symbols
 }
 
-// rubyFoldSingletons removes the singleton-class definitions and points
-// everything that referred to one at the definition around it.
+// rubyFoldSingletons removes the singleton-class definitions; what they
+// held moves to the definition around them. A method left outside a class
+// or module is a function.
 func rubyFoldSingletons(a *syntaxanalysis.FileAnalysis, singleton []bool) {
-	folded := false
-	for _, s := range singleton {
-		folded = folded || s
-	}
-	if !folded {
+	if !slices.Contains(singleton, true) {
 		return
 	}
-	mapped := make([]int, len(a.Definitions))
-	remap := func(i int) int {
-		if i < 0 {
-			return -1
-		}
-		return mapped[i]
-	}
-	kept := make([]syntaxanalysis.Definition, 0, len(a.Definitions))
-	for i, d := range a.Definitions {
-		if singleton[i] {
-			mapped[i] = remap(d.Parent)
-			continue
-		}
-		mapped[i] = len(kept)
-		d.Parent = remap(d.Parent)
-		kept = append(kept, d)
-	}
-	for i := range kept {
-		d := &kept[i]
-		if d.Kind == syntaxanalysis.KindMethod && (d.Parent < 0 || !kept[d.Parent].Kind.Container()) {
+	removeDefinitions(a, singleton)
+	for i := range a.Definitions {
+		d := &a.Definitions[i]
+		if d.Kind == syntaxanalysis.KindMethod && (d.Parent < 0 || !a.Definitions[d.Parent].Kind.Container()) {
 			d.Kind = syntaxanalysis.KindFunction
 		}
-	}
-	a.Definitions = kept
-	for i := range a.References {
-		a.References[i].Enclosing = remap(a.References[i].Enclosing)
-	}
-	for i := range a.Imports {
-		a.Imports[i].Enclosing = remap(a.Imports[i].Enclosing)
 	}
 }

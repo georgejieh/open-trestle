@@ -8,8 +8,9 @@ import (
 )
 
 // finishJava applies the implicit visibility of interface and annotation
-// members and of enum constants, which the syntax does not spell out.
-func finishJava(_ []byte, _ syntaxanalysis.RawFile, a *syntaxanalysis.FileAnalysis) {
+// members, public unless declared private, and of enum constants, which
+// the syntax does not spell out.
+func finishJava(content []byte, _ syntaxanalysis.RawFile, a *syntaxanalysis.FileAnalysis) {
 	for i := range a.Definitions {
 		d := &a.Definitions[i]
 		if d.Parent < 0 {
@@ -18,9 +19,9 @@ func finishJava(_ []byte, _ syntaxanalysis.RawFile, a *syntaxanalysis.FileAnalys
 		parent := a.Definitions[d.Parent]
 		switch {
 		case parent.Kind == syntaxanalysis.KindInterface:
-			d.Exported = true
+			d.Exported = !codeWords(content[d.Range.StartByte:d.NameRange.StartByte])["private"]
 		case parent.Kind == syntaxanalysis.KindEnum && d.Kind == syntaxanalysis.KindConstant:
-			d.Exported = parent.Exported
+			d.Exported = true
 		}
 	}
 }

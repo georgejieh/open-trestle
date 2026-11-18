@@ -1,10 +1,10 @@
 # definitions
-5:1-7:2 module "outer::inner"
+5:1-7:2 module "outer::inner" exported
   6:1-6:20 variable "outer::inner.deep_value" exported
 12:1-15:2 module "namespace"
   13:1-13:24 variable "namespace.hidden_counter"
   14:1-14:43 function "namespace.hidden_helper"
-17:1-61:2 module "sched"
+17:1-61:2 module "sched" exported
   20:1-20:31 variable "sched.instances" exported container="Pool"
   23:1-23:63 constructor "sched.Pool" exported container="Pool"
   26:1-26:31 method "sched.~Pool" exported container="Pool"
@@ -12,9 +12,9 @@
   38:1-41:2 method "sched.operator==" exported container="Pool"
   43:1-54:2 method "sched.defaults" exported container="Config"
   56:1-59:2 function "sched.operator new" exported
-63:1-70:2 module "detail_ns"
-  64:1-64:25 variable "detail_ns.alpha" exported
-  64:1-64:25 variable "detail_ns.beta" exported
+63:1-70:2 module "detail_ns" exported
+  64:1-64:14 variable "detail_ns.alpha" exported
+  64:14-64:25 variable "detail_ns.beta" exported
   65:12-65:33 function "detail_ns.c_linkage" exported
   67:1-67:22 function "detail_ns.block_one" exported
   68:1-68:20 function "detail_ns.block_two" exported

@@ -12,8 +12,10 @@
 (class_definition body: (block (expression_statement (assignment left: (identifier) @name) @definition.field)))
 (module (type_alias_statement left: (type (identifier) @name)) @definition.type)
 
-; __all__ lists the module's exported names.
+; __all__ lists the module's exported names. The name __all__ itself is one,
+; so that an empty list still marks the module as having an export list.
 (module (expression_statement (assignment left: (identifier) @match.__all__ right: [(list (string (string_content) @name)) (tuple (string (string_content) @name))])) @export)
+(module (expression_statement (assignment left: (identifier) @match.__all__ @name)) @export)
 
 ; Calls and decorators.
 (call function: (identifier) @name) @reference.call

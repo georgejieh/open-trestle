@@ -85,11 +85,11 @@
   363:5-366:6 method "InventoryService.auditName" exported
   368:5-372:6 method "InventoryService.close" exported
 375:1-381:2 interface "Audited"
-  378:5-378:41 method "Audited.category" exported
-  380:5-380:27 method "Audited.level" exported
+  378:5-378:41 method "Audited.category"
+  380:5-380:27 method "Audited.level"
 383:1-386:2 interface "NonEmpty"
 388:1-390:2 interface "Auditable"
-  389:5-389:24 method "Auditable.auditName" exported
+  389:5-389:24 method "Auditable.auditName"
 392:1-398:2 class "BaseService"
   393:28-393:32 field "BaseService.name"
   395:5-397:6 constructor "BaseService.BaseService"

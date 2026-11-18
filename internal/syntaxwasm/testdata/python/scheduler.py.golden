@@ -1,5 +1,5 @@
 # definitions
-24:1-32:2 variable "__all__"
+24:1-32:2 variable "__all__" exported
 34:1-34:20 constant "DEFAULT_WORKERS"
 35:1-35:16 constant "MAX_RETRIES"
 36:1-36:20 constant "BACKOFF_BASE"

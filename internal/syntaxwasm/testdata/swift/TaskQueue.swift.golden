@@ -69,12 +69,12 @@
 190:1-193:2 enum "QueueError" exported
   191:5-191:25 constant "QueueError.outOfRange" exported
   192:5-192:15 constant "QueueError.empty" exported
-195:1-201:2 class "TaskQueue"
+195:1-201:2 class "TaskQueue" exported
   196:5-196:65 field "TaskQueue.description" exported
   198:5-200:6 method "TaskQueue.firstTitle" exported
-203:1-207:2 class "Array"
+203:1-207:2 class "Array" exported
   204:5-206:6 method "Array.highest"
-209:1-211:2 class "Optional"
+209:1-211:2 class "Optional" exported
   210:5-210:40 field "Optional.isPresent"
 213:1-217:2 class "Box" exported
   214:5-214:20 field "Box.contents"
@@ -83,9 +83,9 @@
 219:1-226:2 class "Counter" exported
   220:5-220:26 field "Counter.count"
   222:5-225:6 method "Counter.increment"
-228:1-232:2 class "Prioritized"
+228:1-232:2 class "Prioritized" exported
   229:5-231:6 method "Prioritized.scaled"
-234:1-238:2 class "Collection"
+234:1-238:2 class "Collection" exported
   235:5-237:6 method "Collection.totalLevel" exported
 240:1-254:2 struct "Batch" exported
   241:5-241:37 field "Batch.storage"

@@ -79,8 +79,10 @@ type role struct {
 	kind       roleKind
 	definition syntaxanalysis.DefinitionKind
 	reference  syntaxanalysis.ReferenceKind
-	// text is the required text of a roleMatch capture.
+	// text is the required text of a roleMatch capture, compared ignoring
+	// ASCII case when fold is set.
 	text string
+	fold bool
 }
 
 type roleKind int
@@ -109,8 +111,9 @@ const (
 // captureRoles maps every capture name of a query to its role and refuses
 // a name outside the vocabulary. Names starting with an underscore are
 // helpers for anchoring patterns and carry no meaning. A capture named
-// match.<word> keeps its match only when the captured text is <word>; it
-// stands in for a text predicate, which the shim does not evaluate.
+// match.<word> keeps its match only when the captured text is <word>, and
+// nocase.<word> when it is <word> in any ASCII case; they stand in for text
+// predicates, which the shim does not evaluate.
 func captureRoles(names []string) ([]role, error) {
 	roles := make([]role, len(names))
 	for i, name := range names {
@@ -123,6 +126,12 @@ func captureRoles(names []string) ([]role, error) {
 				return nil, errQueryPack
 			}
 			roles[i] = role{kind: roleMatch, text: word}
+		case strings.HasPrefix(name, "nocase."):
+			word := strings.TrimPrefix(name, "nocase.")
+			if word == "" {
+				return nil, errQueryPack
+			}
+			roles[i] = role{kind: roleMatch, text: word, fold: true}
 		case strings.HasPrefix(name, "definition."):
 			kind := syntaxanalysis.DefinitionKind(strings.TrimPrefix(name, "definition."))
 			if !kind.Valid() {
@@ -216,7 +225,7 @@ matches:
 			case roleEmbeddedTag:
 				tag = span
 			case roleMatch:
-				if string(content[c.start:c.end]) != r.text {
+				if text := string(content[c.start:c.end]); text != r.text && !(r.fold && strings.EqualFold(text, r.text)) {
 					continue matches
 				}
 			}
@@ -233,6 +242,13 @@ matches:
 			return syntaxanalysis.RawFile{}, nil, errQueryPack
 		}
 		node := syntaxanalysis.Span{Start: record.start, End: record.end}
+		// A name lies inside its node; finishers rely on it. A qualifier or
+		// a shared import prefix may lie outside.
+		for _, part := range [...]syntaxanalysis.Span{name, imported, alias, container} {
+			if recordRole.kind != roleExport && !part.Empty() && !node.Contains(part) {
+				return syntaxanalysis.RawFile{}, nil, errProtocol
+			}
+		}
 		switch recordRole.kind {
 		case roleDefinition:
 			raw.Definitions = append(raw.Definitions, syntaxanalysis.RawDefinition{Kind: recordRole.definition, Name: name, Node: node, Container: container, Exported: exported})

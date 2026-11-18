@@ -51,7 +51,7 @@
   108:5-110:23 method "Auditor.audit" exported
 113:1-115:2 interface "Visitor"
   114:5-114:38 method "Visitor.visit"
-117:1-143:2 class "Entry"
+117:1-143:2 class "Entry" exported
   118:5-118:44 constant "Entry.EMPTY_TAG" exported
   120:5-129:6 method "Entry.new" exported
   131:5-134:6 method "Entry.with_memo" exported
@@ -59,7 +59,7 @@
   140:5-142:6 method "Entry.tag_count"
 145:1-149:2 class "Entry" exported
   146:5-148:6 method "Entry.default" exported
-151:1-231:2 class "Ledger"
+151:1-231:2 class "Ledger" exported
   152:5-162:6 method "Ledger.new" exported
   164:5-170:6 method "Ledger.open_account" exported
   172:5-195:6 method "Ledger.post" exported

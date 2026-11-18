@@ -13,9 +13,9 @@
 8:1-8:24 interface "P"
   8:14-8:22 method "P.f"
 9:1-9:17 interface "Q"
-10:1-10:35 class "Point"
+10:1-10:35 class "Point" exported
   10:22-10:33 method "Point.f"
-11:1-11:41 class "Array"
+11:1-11:41 class "Array" exported
   11:28-11:39 method "Array.f"
 12:1-12:29 function "hidden"
 13:1-13:29 function "alsoHidden"
@@ -36,7 +36,7 @@
   24:5-24:39 method "Point.scaled" exported
   25:5-25:34 method "Point.hiddenScale"
   26:5-26:32 field "Point.magnitude" exported
-28:1-28:98 class "Collection"
+28:1-28:98 class "Collection" exported
   28:49-28:96 method "Collection.second"
 29:1-35:2 class "Opened" exported
   30:5-30:31 method "Opened.overridable" exported

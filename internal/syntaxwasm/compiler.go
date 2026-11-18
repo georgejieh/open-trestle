@@ -6,22 +6,21 @@ import (
 	"golang.org/x/sys/cpu"
 )
 
-// compilerSupported reports whether wazero's compiler runs here. It mirrors
-// wazero's own platform check, which is internal to wazero: amd64 with
-// SSE4.1 or arm64, on Linux, macOS, Windows, FreeBSD or NetBSD. Without the
-// compiler the analyzer reports analysis_unavailable rather than falling
-// back to the interpreter, which is too slow for review use.
+// compilerSupported reports whether wazero's compiler supports this
+// platform and CPU. It repeats wazero's own platform check, which is
+// internal to wazero. wazero also probes for executable memory; when the
+// platform refuses it, creating the runtime or compiling a module fails,
+// and the analyzer reports analysis_unavailable the same way. The
+// interpreter is never used: it is too slow for review use.
 func compilerSupported() bool {
 	switch runtime.GOOS {
-	case "linux", "darwin", "windows", "freebsd", "netbsd":
+	case "linux", "darwin", "freebsd", "netbsd", "windows":
+		if runtime.GOARCH == "arm64" {
+			return true
+		}
+	case "dragonfly", "solaris", "illumos":
 	default:
 		return false
 	}
-	switch runtime.GOARCH {
-	case "arm64":
-		return true
-	case "amd64":
-		return cpu.X86.HasSSE41
-	}
-	return false
+	return runtime.GOARCH == "amd64" && cpu.X86.HasSSE41
 }

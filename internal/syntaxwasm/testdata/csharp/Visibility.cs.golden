@@ -1,0 +1,8 @@
+# definitions
+1:1-6:2 interface "ICodec" exported
+  3:5-3:33 method "ICodec.Encode" exported
+  4:5-4:53 method "ICodec.Normalize"
+  5:5-5:35 method "ICodec.Log"
+# references
+# imports
+# gaps
