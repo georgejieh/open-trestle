@@ -25,10 +25,8 @@ The wizard is a front end over the existing
 [local-first bootstrap](local-first-bootstrap.md) and
 [remote model review](remote-model-review.md) commands. It runs the same
 `trestle setup bootstrap init` and `check` code inside its own process, and it
-runs the same `trestle local-git model-review` command that they print. It adds
-no configuration format, default model, privacy claim or shortcut of its own.
-Anything it fills in is shown to you before you agree to it, and every
-declaration it records is an answer you gave.
+runs the same `trestle local-git model-review` command that they print.
+Anything it fills in is shown to you before you agree to it.
 
 ## Before you start
 
@@ -41,8 +39,7 @@ You need four things.
 2. Somewhere to run two models. One model looks for problems, and a different
    model double-checks them. You can use any of these:
    - OpenRouter, Ollama Cloud or OpenCode Go. You need an account and an API
-     key. For OpenRouter, zero data retention is recommended and is on by
-     default.
+     key.
    - A model server on this machine: Ollama, llama.cpp, vLLM or LM Studio (any
      OpenAI-compatible server on `127.0.0.1`).
    - Ollama on this machine, signed in to Ollama Cloud with `ollama signin`.
@@ -54,9 +51,9 @@ You need four things.
    its path or put it on your `PATH`. This build works with a model server on
    this machine.
 4. For remote providers only: the packaged Linux amd64 `trestle` install and its
-   secret scanner. Every request is scanned for secrets in a sandboxed scanner
-   before it leaves the machine, and a plain `go build` has no scanner
-   fingerprints, so it refuses to send source.
+   secret scanner. Every request is scanned for secrets before it leaves the
+   machine, and a plain `go build` has no scanner fingerprints, so it refuses to
+   send source.
 
 If you start a remote-provider setup with a development build, the wizard
 detects it before you choose a provider and explains why it cannot continue. It
@@ -76,13 +73,12 @@ both of them the same way. It stops early only for storage that the review
 cannot read: alternates (clones made with `--shared` or `--reference`), a
 multi-pack-index, or partial-clone packs. In that case it prints a
 `git clone --no-local --no-hardlinks` command that makes a separate full copy.
-The wizard never changes repository permissions. You need the private `0700`
-copy with loose objects, described in [choose the
+You need the private `0700` copy with loose objects, described in [choose the
 repository](local-first-bootstrap.md#choose-the-repository-and-model-pair), only
 if you use the optional background daemon.
 
-No repository source is sent anywhere during setup. Setup does make a few
-network reads, and none of them sends a key:
+Setup sends no repository source. It does make a few network reads, and none of
+them sends a key:
 
 - It may fetch a provider's public model list. For OpenRouter it also fetches
   the public list of zero-data-retention endpoints.
@@ -92,7 +88,8 @@ network reads, and none of them sends a key:
 - For the Ollama Cloud sign-in option, it can send one fixed test message, but
   only if you agree.
 
-Your source goes to the models only when you agree to run a review.
+Your source goes to the models only when you agree to run a review. See
+[privacy](privacy.md) for what a review sends.
 
 ## What the wizard asks
 
@@ -154,8 +151,9 @@ or "Ollama on this machine, signed in to Ollama Cloud".
 ### Step 3: the two models
 
 Pick each model from the provider's list. The checker must differ from the
-finder, and a checker from a different model family is recommended, because
-different families tend to miss different problems. When both models come from
+finder, and a checker from a different model family is recommended (see
+[the rationale](rationale.md#the-checker-should-come-from-a-different-model-family)).
+When both models come from
 one family (both Qwen models, for example), the wizard says so and asks whether
 to keep the checker; Enter keeps it, and `n` lets you pick again. The settings
 panel then marks the checker as being in the same family as the finder.
@@ -171,10 +169,11 @@ happens next depends on the provider.
   endpoint of a model allows that much, it keeps that model's endpoints, says
   so, and uses the smallest output they allow. It then asks "Require zero data
   retention on every request (recommended)?", where Enter means yes. If a model
-  has no zero-data-retention endpoint, the wizard warns you, because an account
-  or key with zero data retention enforced will refuse that model, and it lets
-  you replace the model. If you keep the model or answer no, the wizard asks you
-  to confirm once with `y` before it continues. See [OpenRouter zero data retention](openrouter-zdr-profile.md).
+  has no zero-data-retention endpoint, the wizard warns you (an account or key
+  that enforces zero data retention will refuse that model) and lets you replace
+  the model. If you keep the model or answer no, the wizard asks you to confirm
+  once with `y` before it continues. See
+  [OpenRouter zero data retention](openrouter-zdr-profile.md).
 - With a local server, if a server answers on its usual port (Ollama 11434, LM
   Studio 1234, llama.cpp 8080, vLLM 8000), the wizard uses it without asking.
   Otherwise you pick the server or type its `127.0.0.1` address. The checker
@@ -210,8 +209,8 @@ question, "Spending limit for this key, USD per month (optional) [none]", and, i
 you give a limit, "Alert at percent [80]". Enter means no limit. For OpenRouter,
 the wizard first shows OpenRouter's own figures for the key when the key
 variable is set. Open Trestle checks the limit before each review and counts its
-own upper-bound estimate, not a bill. The check is best effort, and your
-provider's own limit is the guarantee. A key that already has a limit keeps it.
+own upper-bound estimate, not a bill. The check is best effort, so also set a
+limit with your provider. A key that already has a limit keeps it.
 See [spending limits](spending-limits.md).
 
 ### Step 4: your settings
@@ -265,9 +264,9 @@ The wizard shows each fact the bootstrap needs in plain words, with a link, and
 you must type `yes`. Typing `no` stops with nothing written. What you are asked
 to confirm depends on the provider:
 
-- For OpenRouter, you confirm that each review sends the selected source, after secret scanning,
-  to OpenRouter for the two models; whether zero data retention is required;
-  and that you have not turned on prompt logging for the key.
+- For OpenRouter, you confirm that each review sends the selected source, after
+  secret scanning, to OpenRouter for the two models; whether zero data retention
+  is required; and that you have not turned on prompt logging for the key.
 - For Ollama Cloud and OpenCode Go, you confirm the
   [route declaration](remote-model-review.md#common-declarations) (capacity,
   structured output, logging off, prices, availability).
@@ -276,7 +275,7 @@ to confirm depends on the provider:
   the wizard offers to fetch it once and compute its SHA-256 on your machine.
   The fetch is one `https` GET with no key, cookie, query or repository content,
   to public addresses only, with a limit of 8 MiB and 20 seconds. The wizard
-  never fetches account evidence: save a copy of your own account page and give
+  does not fetch account evidence: save a copy of your own account page and give
   its path.
 - For Ollama signed in to Ollama Cloud, you confirm the
   [sign-in declaration](remote-model-review.md#ollama-signed-in-to-ollama-cloud),
@@ -289,7 +288,7 @@ to confirm depends on the provider:
 
 The wizard writes the configuration into a new private folder, by default
 `~/.local/state/open-trestle/<repository>-<8 hex characters>` (mode `0700`, files
-`0600`). It never overwrites existing files. If you chose to save a key, it is
+`0600`). It does not overwrite existing files. If you chose to save a key, it is
 saved now, after the setup.
 
 If no key is found for the key variable, the check says so and shows two
@@ -348,11 +347,11 @@ setup folder is private, that you are its owner, that the model configuration is
 approved, and that a dry run without models passes. The wizard offers a review
 only when all of them pass.
 
-The wizard shows the daemon tokens and backup as one optional line, because the
-direct review never reads them. They belong to the daemon journey in
+The wizard shows the daemon tokens and backup as one optional line. They belong
+to the daemon journey in
 [check and resume](local-first-bootstrap.md#check-and-resume). The wizard also
 offers two test requests to your local servers. They carry fixed sample code,
-never your source, and are sent only if you answer `y`. If a test request fails,
+not your source, and are sent only if you answer `y`. If a test request fails,
 you must fix it before the wizard offers a review.
 
 ## The first review
@@ -373,7 +372,7 @@ resume. It can take several minutes.
 A new setup runs specialist reviews by default. The general review runs first,
 and then up to three specialist reviews (such as `bug_hunter` or
 `security_probe`) run. Open Trestle picks the specialists from the change
-without a model call, and each one is a full review with its own independent
+without a model call, and each one is a full review with its own
 check. The settings panel shows this in a `Specialists` row that starts with
 `on:`. On remote models, the specialists run at the same time, up to three at
 once. On a model on this machine, they run one after another.
@@ -431,7 +430,7 @@ Each part of the result means the following.
   the change removed points to the removed lines of the base commit
   (`path removed base lines a-b`), not to head lines.
 - `walkthrough:` lines: These show what was verified (the secret scan of the
-  model requests, the deterministic checks, style detection, the semantic-impact
+  model requests, the scripted checks, style detection, the semantic-impact
   analysis, and the checker's confirmed, rejected and inconclusive counts). They
   also show each changed file with its line counts and changed Go declarations,
   and `missing verification:` notes for changed functions that no test file
@@ -449,7 +448,7 @@ Each part of the result means the following.
   by default, `0` with `--exit-code-policy findings`), and the closing line says
   so. Only a medium, high or critical finding that the change introduced makes a
   review `ci: blocked` (exit `4`).
-- `no_candidates`: Nothing was found and confirmed. That is not proof that the
+- `no_candidates`: Nothing was found and confirmed. That does not mean the
   change is correct.
 - `incomplete`: Part of the change was not covered. See the coverage and
   omission lines.
@@ -457,11 +456,10 @@ Each part of the result means the following.
   what to try.
 - `style:` lines: When the base commit declares no style for a changed language
   that has a style detector, the result suggests a standard one. This is advice,
-  not a finding, and it never changes the result. See
+  not a finding, and it does not change the result. See
   [style recommendations](local-model-review.md#style-recommendations).
 
-Every result says `comprehensive clearance: false`. A review is not an audit.
-See [local model review](local-model-review.md) for the full result format.
+Every result says `comprehensive clearance: false`. See [local model review](local-model-review.md) for the full result format.
 
 ## Running it again
 
@@ -475,8 +473,8 @@ trestle review
 The command finds the setup the same way `trestle init` does: in the folder from
 step 6, or in the one you name with `--directory PATH`. It picks the two commits
 again, says what it compares and where the source goes, and runs the same review
-with the setup's routes, policy, names and egress. It never reuses the commits
-saved at setup time, and a setup keeps working after those commits are rewritten
+with the setup's routes, policy, names and egress. It does not reuse the commits
+saved at setup time, so a setup keeps working after those commits are rewritten
 or garbage-collected.
 
 - The head is `HEAD`, the commit checked out now. The base is
@@ -491,12 +489,12 @@ or garbage-collected.
 - Uncommitted changes are not included. Only committed work is reviewed. When
   you have uncommitted changes or untracked files, the review says they are not
   included and that committing them includes them. It writes nothing into your
-  repository and never fetches.
+  repository and does not fetch.
 - The result goes to standard output in the setup's text format.
   `--format json`, `--format sarif` or `--format markdown` prints one JSON,
   SARIF or pull request summary document there instead. Every other line goes to
   standard error, including the egress, secret-scanning and spending messages,
-  which are exactly those of `trestle local-git model-review`. The options
+  which are those of `trestle local-git model-review`. The options
   `--timeout`, `--profile`, `--specialists`, `--max-specialists`,
   `--exit-code-policy`, `--all` and `--verbose` pass through to that command, and
   so do its [exit codes](local-model-review.md). For example, the exit code is
@@ -570,7 +568,7 @@ offers:
 The first choice re-runs the checks and then reviews the latest change exactly as
 `trestle review` does. With `--no-input`, `--run-review` does the same. If the
 setup's key is missing, the wizard asks for it first (see [API keys](keys.md)).
-It never re-initializes the setup or changes the saved files. To set up
+It does not re-initialize the setup or change the saved files. To set up
 something different, use a new folder: `trestle init --directory NEW_FOLDER`.
 
 ## Updating
@@ -585,10 +583,10 @@ It finds a newer version, shows it, asks you to confirm, and runs that version's
 own upgrade with `sudo`, which asks for your password. `trestle update --check`
 only reports; it exits `10` when an update is available.
 
-Open Trestle installs nothing unless its own Go code first passes the checks. For
-a GitHub release, those checks are an Ed25519 signature by a key pinned in this
-build, and the signed SHA-256 and size. No release is signed yet, so today it
-installs only an unsigned local build: one left in
+Open Trestle checks an update before installing it. For a GitHub release, the
+checks are an Ed25519 signature by a key pinned in this build, and the signed
+SHA-256 and size. No release is signed yet, so today it installs only an
+unsigned local build: one left in
 `~/.local/share/open-trestle/updates/` for a development install, or a file named
 with `--from`. See [updates](updates.md) for the channels, the checks, the threat
 model and `OPEN_TRESTLE_UPDATE_CHECK=off`.
@@ -603,7 +601,7 @@ decides which other answers are needed.
 With `--no-input`, the wizard still fills in everything it can work out itself:
 the commits, names, owner, folder, key variable, and any limits and prices that
 a provider or model list states. A flag overrides what it fills in. Facts that
-you must declare are never filled in. A complete `--no-input` run prints the
+you must declare are not filled in. A complete `--no-input` run prints the
 settings panel, without color.
 
 | Answer | Flag |
@@ -629,8 +627,8 @@ settings panel, without color.
 | Consent to review | `--run-review` |
 
 There is no blanket "yes to everything" flag. Each declaration is its own
-existing bootstrap flag, and the review runs only with `--run-review`. Evidence
-values are `HTTPS_URL,SHA256`, exactly as for the bootstrap.
+bootstrap flag, and the review runs only with `--run-review`. Evidence values are
+`HTTPS_URL,SHA256`, as for the bootstrap.
 
 ```sh
 trestle init --no-input --provider ollama-cloud \
@@ -680,18 +678,17 @@ wizard stops without writing anything, as long as the setup was not yet saved.
 
 - The wizard records your declarations. It cannot check account settings,
   provider conduct, model capability, price or availability. It records
-  OpenRouter facts as reported by its API at setup time, without verifying them.
-  OpenRouter's API does not say whether your account or key enforces zero data
-  retention, so the wizard never claims that it does or does not.
-- The wizard never installs software, downloads models, starts servers,
-  provisions keys or changes repository permissions.
+  OpenRouter facts as reported by its API at setup time. OpenRouter's API does
+  not say whether your account or key enforces zero data retention, so the
+  wizard does not say either way.
+- The wizard does not install software, download models, start servers,
+  provision keys or change repository permissions.
 - A spending limit is Open Trestle's own best-effort check of its upper-bound
   estimate. It is not your provider's bill or limit, so set a limit with your
   provider too. See [spending limits](spending-limits.md).
-- The local model list and the remote catalogs are availability observations,
-  not approvals. A loopback address does not prove that a model runs locally.
-  The wizard flags an Ollama `:cloud` model because it would send source to
-  Ollama's cloud.
+- The local model list and the remote catalogs show what is available. A
+  loopback address does not mean a model runs locally: the wizard flags an
+  Ollama `:cloud` model because it would send source to Ollama's cloud.
 - A local setup made by the wizard is for the direct review only. It does not
   prepare the background daemon, which still needs a private `0700`, loose-object
   source. Set that up with the

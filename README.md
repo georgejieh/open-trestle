@@ -1,14 +1,13 @@
 # Open Trestle
 
-Open Trestle is an open-source AI code reviewer for pull requests. Before it
-judges a change, it builds an understanding of the whole codebase, works out what
-the pull request changes and what depends on that code, and tests the change.
-Only then does it report problems, and every problem it reports comes with the
-evidence behind it.
+Open Trestle is an open-source AI code-review harness for pull requests. Before
+it judges a change, it builds an understanding of the whole codebase, works out
+what the pull request changes and what depends on that code, and tests the
+change. Then it reports the problems it found.
 
 It works with the model providers you choose, including models running on your
-own hardware, and it is built to run where your code already lives: in your terminal, in a
-desktop app, in CI and in your editor.
+own hardware, and it is built to run where your code already lives: in your
+terminal, in a desktop app, in CI and in your editor.
 
 Open Trestle is under active development and has no release yet. This README
 describes how Open Trestle is designed to work, then what is built today.
@@ -35,9 +34,11 @@ pull request goes through five stages.
    something elsewhere. Code decides whether a test passes, not a model.
 5. Review with models from different families. One model looks for problems
    and a second model checks each one. Open Trestle recommends that the second
-   model come from a different model family, because different families have
-   different blind spots. The tests cover the blind spots that all models share.
-   Only problems that survive this check are reported.
+   model come from a different model family. Only problems that survive this
+   check are reported.
+
+The [design rationale](docs/rationale.md) explains why the scripted steps come
+first and why the second model should come from another family.
 
 Each review opens with a short account of what was checked, followed by the
 confirmed problems, most important first. Problems in code that the pull request
@@ -54,10 +55,10 @@ large companies build in-house, is planned after that.
 
 ### Privacy
 
-Before any request leaves your machine, Open Trestle scans the source in it for
-secrets in a sandboxed process. OpenRouter requests require zero data retention
-by default, and Open Trestle sends no telemetry. The [privacy](docs/privacy.md)
-page lists exactly what is sent, when, and to whom.
+With a model server on your own machine, a review sends your code only to that
+server. With a remote provider, Open Trestle scans each review request for
+secrets before sending it. It sends no telemetry. The [privacy](docs/privacy.md) page lists what is sent,
+when, and to whom.
 
 ## Project status
 
@@ -70,9 +71,8 @@ What works today, on Linux:
   default branch, which is the same set of changes a pull request shows. Running
   `trestle` on its own opens a home screen with your setup, recent spending and
   the last review.
-- The model review in stage 5 works. The second model must differ from the first, and setup
-  recommends one from a different model family. Results come as text
-  in the terminal, or as JSON, SARIF or Markdown for other tools.
+- The model review in stage 5 works. Results come as text in the terminal, or
+  as JSON, SARIF or Markdown for other tools.
 - Remote providers (OpenRouter, Ollama Cloud and OpenCode Go) and local model
   servers (Ollama, llama.cpp, vLLM, LM Studio and other OpenAI-compatible
   servers) are supported. Remote providers require the packaged Linux amd64
@@ -94,14 +94,16 @@ What is not built yet:
 - The [GitHub Actions example](examples/github-actions/README.md) has been
   tested offline but has not yet run on GitHub. The VS Code extension can show
   the results of a review but cannot start one.
-- There is no signed release or download yet. You build Open Trestle from source. The first release is meant to install like
-any other application: you download an installer for your system, run the
-setup wizard and review your own repository.
+- There is no signed release or download yet. You build Open Trestle from
+  source. The first release is meant to install like any other application: you
+  download an installer for your system, run the setup wizard and review your
+  own repository.
 
 The first release is meant to complete stages 1 to 4 for the languages above,
 bring the same review to Linux, macOS and Windows with installers and a desktop
-app, and finish the GitHub Actions and VS Code integrations. Reviewing an entire codebase, rather than one pull
-request, is planned after that. The [roadmap](docs/roadmap.md) has the details.
+app, and finish the GitHub Actions and VS Code integrations. Reviewing an entire
+codebase, rather than one pull request, is planned after that. The
+[roadmap](docs/roadmap.md) has the details.
 
 ## Getting started
 

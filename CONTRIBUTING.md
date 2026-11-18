@@ -8,14 +8,14 @@ contain.
 
 Before you start a material design change, open an issue or a discussion. In it,
 describe the behavior that users will see, the public contract that is involved,
-the evidence you expect, and how you plan to verify the change. Do not include
+and how you plan to verify the change. Do not include
 credentials, proprietary source, confidential configuration, copied
 documentation, or third-party data that you cannot redistribute.
 
 ## Development principles
 
-- Keep the review engine deterministic wherever policy and evidence are enough.
-- Treat repository content and model output as untrusted data.
+- Use scripted checks wherever policy is enough.
+- Treat repository content and model output as data.
 - Preserve the boundaries between tenants, repositories, providers and
   execution.
 - Add focused tests with each behavior change.

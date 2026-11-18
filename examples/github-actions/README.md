@@ -28,10 +28,9 @@ Make these five changes before you use the workflow.
    it to the variable name `OPEN_TRESTLE_PROVIDER_OLLAMA_CLOUD` that bootstrap
    records, and only the name is stored in the protected configuration. For
    OpenRouter ZDR or OpenCode Go, change `--provider` and the credential
-   variable, and add the account and evidence declarations in
-   [remote model review](../../docs/remote-model-review.md). Those declarations
-   are attestations that a person should make, which is why the example uses
-   `ollama-cloud`. Ollama Cloud makes no retention claim, so check its terms
+   variable, and add the account declarations in
+   [remote model review](../../docs/remote-model-review.md). The example uses
+   `ollama-cloud` so that no such declaration is needed. Ollama Cloud makes no retention claim, so check its terms
    before you send private code.
 4. Pin the actions. `actions/checkout`, `actions/setup-go`,
    `github/codeql-action/upload-sarif` and `reviewdog/action-setup` appear with
@@ -45,12 +44,10 @@ Make these five changes before you use the workflow.
 
 - It checks out the pull request head with `fetch-depth: 0`. A shallow checkout
   makes `model-review` stop before any model call and print how to fetch the base
-  (`git fetch --no-tags --depth=N origin <base>`). It never fetches for you.
+  (`git fetch --no-tags --depth=N origin <base>`). It does not fetch for you.
 - It computes the review base as `git merge-base "$BASE_SHA" "$HEAD_SHA"`, from
-  `github.event.pull_request.base.sha` and `head.sha` (passed through `env`, never
-  interpolated into a script). The tip of the base branch would count commits
-  merged into the base branch after the branch point as part of the change. The
-  merge base is the comparison that GitHub shows for the pull request.
+  `github.event.pull_request.base.sha` and `head.sha` (passed through `env`, not
+  interpolated into a script). The merge base is the comparison that GitHub shows for the pull request.
 - It runs `trestle setup bootstrap init`, then `check`, then the printed review
   command. Because `init` is not given `--specialists none`, that command carries
   `--specialists auto`. The job then runs the general review plus the specialists
@@ -80,8 +77,7 @@ Make these five changes before you use the workflow.
   runs when specialists are on) yields one output format, so the example does not
   run a second time for `--format text` or `--format markdown`.
 
-Finding text, fix guidance and paths are untrusted, because they come from model
-output and repository text. Both the job summary and reviewdog's pull-request
+Finding text, fix guidance and paths come from model output and repository text. Both the job summary and reviewdog's pull-request
 comments are GitHub Markdown, so a step first writes a small `jq` module,
 `trestle-markdown.jq`, that escapes such text with the rules of Open Trestle's own
 Markdown renderer (`localreview.MarkdownText` and `MarkdownCode`). The escaped
@@ -91,19 +87,18 @@ an autolink. The summary is rendered through the module, and reviewdog reads an
 escaped copy of the SARIF (`open-trestle.reviewdog.sarif`). The SARIF for code
 scanning keeps the raw text. The repository test runs the module with `jq` against
 crafted SARIF and compares the output byte for byte with the Go renderer. If you
-edit the summary, keep every untrusted value behind `trestle_md` or
+edit the summary, keep every such value behind `trestle_md` or
 `trestle_md_code`.
 
 ## Limits worth knowing
 
 - The workflow skips fork pull requests. They get no secrets and a read-only
-  token. Never use `pull_request_target` here, because it would run with secrets
+  token. Do not use `pull_request_target` here: it would run with secrets
   against fork code.
 - reviewdog comments only on lines inside the diff (`-filter-mode=added`). Other
   findings stay in code scanning and the summary.
-- Finding text and fix guidance are model output. The claim was independently
-  verified, but the category and the fix were not. The fix appears only as a
-  labeled property and in the summary, never as a suggested change that is
+- Finding text and fix guidance are model output. The claim was verified, but the category and the fix were not. The fix appears as a
+  labeled property and in the summary, not as a suggested change that is
   applied.
 - A passing job is not a clearance. The SARIF lists limitations, abstentions and
   omitted source, and `trestleComprehensiveClearance` is always `false`.

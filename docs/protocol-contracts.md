@@ -2,7 +2,7 @@
 
 Open Trestle publishes JSON Schema 2020-12 documents for people who implement its transports. This page lists those schemas and explains the rules that go with them. It is a reference for contributors and integrators.
 
-A schema is not the final authority on its own. The runtime parsers enforce the contracts, and passing a schema alone never grants authority. Repository tests resolve every local fragment and every internal Open Trestle URN reference offline. An unknown target, a missing fragment, a malformed JSON Pointer or an external schema reference fails the test suite.
+The runtime parsers enforce the contracts, and passing a schema does not grant authority. Repository tests resolve every local fragment and every internal Open Trestle URN reference offline. An unknown target, a missing fragment, a malformed JSON Pointer or an external schema reference fails the test suite.
 
 The setup-plan parsers replay the embedded checker catalog and the receipt chain before they accept readiness. They also require the following:
 
@@ -50,7 +50,7 @@ Candidate batch schema v1 keeps its bytes and is the output schema of recorded g
 - A required, closed `category`: `correctness`, `security`, `concurrency`, `performance`, `reliability`, `maintainability`, `style`, `documentation` or `testing`.
 - An optional `fix`, which is nonblank plain text of at most 256 characters. The schema sets this as `maxLength`. The host parser enforces the same 256-character bound plus a 1024-byte UTF-8 wire bound, which 256 characters can never exceed.
 
-Both fields are advisory model output. The fix is never applied, carries no executable authority and is not independently verified. At runtime, a candidate whose `source_range` names a `repository_context` source is dropped and counted. From generation context version 8, a candidate may instead be located in a `removed_lines` source, as a base-side finding.
+Both fields are advisory model output. The fix is never applied and is not verified. At runtime, a candidate whose `source_range` names a `repository_context` source is dropped and counted. From generation context version 8, a candidate may instead be located in a `removed_lines` source, as a base-side finding.
 
 The investigation output schema uses a closed `oneOf`: the output is either a candidate batch or one host-defined snapshot tool call. A valid proposal is not permission to run a tool. Runtime parsing, the retained model response, the source bindings and the policy limits still decide what is accepted.
 
@@ -93,7 +93,7 @@ The `run` member of the API response v1 envelope is the canonical receipt v1, v2
 
 The run-progress response v1 is a separate read-only HTTP envelope with exactly `contract`, `schema_version`, `request_id`, `run` and `progress`. It references the canonical receipt v1, v2 or v3. Its four axes are `change`, `deterministic`, `context` and `verification`. Each axis has a bounded state, an optional immutable artifact identity and only its declared count fields.
 
-The schema inventory contains 140 documents. The strict native client also validates the scope, the completed-task binding, the exact output identities other than context, the count equations and the checked-versus-applicable bounds. Schema validation cannot establish artifact lineage or consistency with the receipt head.
+The schema inventory contains 140 documents. The native client also validates the scope, the completed-task binding, the output identities other than context, the count equations and the checked-versus-applicable bounds. Schema validation cannot establish artifact lineage or consistency with the receipt head.
 
 The delivery-refusal response v1 is another read-only envelope, with exactly `contract`, `schema_version`, `request_id` and `refusal`. The `refusal` member is the canonical `open-trestle/webhook-delivery-refusal` v1 record. It describes an accepted webhook delivery that intake refused instead of opening its run. It holds the tenant, repository, source, deduplication key, delivery and planner identities, the reason token and the refusal time. It carries no delivery content. Errors use the api-response envelope.
 
@@ -283,11 +283,11 @@ The binding follows a chain: the policy record identity and evidence digest, the
 
 The named profile is refused at its next validation if any of these holds: typed evidence is missing or invalid, only the policy mismatches, or an arbitrary account digest is supplied. Generic opaque-manifest v1 and v2 admission is unchanged. Open Trestle does not rewrite or upgrade a setup receipt automatically. Renewed evidence changes the manifest, record, inventory and policy identities and needs fresh, exact setup approval. The daemon consumes protected configuration, not setup receipts.
 
-Syntax and linkage cannot prove provider conduct, account ownership or unconditional non-retention. See [the profile contract and offline account calculation](openrouter-zdr-profile.md#what-is-recorded).
+See [the profile contract and offline account calculation](openrouter-zdr-profile.md#what-is-recorded).
 
 Runtime policy v4 adds only the finite `opencode_go_chat_v1` Chat profile and its seven-field `opencode_go_authority`. Generic connections and the existing v3 OpenRouter profile remain supported in v4. The two named authority fields are mutually exclusive, including a null value in one of them. The historical v1, v2 and v3 schema bytes and accepted identity preimages remain unchanged.
 
-Native validation binds the exact Go route and effective model selector, the immutable typed `opencode_go_privacy` evidence, the derived account and credential-reference identity, the tenant and repository, and the validity window. Structure alone cannot validate these bindings, the substance of the evidence, account ownership, conservative pricing or provider conduct. The native schema tests inspect structure and the frozen legacy bytes, and they do not run a JSON Schema validator.
+Native validation binds the exact Go route and effective model selector, the immutable typed `opencode_go_privacy` evidence, the derived account and credential-reference identity, the tenant and repository, and the validity window. Structure alone cannot validate these bindings. The native schema tests inspect structure and the frozen legacy bytes, and they do not run a JSON Schema validator.
 
 The setup checker supports an exact approved Go generation route and a distinct private direct verifier. Setup support grants no dispatch authority and implies no readiness. See [OpenCode Go profile](opencode-go-profile.md).
 
@@ -297,7 +297,7 @@ Runtime policy v6 is a generic policy with the v2 exact verifier grant and an op
 - bearer or explicit no-auth credentials;
 - a local inventory namespace.
 
-V6 excludes all named request-profile and authority fields. The values false and omitted have the same v6 binding bytes and identity, which differ from the v2 identity. Native versions 1 through 5 reject the option, including false, and the published v1 through v4 schema bytes remain unchanged. The binder preserves an explicit v6 policy. It keeps historical templates that have no option on v2 and leaves their binding bytes and identity preimages unchanged. Native validation enforces inventory locality, and schema checks do not prove route approval, server support or model quality. See [local Chat schema transport](local-model-review.md).
+V6 excludes all named request-profile and authority fields. The values false and omitted have the same v6 binding bytes and identity, which differ from the v2 identity. Native versions 1 through 5 reject the option, including false, and the published v1 through v4 schema bytes remain unchanged. The binder preserves an explicit v6 policy. It keeps historical templates that have no option on v2 and leaves their binding bytes and identity preimages unchanged. Native validation enforces inventory locality. See [local Chat schema transport](local-model-review.md).
 
 Runtime policy v7 carries only the closed `ollama_signin_chat_v1` profile. It is for a local Ollama daemon that relays Ollama Cloud models using the operator's `ollama signin` account. Every v7 connection must:
 
@@ -327,9 +327,9 @@ Runtime policy v2 requires `verification_route_record_identity`, an exact nonzer
 
 This startup pair is not authorization for an actual sanitized request, does not permit fallback and does not enable dispatch by itself. Previously stored v1 plans and policy identities remain readable. New full-local admission requires an explicit v2 verifier grant, and an unbound or ineligible pair fails startup before a run is admitted.
 
-That failure is a refusal caused by the operator's configuration. It is not the explicit, durable abstention that is required when the verifier is lost or coverage has gaps after admission. Startup validation does not implement that later per-run outcome or the verifier gate on the actual request.
+That failure is a refusal caused by the operator's configuration. It is not the explicit, durable abstention that is required when the verifier is lost or coverage has gaps after admission.
 
-Three schemas cover GitHub source brokering: the source-broker descriptor v1, the configuration-only permission-admin result v2 and the integration-only check request v2. The descriptor keeps its native 20 fields, `single_host_exclusive` ownership and explicit booleans for token creation and demand renewal. Its schema date pattern is structural. Native source parsing validates the dates and normalizes any trailing endpoint slashes it accepts. Setup and admin separately require an API year of 2000 or later. Schema validation never opens an owner or approves effects.
+Three schemas cover GitHub source brokering: the source-broker descriptor v1, the configuration-only permission-admin result v2 and the integration-only check request v2. The descriptor keeps its native 20 fields, `single_host_exclusive` ownership and explicit booleans for token creation and demand renewal. Its schema date pattern is structural. Native source parsing validates the dates and normalizes any trailing endpoint slashes it accepts. Setup and admin separately require an API year of 2000 or later.
 
 Setup schemas:
 
@@ -383,8 +383,8 @@ Every schema has a stable, versioned `urn:open-trestle:schema:...` identity, rej
 
 A `review-task-lease` and a `task-notification-lease` contain bearer secrets, so they are suitable only for the authorized worker transport. Do not place either in logs, diagnostics, URLs, model context, audit events or public state. `review-run-receipt` and `review-run-event` are intentionally free of secrets.
 
-The v5 `context_input_prepared` event advances the exact v4 packet checkpoint under the same task, attempt, lease and worker. Its bounded public descriptor is made of untrusted claims about artifact envelopes and route and scanner identities. It is not proof of any of the following: an actual scanner run, a route selection, an audit join, a stored sanitized request, a receipt, a generation input or an authorization. It contains no recoverable request, receipt, input, authorization or repository bytes.
+The v5 `context_input_prepared` event advances the exact v4 packet checkpoint under the same task, attempt, lease and worker. Its public descriptor is made of claims about artifact envelopes and route and scanner identities. It is not proof of a scanner run, a route selection, a stored sanitized request or an authorization. It contains no recoverable request, receipt, input, authorization or repository bytes.
 
 Neither this event nor a route-audit subject grants task success or model authority. Ordinary completion, lease renewal and expiry reclaim remain blocked. After the lease expires, trusted recovery may append a no-output policy failure. A distinct, owner-only v6 `context_input_settled` event can settle a recorded v5 preparation, but only after exact proof of the stored bytes, the audit and the scoped selection. Generic task completion cannot do so. Existing v1 through v4 encodings and v3 abstention behavior remain unchanged.
 
-Consumers must treat all strings, tool descriptions, repository material and webhook fields as untrusted data, even after structural validation. They must not infer publication authority, provider access or policy approval from a schema-valid document. Those decisions require the corresponding content-addressed policy and effect receipts.
+Consumers must treat all strings, tool descriptions, repository material and webhook fields as data, not instructions, even after structural validation (see the [prompt-injection boundary](prompt-injection-boundary.md)). A schema-valid document does not imply publication authority, provider access or policy approval. Those decisions require the corresponding policy and effect receipts.

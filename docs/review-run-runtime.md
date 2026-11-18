@@ -4,7 +4,7 @@ The review-run runtime is the part of Open Trestle that plans a review, hands it
 
 ## Task graph
 
-A plan fixes the tenant and repository scope, the canonical review request, the policy, the maximum effect posture and a bounded acyclic task graph. Each task fixes the following:
+A plan fixes the tenant and repository scope, the canonical review request, the policy, the maximum effect posture and an acyclic task graph. Each task fixes the following:
 
 - a stable key and a closed operation kind;
 - an immutable task recipe or root input identity;
@@ -13,23 +13,23 @@ A plan fixes the tenant and repository scope, the canonical review request, the 
 - a maximum attempt count;
 - a retry delay;
 - a worker lease duration;
-- the exact approved handler identity.
+- the approved handler identity.
 
 The order of the safety-critical tasks is part of the graph's structure:
 
 1. Source acquisition comes before change construction.
 2. Context assembly comes before candidate generation.
-3. Candidate generation comes before independent verification.
+3. Candidate generation comes before verification.
 4. Verification comes before publication evaluation.
 5. Publication depends on publication evaluation, and plans that stay local never include it.
 
-Publication, candidate generation and independent verification each get one orchestration attempt. A model retry needs a new route attempt that policy authorizes, together with a new cost reservation. Generic task retry can create neither. The publisher handler uses the separately audited, idempotent publication-attempt and retry contracts, so generic worker recovery cannot duplicate an external effect.
+Publication, candidate generation and verification each get one orchestration attempt. A model retry needs a new route attempt that policy authorizes, together with a new cost reservation. Generic task retry can create neither. The publisher handler uses the idempotent publication-attempt and retry contracts, so generic worker recovery cannot duplicate an external effect.
 
 ## Journal and recovery
 
 Every state change is a canonical event, addressed by its content, in a hash chain. Open Trestle reconstructs state by replaying the immutable plan and its complete event stream. Replay rejects gaps, forks, time reversal, records from another scope, dependency bypass, results from stale leases, attempts beyond the plan's limit, and events after a terminal disposition.
 
-The local file journal stores the canonical plan JSON and the event JSON Lines with private permissions. You can list plans by exact tenant and repository filters with bounded cursor pagination. A restarted supervisor can therefore find unfinished work without crossing repository scope.
+The local file journal stores the canonical plan JSON and the event JSON Lines with private permissions. You can list plans by tenant and repository filters with cursor pagination. A restarted supervisor can therefore find unfinished work without crossing repository scope.
 
 The journal uses an exclusive writer lease, bounded files, atomic replacement, file synchronization and directory synchronization. An unclean stop leaves the writer lease in place, and an operator must recover it explicitly. PostgreSQL and queue-backed implementations must keep the same compare-and-append behavior.
 
@@ -37,7 +37,7 @@ The journal uses an exclusive writer lease, bounded files, atomic replacement, f
 
 A worker claim returns a short-lived capability that contains a random lease secret. Only the digest of the secret enters the journal, and formatting always redacts the capability. A claim requires the exact handler identity bound into the task.
 
-Before it releases work, handler dispatch rechecks the current reconstructed state, the task kind, the lease digest, the attempt and the expiry. A result must match the current task, attempt, lease digest and expiry. Once a lease expires, another worker can acquire the next bounded attempt, and results from the previous worker fail closed.
+Before it releases work, handler dispatch rechecks the current reconstructed state, the task kind, the lease digest, the attempt and the expiry. A result must match the current task, attempt, lease digest and expiry. Once a lease expires, another worker can acquire the next bounded attempt, and results from the previous worker are rejected.
 
 Retry timing comes from the immutable task definition. Only closed, retryable failure classes can make a task available again. Permanent failures pass through dependent tasks without running them. Cancellation is terminal and invalidates outstanding work.
 
@@ -78,7 +78,7 @@ A successful task receipt alone is not proof that the owner finished correctly. 
 
 ### Reopening a canceled run
 
-Cancellation after v6 settlement can reopen the run only when replay proves two things. First, every candidate, verification and readiness task has no attempt and no output, and is still pending or available. Second, the exact context envelopes and the route-selection audit still match. Any route attempt, dispatch, cost reconciliation, continuation or publication effect rules out this narrow path. A claimed task is not proof that no effect happened, even when no response was seen. The canceled result stays terminal. It does not resume model work, and it does not prevent a later independent run.
+Cancellation after v6 settlement can reopen the run only when replay proves two things. First, every candidate, verification and readiness task has no attempt and no output, and is still pending or available. Second, the exact context envelopes and the route-selection audit still match. Any route attempt, dispatch, cost reconciliation, continuation or publication effect rules out this narrow path. A claimed task is not proof that no effect happened, even when no response was seen. The canceled result stays terminal. It does not resume model work, and it does not prevent a later run.
 
 ### Startup recovery of a complete v4
 
@@ -102,7 +102,7 @@ A run that is first projected after its evidence retention lapsed gets the final
 
 - A canceled run stays canceled.
 - A failed run stays failed or inconclusive, and a recorded route refusal is kept.
-- A succeeded run is reported inconclusive, never completed, because a completed result needs its verified evidence.
+- A succeeded run is reported inconclusive, not completed, because a completed result needs its verified evidence.
 - A context abstention cannot be confirmed without its artifact, so it is reported failed.
 
 The supervisor keeps serving later runs. A v4 that the journal has not settled still requires live packet retention. Only the byte proof authorizes its startup termination, so boot refuses it once retention lapses.
@@ -125,7 +125,7 @@ Each recorded envelope must expire no earlier than the packet. Before the store 
 
 Startup runs under exclusive boot ownership before any service runs. It finishes the read-only witnesses, rechecks the exact journal head and the time under the scope gate, and may append only a policy/no-output failure. It then repeats the full proof before boot continues. The following all remain refused: any scope marker, a mixed v4/v5 history, an unknown effect, an unsupported tail and a failed proof. This path removes no marker and grants no route, retry or late success. A changed head refuses the append. An append of uncertain outcome, or a failed proof afterward, is not a successful recovery and needs a full reproof on restart.
 
-This is cooperative owner custody. It does not protect against raw writes by the same user ID. The narrow synthetic path and the static guards do not establish a packaged full-boot result, coverage of faults that leave an append uncertain, general recovery from a partial crash, or v1 completion.
+This is cooperative owner custody. It does not protect against raw writes by the same user ID.
 
 ## Current boundary
 
@@ -144,10 +144,10 @@ The public `controlplane` package owns these runtime contracts. The authenticate
 
 ## Provider-free deterministic local runs
 
-A local deterministic catalog is the exact subset of three handlers: `acquire_source`, `build_change` and `inspect_deterministic`. Preparation expands it to four tasks, because the base and head acquisitions are separate immutable roots. The two version 2 source inputs bind a source-root identity that the daemon retains. Model inventory and runtime-policy identities are prohibited in this request shape.
+A local deterministic catalog is the subset of three handlers: `acquire_source`, `build_change` and `inspect_deterministic`. Preparation expands it to four tasks, because the base and head acquisitions are separate immutable roots. The two version 2 source inputs bind a source-root identity that the daemon retains. Model inventory and runtime-policy identities are prohibited in this request shape.
 
 The analysis handler stores exact match locations in deterministic-evidence result version 4 (version 5, 6 or 7 when a file has only deleted lines) and projects diagnostic set version 6. The static rule detects the complete Go call span, but observation evidence never extends beyond the change model. When a multiline call only intersects a changed line, the stored observation is projected to that exact changed intersection.
 
-Version 6 deliberately has `analysis_result_identity`, `checks` and `observations`. It has no `verified_set_identity`, no model-candidate coverage, no verification-context identity and no verified findings. The observation count and the canonical payload bytes are bounded before the analysis artifact is committed. Exceeding the durable diagnostic budget is a closed `resource_limit` failure, never silent truncation.
+Version 6 has `analysis_result_identity`, `checks` and `observations`. It has no `verified_set_identity`, no model-candidate coverage, no verification-context identity and no verified findings. The observation count and the canonical payload bytes are bounded before the analysis artifact is committed. Exceeding the durable diagnostic budget is a `resource_limit` failure, not silent truncation.
 
 The repository supervisor finalizes settled runs only when its explicit local deterministic option is on. The existing GitHub and model pipeline supervisors keep their separate finalization behavior. A daemon restart reopens the file journal, the artifact store, the audit ledger and the diagnostic store. Terminal runs are read back without running their handlers again. An interrupted active deterministic run is still subject to the existing lease, attempt and source-root identity checks.

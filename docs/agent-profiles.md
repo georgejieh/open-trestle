@@ -11,8 +11,8 @@ This is mainly a **planning layer**. Its only production use is in the direct `t
 ### What exists today
 
 - An embedded, versioned catalog of profiles, identified by its content, with skill instructions for each profile (`agentprofile/skills/*.md`).
-- A strict, versioned assignments document that maps tiers to exact `provider.RouteReference` values.
-- A strict, versioned change-features document, and a constructor that derives the same features from an `evidence.Change` and a `semanticimpact.Profile`.
+- A versioned assignments document that maps tiers to exact `provider.RouteReference` values.
+- A versioned change-features document, and a constructor that derives the same features from an `evidence.Change` and a `semanticimpact.Profile`.
 - `agentprofile.Plan`, which returns a `RoutingPlan` that is identified by its content.
 - `trestle profiles list` and `trestle profiles plan`.
 - `trestle local-git model-review --profile PROFILE_ID` (and `localreview.NewSpecialistSession`). It places the skill instructions of one profile that you selected, and that calls a model, into the candidate-generation request. The skill text goes only into the trusted system channel, looked up from the embedded catalog. The context's optional `specialist` block (review-context schema versions 7, 8 and 9) carries only the profile and catalog identities, which bind the request identity, and the result reports them. The verifier request does not carry the instructions. See [local model review](local-model-review.md#specialist-profile-opt-in) and the [prompt-injection boundary](prompt-injection-boundary.md).
@@ -23,7 +23,7 @@ This is mainly a **planning layer**. Its only production use is in the direct `t
 
 With `--specialists auto`, the command derives change features from the general review's own recorded change-model and semantic-impact artifacts, plus the declared style that it reads from the base tree's style configuration files (`localreview.Session.ChangeFeatures`, then `agentprofile.ChangeFeaturesFromFileSpecs`; see [Declared style in local reviews](#declared-style-in-local-reviews)). It then calls `Plan`, and keeps the activated, planned direct-review profiles in priority order, cut to `--max-specialists` (default 3, at most 6).
 
-It then runs the general review and each selected profile as its own, independently verified run. On remote routes, the runs go concurrently (at most three at a time) when no spending limit could be passed, and one by one otherwise. The command merges the verified findings with the shared duplicate rule: near-identical statements first, then paraphrases at one place in one changed declaration.
+It then runs the general review and each selected profile as its own verified run. On remote routes, the runs go concurrently (at most three at a time) when no spending limit could be passed, and one by one otherwise. The command merges the verified findings with the shared duplicate rule: near-identical statements first, then paraphrases at one place in one changed declaration.
 
 The selection trace records the plan identity and every dropped profile with its reason. It is in the JSON output and in `--verbose` text, while the default text names the reviewers that ran. See [local model review](local-model-review.md#specialist-review-set-opt-in).
 
@@ -56,7 +56,7 @@ Today `runtimecatalog.NewGenerationPolicyAuthorizerFromRuntimePolicy` and `NewVe
 
 1. Add a per-entry constructor in `runtimecatalog` that calls the lower-level authorizers with the plan values above.
 2. Create one candidate-generation task per planned entry. Create an independent-verification task only when `PlanEntry.Verification()` is `independent`, using the existing `handlers/model` generation and verification handlers. Keep the candidates from `unverifiable` entries as non-findings.
-3. Carry the profile identity into the context packet, and the skill text into the system channel of the model request. This step already exists for one directly selected profile. `review.ContextPacket.WithSpecialist` encodes the version 7 `specialist` identity block (`internal/review/context_specialist.go`), `review.TrustedModelRequestInstructions` appends the skill text exactly as it appears in the catalog to the system channel, and `contexthandler.NewSpecialistHandler` binds it into the handler identity. Per-entry dispatch would create one such context per planned entry.
+3. Carry the profile identity into the context packet, and the skill text into the system channel of the model request. This step already exists for one directly selected profile. `review.ContextPacket.WithSpecialist` encodes the version 7 `specialist` identity block (`internal/review/context_specialist.go`), `review.TrustedModelRequestInstructions` appends the skill text as it appears in the catalog to the system channel, and `contexthandler.NewSpecialistHandler` binds it into the handler identity. Per-entry dispatch would create one such context per planned entry.
 4. Derive change features from the run's `evidence.Change` and semantic-impact profile with `agentprofile.ChangeFeaturesFromSemanticImpact`, instead of from a file.
 
 The verification authorizer currently ranks with an unpinned preference list, because a generation pin cannot also pin a route that independence excludes. A per-profile verifier pin has to keep that check.
@@ -77,7 +77,7 @@ The gateway also re-checks the independence of generator and verifier on resolve
 
 Every profile has the same fixed authority. It is part of the catalog JSON and cannot be configured:
 
-- Output is **candidates only**. Candidates need independent verification on a separate route before they can become findings.
+- Output is **candidates only**. Candidates need verification on a separate route before they can become findings.
 - A profile has no tool execution, no network access outside gateway dispatch, no publication and no source mutation.
 - A profile does no dynamic validation. `security_probe` is static and read-only. Dynamic validation needs the separate governed-execution authorization described in [architecture](architecture.md#execution), and this layer cannot grant it.
 - `test_author` output is a proposed test artifact. This layer never writes or runs it.
@@ -102,7 +102,7 @@ The `bug_hunter` (version 2) and `frontend` (version 2) skills each end their ch
 
 The catalog is version 1. Five profiles are at profile version 2 and the other four are at version 1:
 
-- Version 2: `security_probe`, `bug_hunter`, `frontend`, `knowledge_graph` and `style_conformance`. The `security_probe` skill text now uses plain punctuation.
+- Version 2: `security_probe`, `bug_hunter`, `frontend`, `knowledge_graph` and `style_conformance`.
 - Version 1: `orchestrator`, `backend`, `test_author` and `drift_auditor`.
 
 A profile version bump changes the catalog identity, and with it the identity of every plan that includes the profile.
@@ -130,14 +130,14 @@ The `style_conformance` skill has guidance for gofmt and Effective Go, PEP 8 wit
 
 ### Declared style in local reviews
 
-`trestle local-git model-review` reads the configuration files for style detection from the review's base tree (the default-branch side), never from the head. The author of a change controls the head, so an edit to a style configuration in the head must not decide which style the same change is reviewed against. Open Trestle reviews that edit as ordinary changed code. A configuration that exists only in the head declares nothing. A configuration that differs between base and head is read as it is in the base, including one that the head deletes.
+`trestle local-git model-review` reads the configuration files for style detection from the review's base tree (the default-branch side), not from the head. Open Trestle reviews an edit to a style configuration as ordinary changed code. A configuration that exists only in the head declares nothing. A configuration that differs between base and head is read as it is in the base, including one that the head deletes.
 
 - Only root-level files are read, following the repository instruction files (see [context assembly](context-assembly-handler.md)). A subproject's own configuration, such as `services/api/ruff.toml`, is not read.
 - Only the names that detection recognizes are read (`agentprofile.IsStyleConfigFile`): `go.mod`, `.editorconfig`, `.prettierrc` and `.prettierrc.*`, `prettier.config.*`, `package.json`, `.eslintrc` and `.eslintrc.*`, `eslint.config.*`, `.flake8`, `.pycodestyle`, `ruff.toml`, `.ruff.toml`, `setup.cfg`, `tox.ini`, `pyproject.toml`, `.style.yapf`, `.clang-format`, `_clang-format`, `rustfmt.toml`, `.rustfmt.toml` and `.rubocop.yml`.
 - Contents come from the base file artifacts that source acquisition already recorded for the run. No Git object is read again.
 - A file larger than 64 KiB, or not valid UTF-8, is skipped whole and never truncated. So is every readable file after the first 256 in path order, and so is every file that would push the change-features document past its 1 MiB bound. Files are added in path order, so a later, smaller file may still fit. A skipped file declares nothing. The selection trace of the review set counts the skipped files in `features.style_configuration_unread`.
 
-The same declared style decides the review result's [style recommendations](local-model-review.md#style-recommendations) (`agentprofile.RecommendStyles`). It uses exactly the files that the change-features document carries, so a file that routing skips is unread for the recommendations too. Only when routing has no change features (the analysis was not recorded) do the recommendations use every readable file.
+The same declared style decides the review result's [style recommendations](local-model-review.md#style-recommendations) (`agentprofile.RecommendStyles`). It uses the files that the change-features document carries, so a file that routing skips is unread for the recommendations too. Only when routing has no change features (the analysis was not recorded) do the recommendations use every readable file.
 
 ## Assignments document
 
@@ -166,17 +166,17 @@ The schema is `open-trestle/agent-profile-assignments`, version 1. Decoding is s
 ```
 
 - `independence` is required. Its value is `distinct_route`, `distinct_model` or `distinct_provider`, which are the gateway's terms.
-- `tiers` and `verifier_tiers` hold global exact routes. `profiles.<id>` holds overrides, which win over the global routes. The orchestrator takes no routes. An override must assign at least one route, and the document must assign at least one generator route.
+- `tiers` and `verifier_tiers` hold global routes. `profiles.<id>` holds overrides, which win over the global routes. The orchestrator takes no routes. An override must assign at least one route, and the document must assign at least one generator route.
 - `escalation_order` is optional and controls what happens to a tier without a route.
 - `total_token_budget` is optional. A value of 0, or no value, means no cap.
 
 ### Unassigned tiers
 
-When a tier has no route, the profile is omitted with the reason `tier_unassigned`. It never borrows another tier's route unless `escalation_order` is set. With an escalation order, the router uses the first assigned tier that is listed after the scored tier, and records it as `escalated_from`. The requirements and the token budget still come from the scored tier, so escalation never loosens what the work needs.
+When a tier has no route, the profile is omitted with the reason `tier_unassigned`. It never borrows another tier's route unless `escalation_order` is set. With an escalation order, the router uses the first assigned tier that is listed after the scored tier, and records it as `escalated_from`. The requirements and the token budget still come from the scored tier.
 
 ### Verifier routes
 
-If no verifier route is independent of the generator route at the configured level, the entry is `unverifiable`. Its candidates cannot become findings, and the router never invents a verifier. Verifier routes follow the same override, global and escalation rules.
+If no verifier route is independent of the generator route at the configured level, the entry is `unverifiable`. Its candidates cannot become findings. Verifier routes follow the same override, global and escalation rules.
 
 ### Token budget
 
@@ -243,7 +243,7 @@ score          = sum(points)        # 0..125
 | `knowledge_graph` | 25 | 70 |
 | `style_conformance` | 30 | 80 |
 
-Each plan entry includes every row of its breakdown. The scoring table and thresholds are bound into the catalog identity, so a tuned router is always distinguishable from the packaged one.
+Each plan entry includes every row of its breakdown. The scoring table and thresholds are bound into the catalog identity.
 
 The token budgets for each tier are below, as input / output. The minimum context covers both.
 
@@ -283,7 +283,7 @@ orchestrator       none      plan only  Deterministic router: activates profiles
 9 profiles, catalog version 1, identity d251da266e0ed52d709d69da9233c00e7688079ecb18543b504eae7db498a2f4
 ```
 
-`list --format json` prints the catalog as one JSON line: the profiles, skills, scoring table and authority. These bytes are unchanged from the earlier `list`, which printed JSON only. `plan` prints the `RoutingPlan` as one JSON line. Both input files must be regular files within their size bounds.
+`list --format json` prints the catalog as one JSON line: the profiles, skills, scoring table and authority. `plan` prints the `RoutingPlan` as one JSON line. Both input files must be regular files within their size bounds.
 
 Exit codes:
 

@@ -1,67 +1,60 @@
 # OpenCode Go Chat profile
 
-The OpenCode Go Chat profile, `opencode_go_chat_v1`, lets an operator route review requests through an OpenCode Go subscription account. This page is the operator contract for that profile: what the configuration must contain, what evidence backs it, and what Open Trestle does with each reply. It is not a qualification of the live service and it does not describe a ready configuration.
+The OpenCode Go Chat profile, `opencode_go_chat_v1`, lets an operator route review requests through an OpenCode Go subscription account. This page is the operator contract for that profile: what the configuration must contain, what evidence it records, and what Open Trestle does with each reply.
 
 ## Status and activation boundary
 
-Runtime policy v4 defines the finite `opencode_go_chat_v1` profile alongside the existing generic and OpenRouter connections. The setup checker supports an exact approved Go generation route together with a distinct private direct verifier. That support does not qualify the live service.
+Runtime policy v4 defines the `opencode_go_chat_v1` profile alongside the generic and OpenRouter connections. The setup checker supports an approved Go generation route together with a distinct private direct verifier.
 
-`trestle init --provider opencode-go` and `trestle setup bootstrap init --provider opencode-go` write this profile's policy and inventory from the evidence and declarations that you supply (see [remote model review](remote-model-review.md#opencode-go)). No command creates credentials, issues the approval or activates a route on its own. Do not treat a schema-valid document, a metadata refresh or a setup receipt as authority to dispatch. The daemon consumes the protected runtime policy and inventory.
+`trestle init --provider opencode-go` and `trestle setup bootstrap init --provider opencode-go` write this profile's policy and inventory from the evidence and declarations that you supply (see [remote model review](remote-model-review.md#opencode-go)). No command creates credentials, issues the approval or activates a route on its own. The daemon consumes the protected runtime policy and inventory.
 
-The historical runtime policy v1, v2 and v3 schema bytes and accepted identity preimages are unchanged. V4 continues to accept generic connections and the existing `openrouter_zdr_chat_v1` profile. It does not change OpenRouter's retention contract, and it does not reuse OpenRouter's `provider.zdr` request controls for Go.
+V4 continues to accept generic connections and the `openrouter_zdr_chat_v1` profile. It does not use OpenRouter's `provider.zdr` request controls for Go.
 
-Before you activate the profile, these steps must be done independently:
-
-- native static validation
-- the named common catalog and adapter integration
-- tests of the actual sanitized-handler callers
-- separate setup-authority support and the required gates
-
-An operator must then approve the exact account, the model, the evidence, the egress of private source code, and a defensible, conservative reservation. Representative live qualification requires separate explicit authorization, credentials, and bounded caps on requests, cost and time. Offline fixtures alone do not qualify the live protocol, cancellation, privacy or usage.
+Before you activate the profile, you approve the account, the model, the evidence, the egress of private source code, and a cost reservation.
 
 ## Connection and authority
 
 The selected Go generation connection uses these settings:
 
 - `implementation`: `openai_chat_completions`
-- `endpoint`: exactly `https://opencode.ai/inference/go/openai/v1`
+- `endpoint`: `https://opencode.ai/inference/go/openai/v1`
 - bearer mode, with an explicit `OPEN_TRESTLE_PROVIDER_` credential reference
 - `request_profile`: `opencode_go_chat_v1`
-- provider `opencode-go`, zone `brokered_remote`, disabled content logging and one approved, exact inventory record
+- provider `opencode-go`, zone `brokered_remote`, disabled content logging and one approved inventory record
 - a distinct, eligible `private_remote` direct verifier, which is not the brokered route
 
 ### Route authority
 
-`opencode_go_authority` has exactly seven required, non-null keys: `route_record_identity`, `evidence_manifest_digest`, `account_policy_identity`, `tenant_id`, `repository_id`, `valid_from` and `valid_until`. They bind the exact record, the immutable typed manifest, the derived account identity, the repository scope and the validity interval. It has no `provider_slug`.
+`opencode_go_authority` has seven required, non-null keys: `route_record_identity`, `evidence_manifest_digest`, `account_policy_identity`, `tenant_id`, `repository_id`, `valid_from` and `valid_until`. They bind the record, the typed manifest, the derived account identity, the repository scope and the validity interval. It has no `provider_slug`.
 
-`brokered_route_authority` and `opencode_go_authority` are mutually exclusive, even when one of them is null. Generic connections carry neither authority nor `request_profile`. The OpenRouter branch keeps its eight-field authority and its exact endpoint.
+`brokered_route_authority` and `opencode_go_authority` are mutually exclusive, even when one of them is null. Generic connections carry neither authority nor `request_profile`. The OpenRouter branch keeps its eight-field authority and its endpoint.
 
 ### Model selection
 
-Model selection belongs to the operator. `glm-5.3-flash` below is a representative fixture, not a default and not a model approval. Its bare effective selector goes on the wire of the direct API. `opencode-go/` is a client configuration namespace, not a prefix to add to a direct model ID. Go's pay-as-you-go, Responses, Anthropic, Gemini, free-tier and tools or BYOK paths are not part of this profile.
+Model selection belongs to the operator. `glm-5.3-flash` below is an example, not a default. The bare effective selector goes on the wire of the direct API. `opencode-go/` is a client configuration namespace, not a prefix to add to a direct model ID. Go's pay-as-you-go, Responses, Anthropic, Gemini, free-tier and tools or BYOK paths are not part of this profile.
 
 ## Typed privacy and account witness
 
-The immutable evidence manifest contains the reserved `opencode_go_privacy` member. This is the privacy and account witness: a reviewed record of the claims the route depends on. Its local contract is `open-trestle/opencode-go-privacy-witness`, with integer schema version 1. It binds these values:
+The evidence manifest contains the reserved `opencode_go_privacy` member. This is the privacy and account witness: a record of the claims the route depends on. Its local contract is `open-trestle/opencode-go-privacy-witness`, with integer schema version 1. It binds these values:
 
-- the complete route tuple and the effective selector
+- the route tuple and the effective selector
 - the endpoint, profile, protocol and authentication
-- the exact model's privacy and the broker's privacy
+- the model's privacy and the broker's privacy
 - the account
 - the tenant and repository
-- the reviewed validity interval
+- the validity interval
 
-If typed evidence is missing or invalid, Open Trestle refuses Go consumption by name. Generic opaque manifests keep their existing admission semantics. A digest is not privacy approval.
+If typed evidence is missing or invalid, Open Trestle refuses Go consumption by name. Generic opaque manifests keep their existing admission semantics.
 
 ### Evidence roles and sources
 
 Three evidence roles are required:
 
-- the exact model's no-training and zero-day retention
+- the model's no-training and zero-day retention
 - the privacy scope of the broker or service
 - a distinct review of the actual account or workspace
 
-The roles may reference the same artifact when it supports all of those claims. A public terms page does not establish account settings or key ownership.
+The roles may reference the same artifact when it supports all of those claims.
 
 Each source has these properties:
 
@@ -69,32 +62,30 @@ Each source has these properties:
 - a canonical UTC `retrieved_at`
 - a nonzero lowercase `content_sha256`
 
-Labels are at most 256 UTF-8 bytes. The parser checks syntax and linkage, which cannot prove what the evidence says, how the provider behaves or who owns the account. It does not fetch evidence URLs.
+Labels are at most 256 UTF-8 bytes. The parser checks syntax and linkage. It does not fetch evidence URLs or read their content.
 
 ### Account and client
 
-The first account shape is exactly subscription `go`, workspace membership `single_member`, privacy training `disabled` and Extra Usage `disabled`. Go Plus, Teams, service accounts and a balance fallback need separate design and evidence. Open Trestle does not infer them from the endpoint or from a zero request cost. BYOK, tools, plugins and streaming are `excluded`. The client declaration is exactly `open-trestle/1` and `authorized_review_scope_sha256_v1`.
+The supported account shape is subscription `go`, workspace membership `single_member`, privacy training `disabled` and Extra Usage `disabled`. Go Plus, Teams, service accounts and a balance fallback are not supported. BYOK, tools, plugins and streaming are `excluded`. The client declaration is `open-trestle/1` and `authorized_review_scope_sha256_v1`.
 
 ### Model version, retention and parsing
 
-`model_version` must be present and non-null, but it may be empty. An empty version uses the model ID as the effective selector, and otherwise the version is the selector. `retention_days` is a present, non-null integer that is exactly 0, and training is `disabled`. The broker retention is `model_specific_documented_zero_days`, which is a documented claim that an operator reviewed, not an unconditional warranty from the provider.
+`model_version` must be present and non-null, but it may be empty. An empty version uses the model ID as the effective selector, and otherwise the version is the selector. `retention_days` is a present, non-null integer that is 0, and training is `disabled`. The broker retention is `model_specific_documented_zero_days`, which is the provider's documented claim, not a warranty.
 
-A duplicate, aliased or unknown field, a missing or null required field, and trailing values all refuse typed consumption. Open Trestle scans the entire original manifest before it extracts the reserved member. The existing limits apply: a 1 MiB manifest and an inventory of 64 routes and 8 MiB.
+A duplicate, aliased or unknown field, a missing or null required field, and trailing values all refuse typed consumption. Open Trestle scans the whole manifest before it extracts the reserved member. The limits are a 1 MiB manifest and an inventory of 64 routes and 8 MiB.
 
 ### Time rules
 
 - Every source retrieval is no later than the review.
 - The review is no later than `valid_from`.
-- `valid_from` is strictly before `valid_until`. The interval includes its start and excludes its end.
-- A dated source agreement must not outlive its stated expiry, so translate the exclusive bound explicitly.
-- Where no service-wide expiry exists, choose a finite reviewed window. Do not claim it is a provider TTL.
-- The native parser cannot find a contractual expiry from the content of a document.
+- `valid_from` is before `valid_until`. The interval includes its start and excludes its end.
+- A dated source agreement must not outlive its stated expiry. Where no service-wide expiry exists, choose a finite window of your own.
 - There is no default TTL and no grace period.
-- In the complete integration, currentness is checked before credential resolution and again before dispatch effects.
+- Currentness is checked before credential resolution and again before dispatch.
 
 ## Synthetic format example
 
-This is an offline fixture with no secrets. It is not a real account review and not a live approval. The `.invalid` URLs and the hashes label synthetic artifacts. Replace all route, source, account, scope and window inputs through protected review. Then recompute the account, manifest, record, inventory and policy identities, in that order. Never copy this example as provider evidence or as a ready policy.
+This is a synthetic example with no secrets. The `.invalid` URLs and the hashes are placeholders. Replace all route, source, account, scope and window inputs with your own, then recompute the account, manifest, record, inventory and policy identities, in that order. Do not copy it as provider evidence.
 
 ```json
 {
@@ -163,15 +154,15 @@ This is an offline fixture with no secrets. It is not a real account review and 
 
 ### Account identity recipe
 
-`account_policy_identity` is the lowercase SHA-256 of the `encoding/json.Marshal` output of a fixed wrapper, with no newline and no key sorting. Go JSON escaping and canonical UTC strings matter. The field orders are:
+`account_policy_identity` is the lowercase SHA-256 of the `encoding/json.Marshal` output of a wrapper, with no newline and no key sorting. Go JSON escaping and canonical UTC strings matter. The field orders are:
 
 - wrapper: `contract`, `version`, `account`
 - account: `authority_label`, `credential_reference_identity`, `subscription`, `workspace_membership`, `privacy_training`, `extra_usage`, `review_evidence`
 - source: `url`, `retrieved_at`, `content_sha256`
 
-The credential reference identity is the SHA-256 of `open-trestle/provider-credential-environment/` plus the exact environment variable name, never its value. Changing the account, its settings, the review evidence or the reference changes the account identity and every identity that encloses it. Replacing a real key behind the same reference does not establish that the account stayed the same.
+The credential reference identity is the SHA-256 of `open-trestle/provider-credential-environment/` plus the environment variable name, not its value. Changing the account, its settings, the review evidence or the reference changes the account identity and every identity that encloses it.
 
-Save the calculation below, which uses only the standard library, outside the product tree as `go-account-identity.go`. Given the non-secret witness file, the offline command is `go run go-account-identity.go manifest.json`. The recipe makes no network request and looks up no credential. Its permissive decoding is not the product validator, and it only calculates a candidate digest. It grants no setup authority and does not show readiness.
+Save the calculation below, which uses only the standard library, outside the product tree as `go-account-identity.go`. Given the non-secret witness file, run `go run go-account-identity.go manifest.json`. The recipe makes no network request and looks up no credential. It only calculates a digest and does not validate the manifest.
 
 ```go
 package main
@@ -235,51 +226,50 @@ func main() {
 }
 ```
 
-For exactly the synthetic account above, the compact, ordered UTF-8 preimage is 581 bytes, and its SHA-256 is `b7202d516d63a29f9886372fb0d23caa4c316d83572e2181534097e64b0e773f`. The Go recipe reproduces this value from the ASCII-only ordered fixture, without a trailing newline. It is not a digest of a real account or of the complete evidence manifest.
+For the synthetic account above, the compact, ordered UTF-8 preimage is 581 bytes, and its SHA-256 is `b7202d516d63a29f9886372fb0d23caa4c316d83572e2181534097e64b0e773f`. The Go recipe reproduces this value from the example, without a trailing newline.
 
 ## Session, response and accounting
 
 ### Session header
 
-After Open Trestle validates the sanitizer proof for the repository, run and request, the request sets `x-opencode-session` to `trestle_` followed by the lowercase SHA-256 of the UTF-8 text `open-trestle/opencode-go-session/v1/` plus the validated review-scope identity. The value is exactly 72 ASCII bytes. It stays the same within that scope, even across roles and requests, and differs between authorized reviews. It carries no raw scope labels, key or user text. The hash is an opaque format, not secrecy and not an authentication token. Payload fields cannot override it. The User-Agent is exactly `open-trestle/1`.
+After Open Trestle validates the sanitizer proof for the repository, run and request, the request sets `x-opencode-session` to `trestle_` followed by the lowercase SHA-256 of the UTF-8 text `open-trestle/opencode-go-session/v1/` plus the validated review-scope identity. The value is 72 ASCII bytes. It stays the same within that scope, across roles and requests, and differs between reviews. It carries no raw scope labels, key or user text, and payload fields cannot override it. The User-Agent is `open-trestle/1`.
 
 ### Requests
 
-Requests are bounded, non-streaming Chat POSTs with `stream:false`, the existing sanitized user content, the trusted instructions and an output cap. This profile introduces no OpenRouter routing body, no endpoint substitution, no retry and no fallback.
+Requests are non-streaming Chat POSTs with `stream:false`, the sanitized user content, the host instructions and an output cap. They carry no OpenRouter routing body, and this profile adds no retry or fallback.
 
 ### Replies
 
-Go-only `message.reasoning_content` is validated and then discarded. It never becomes candidate output, audit content or a separate reasoning artifact. Only assistant content reaches the existing candidate parser.
+Go-only `message.reasoning_content` is validated and then discarded. It does not become candidate output or any other record. Only assistant content reaches the candidate parser.
 
 ### Token counts
 
-Known native `prompt_tokens` and `completion_tokens` stay bounded counts that the provider reported. An optional total must equal their overflow-safe sum, and an absent total is derived from that known pair. If the whole usage is missing or null, it stays unknown and is never treated as free. Partial or malformed native counts are refused. Only the native `cached_tokens` details can supply the neutral cached subset.
+Known native `prompt_tokens` and `completion_tokens` stay the counts that the provider reported. An optional total must equal their overflow-safe sum, and an absent total is derived from that pair. If the whole usage is missing or null, it stays unknown and is not treated as free. Partial or malformed native counts are refused. Only the native `cached_tokens` details can supply the neutral cached subset.
 
-The billed `opencode.tokens.input` excludes cache reads and writes, and billed output includes reasoning. Those counters are a separate family. Never equate billed input with the prompt count, never add cache reads to the prompt count, and never assume that cache reads are at most `prompt_tokens`. Open Trestle validates the bounded billed counters and then discards them, rather than manufacturing neutral counts from them.
+The billed `opencode.tokens.input` excludes cache reads and writes, and billed output includes reasoning. Those counters are a separate family: do not equate billed input with the prompt count, add cache reads to it, or assume that cache reads are at most `prompt_tokens`. Open Trestle validates the billed counters and then discards them.
 
 ### Billing block
 
-When an `opencode` billing block is present, it is closed:
+When an `opencode` billing block is present, it must have these properties:
 
-- `billing_source` is exactly `go`
+- `billing_source` is `go`
 - `list_cost` and `allowance` are required, finite and nonnegative
-- the billed counters are closed
+- the billed counters are well-formed
 - `estimated` is absent or false
 
-Balance, free, BYOK, go-plus and estimated billing are refused. In this case,
-where Extra Usage is disabled, `usage.cost` may be absent, null or numeric zero. A positive charge is a contradictory result after the effect has happened, so Open Trestle refuses it, but the refusal cannot undo the charge. A zero cost or allowance does not authorize a free route or a future balance. Unknown or malformed extensions are rejected, not silently treated as zero.
+Balance, free, BYOK, go-plus and estimated billing are refused. With Extra Usage disabled, `usage.cost` may be absent, null or numeric zero. Open Trestle refuses a positive charge, but the refusal cannot undo it. Unknown or malformed extensions are rejected.
 
 ### Cost reconciliation
 
-The existing cost reconciliation, with two rates fixed in the record, is registry accounting. It is not reconciliation against the Console bill and not a technical cap on account spend. Operator-reviewed prices and a pessimistic reservation must be conservative and must account for the selected model's cache-tier terms. Subscription pricing does not justify zero rates. If no defensible, conservative reservation is possible, refuse activation.
+Cost reconciliation uses the two rates fixed in the record. It is registry accounting, not reconciliation against the Console bill and not a cap on account spend. Set prices and the reservation conservatively, accounting for the selected model's cache-tier terms. Subscription pricing does not justify zero rates.
 
-When usage is genuinely absent, the existing handler keeps an explicit unknown outcome and its reservation, and it must not discard valid native counts. A budget refusal that comes late cannot reverse an effect on the service.
+When usage is absent, the handler keeps an unknown outcome and its reservation, and keeps valid native counts. A late budget refusal cannot reverse an effect on the service.
 
 ## Qualification limits
 
-Model catalog metadata does not approve privacy or entitlement, activate routes or discover dispatch endpoints. The ordinary local-only composition still refuses brokered routes.
+Model catalog metadata does not approve privacy or entitlement, activate routes or discover dispatch endpoints. The ordinary local-only composition refuses brokered routes.
 
-These are independent requirements:
+These are separate requirements:
 
 - setup Go authority
 - separate eligibility for direct verification
@@ -288,9 +278,7 @@ These are independent requirements:
 - publication authority
 - live qualification
 
-OpenCode pay-as-you-go and Ollama Cloud remain separate, named conformance work.
-
-The official-source basis is the retained public OpenCode Go, Console inference and harness documentation, retrieved October 30, 2026. Review the current account and model terms again before activation:
+The sources are the public OpenCode Go, Console inference and harness documentation, retrieved October 30, 2026. Review the current account and model terms before activation:
 
 - https://opencode.ai/v2/docs/console/go
 - https://opencode.ai/v2/docs/console/api/inference
