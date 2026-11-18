@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -26,12 +27,8 @@ func TestAcquireExistingPreservesBytesAndModeAndExcludesWriter(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer lock.Close()
-	body, err := os.ReadFile(path)
-	if err != nil || string(body) != "preserved lock bytes" {
-		t.Fatal("reader changed bytes")
-	}
 	info, err := os.Lstat(path)
-	if err != nil || info.Mode().Perm() != 0o400 {
+	if err != nil || info.Mode().Perm() != readOnlyMode {
 		t.Fatal("reader changed permissions")
 	}
 	if other, err := AcquireExisting(path); !errors.Is(err, ErrLocked) || other != nil {
@@ -39,6 +36,12 @@ func TestAcquireExistingPreservesBytesAndModeAndExcludesWriter(t *testing.T) {
 	}
 	if err := lock.Close(); err != nil {
 		t.Fatal(err)
+	}
+	// Windows locks are mandatory, so the bytes are read once the lock is
+	// released.
+	body, err := os.ReadFile(path)
+	if err != nil || string(body) != "preserved lock bytes" {
+		t.Fatal("reader changed bytes")
 	}
 }
 func TestAcquireExistingRefusesActiveWriter(t *testing.T) {
@@ -66,6 +69,17 @@ func TestAcquireExistingTracksLockedInodeNotReplacement(t *testing.T) {
 	before, err := os.Lstat(path)
 	if err != nil || !lock.SameFile(before) {
 		t.Fatal("original lock mismatch")
+	}
+	if runtime.GOOS == "windows" {
+		// Windows refuses to rename a file that the lock holds open, so the
+		// locked file cannot be replaced at its path at all.
+		if err := os.Rename(path, path+".old"); err == nil {
+			t.Fatal("a locked lock file was renamed")
+		}
+		if again, err := os.Lstat(path); err != nil || !lock.SameFile(again) {
+			t.Fatal("the locked lock file changed")
+		}
+		return
 	}
 	if err := os.Rename(path, path+".old"); err != nil {
 		t.Fatal(err)

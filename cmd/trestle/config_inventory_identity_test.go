@@ -194,9 +194,7 @@ func writeConfigIdentityProtectedFile(t *testing.T, name string, content []byte,
 
 func configIdentityChmod(t *testing.T, path string, mode os.FileMode) {
 	t.Helper()
-	if err := os.Chmod(path, mode); err != nil {
-		t.Fatal(err)
-	}
+	setTestMode(t, path, mode)
 }
 
 func decodeConfigIdentityInventory(t *testing.T, document []byte) runtimeconfig.RouteInventory {

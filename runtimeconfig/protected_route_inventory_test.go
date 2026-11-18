@@ -116,7 +116,7 @@ func writeProtectedRouteInventoryUnderParent(t *testing.T, parentMode os.FileMod
 
 func protectedRouteInventoryChmod(t *testing.T, path string, mode os.FileMode) {
 	t.Helper()
-	if err := os.Chmod(path, mode); err != nil {
+	if err := setTestMode(t, path, mode); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -132,7 +132,7 @@ func protectedRouteInventoryIDs(inventory RouteInventory) []string {
 
 func protectedRouteInventoryOwnershipSupported() bool {
 	switch runtime.GOOS {
-	case "aix", "android", "darwin", "dragonfly", "freebsd", "illumos", "ios", "linux", "netbsd", "openbsd", "solaris":
+	case "aix", "android", "darwin", "dragonfly", "freebsd", "illumos", "ios", "linux", "netbsd", "openbsd", "solaris", "windows":
 		return true
 	default:
 		return false

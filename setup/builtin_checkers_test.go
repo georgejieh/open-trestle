@@ -13,7 +13,7 @@ import (
 func TestStateStorageCheckerValidatesPrivateDirectory(t *testing.T) {
 	plan, _ := NewPlan(ProfileLocalSingleNode, "tenant-a", "repo-a", "owner", setupTime(0))
 	root := t.TempDir()
-	if err := os.Chmod(root, 0o700); err != nil {
+	if err := setTestMode(t, root, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	checker, err := NewStateStorageChecker(root)
@@ -23,13 +23,13 @@ func TestStateStorageCheckerValidatesPrivateDirectory(t *testing.T) {
 	if result := checker.Check(context.Background(), plan); result.State() != CheckPassed {
 		t.Fatalf("pass=%s", result.State())
 	}
-	if err = os.Chmod(root, 0o755); err != nil {
+	if err = setTestMode(t, root, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if result := checker.Check(context.Background(), plan); result.State() != CheckBlocked || result.RecoveryAction() != RecoveryConfigureDependency {
 		t.Fatalf("unsafe=%s", result.State())
 	}
-	if err = os.Chmod(root, 0o000); err != nil {
+	if err = setTestMode(t, root, 0o000); err != nil {
 		t.Fatal(err)
 	}
 	if result := checker.Check(context.Background(), plan); result.State() != CheckBlocked {
@@ -39,7 +39,7 @@ func TestStateStorageCheckerValidatesPrivateDirectory(t *testing.T) {
 	if err = os.Mkdir(unsafeParent, 0o777); err != nil {
 		t.Fatal(err)
 	}
-	_ = os.Chmod(unsafeParent, 0o777)
+	_ = setTestMode(t, unsafeParent, 0o777)
 	privateChild := filepath.Join(unsafeParent, "private")
 	if err = os.Mkdir(privateChild, 0o700); err != nil {
 		t.Fatal(err)
@@ -52,7 +52,7 @@ func TestStateStorageCheckerValidatesPrivateDirectory(t *testing.T) {
 	if err = os.Mkdir(replaceableGrandparent, 0o777); err != nil {
 		t.Fatal(err)
 	}
-	_ = os.Chmod(replaceableGrandparent, 0o777)
+	_ = setTestMode(t, replaceableGrandparent, 0o777)
 	protectedParent := filepath.Join(replaceableGrandparent, "parent")
 	_ = os.Mkdir(protectedParent, 0o700)
 	protectedChild := filepath.Join(protectedParent, "storage")

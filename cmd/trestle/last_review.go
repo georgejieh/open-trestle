@@ -81,7 +81,7 @@ func readLastReview(dir string) (lastReview, bool) {
 // regular 0600 file owned by this account, such as a symbolic link, is
 // refused.
 func replaceProtectedFile(ctx context.Context, path string, content []byte) error {
-	if info, err := os.Lstat(path); err == nil && (!info.Mode().IsRegular() || info.Mode().Perm() != 0o600 || !fileauthority.TrustedOwner(info)) {
+	if info, err := os.Lstat(path); err == nil && !fileauthority.PrivateFile(path, info) {
 		return errors.New("not a protected file")
 	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
@@ -99,10 +99,5 @@ func replaceProtectedFile(ctx context.Context, path string, content []byte) erro
 	if err := os.Rename(temporary, path); err != nil {
 		return err
 	}
-	directory, err := os.Open(filepath.Dir(path))
-	if err != nil {
-		return err
-	}
-	syncErr := directory.Sync()
-	return errors.Join(syncErr, directory.Close())
+	return fileauthority.SyncDirectory(filepath.Dir(path))
 }

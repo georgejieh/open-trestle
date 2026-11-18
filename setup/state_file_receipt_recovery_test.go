@@ -150,7 +150,7 @@ func TestStateFileRejectsUnsafeReceiptStagingWithoutRemoval(t *testing.T) {
 			case "broad-mode":
 				err = os.WriteFile(staging, []byte("partial"), 0o600)
 				if err == nil {
-					err = os.Chmod(staging, 0o644)
+					err = setTestMode(t, staging, 0o644)
 				}
 			}
 			if err != nil {
@@ -219,7 +219,7 @@ func TestRestoreBackupSnapshotRecoversInterruptedReceiptStaging(t *testing.T) {
 		t.Fatal(err)
 	}
 	snapshotRoot := t.TempDir()
-	if err := os.Chmod(snapshotRoot, 0o700); err != nil {
+	if err := setTestMode(t, snapshotRoot, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	snapshot := filepath.Join(snapshotRoot, "snapshot.json")
@@ -233,7 +233,7 @@ func TestRestoreBackupSnapshotRecoversInterruptedReceiptStaging(t *testing.T) {
 	for _, phase := range []string{"created", "short-write", "synced", "installed", "committed-partial"} {
 		t.Run(phase, func(t *testing.T) {
 			destinationRoot := t.TempDir()
-			if err := os.Chmod(destinationRoot, 0o700); err != nil {
+			if err := setTestMode(t, destinationRoot, 0o700); err != nil {
 				t.Fatal(err)
 			}
 			destination := filepath.Join(destinationRoot, "restored.json")
@@ -389,7 +389,7 @@ func TestStateFileReclaimsStagingOfVerifiedCommittedReceipt(t *testing.T) {
 		t.Fatalf("current=%v", err)
 	}
 	after, err := os.Lstat(final)
-	if err != nil || !os.SameFile(before, after) || after.Mode().Perm() != 0o600 {
+	if err != nil || !os.SameFile(before, after) || !hasTestMode(t, final, after, 0o600) {
 		t.Fatal("committed receipt changed")
 	}
 	if _, err = os.Lstat(final + ".next"); !errors.Is(err, os.ErrNotExist) {
@@ -439,7 +439,7 @@ func TestRestoreBackupSnapshotRecoversStagingAfterInstalledPrefix(t *testing.T) 
 		t.Fatal(err)
 	}
 	snapshotRoot := t.TempDir()
-	if err = os.Chmod(snapshotRoot, 0o700); err != nil {
+	if err = setTestMode(t, snapshotRoot, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	snapshot := filepath.Join(snapshotRoot, "snapshot.json")
@@ -447,7 +447,7 @@ func TestRestoreBackupSnapshotRecoversStagingAfterInstalledPrefix(t *testing.T) 
 		t.Fatal(err)
 	}
 	destinationRoot := t.TempDir()
-	if err = os.Chmod(destinationRoot, 0o700); err != nil {
+	if err = setTestMode(t, destinationRoot, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	destination := filepath.Join(destinationRoot, "restored.json")

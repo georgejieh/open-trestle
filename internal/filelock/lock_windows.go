@@ -8,6 +8,8 @@ import (
 	"os"
 	"syscall"
 	"unsafe"
+
+	"github.com/georgejieh/open-trestle/internal/ownersonly"
 )
 
 const (
@@ -39,4 +41,18 @@ func platformUnlock(file *os.File) error {
 		return fmt.Errorf("%w: unlock", ErrOperation)
 	}
 	return nil
+}
+
+// openLockFile opens the lock file at path, creating it owner-only when it
+// is missing, so that no other account can open it and hold the lock.
+func openLockFile(path string) (*os.File, error) {
+	return ownersonly.OpenOrCreateFile(path)
+}
+
+// lockFilePrivate reports whether the lock file grants no account other
+// than its owner and the system's own accounts access beyond reading its
+// attributes and DACL. A lock file another account could open could be
+// locked by it.
+func lockFilePrivate(file *os.File) bool {
+	return ownersonly.CheckHandle(syscall.Handle(file.Fd()), ownersonly.Rule{Owner: ownersonly.OwnerTrusted, Others: ownersonly.OthersNone}) == nil
 }

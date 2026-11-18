@@ -244,7 +244,7 @@ func TestBindRuntimePolicyRefusesSelectionAndMalformedTemplates(t *testing.T) {
 
 func TestBindProtectedRuntimePolicyReadsOnlyProtectedInputs(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.Chmod(dir, 0o700); err != nil {
+	if err := setTestMode(t, dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	inventoryPath := filepath.Join(dir, "routes.json")
@@ -270,7 +270,7 @@ func TestBindProtectedRuntimePolicyReadsOnlyProtectedInputs(t *testing.T) {
 			t.Fatal("invalid paths accepted")
 		}
 	}
-	if err := os.Chmod(templatePath, 0o666); err != nil {
+	if err := setTestMode(t, templatePath, 0o666); err != nil {
 		t.Fatal(err)
 	}
 	if value, err := BindProtectedRuntimePolicy(context.Background(), inventoryPath, templatePath, "adapter-a", "adapter-b"); err == nil || value != nil {

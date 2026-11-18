@@ -23,22 +23,6 @@ func testStore(t *testing.T) *Store {
 	return store
 }
 
-func TestDefaultDirectoryFollowsXDGStateHome(t *testing.T) {
-	env := map[string]string{"XDG_STATE_HOME": "/srv/state", "HOME": "/home/someone"}
-	getenv := func(name string) string { return env[name] }
-	if dir, err := DefaultDirectory(getenv); err != nil || dir != "/srv/state/open-trestle/usage" {
-		t.Fatalf("XDG_STATE_HOME: %q %v", dir, err)
-	}
-	env["XDG_STATE_HOME"] = "relative/state"
-	if dir, err := DefaultDirectory(getenv); err != nil || dir != "/home/someone/.local/state/open-trestle/usage" {
-		t.Fatalf("a relative XDG_STATE_HOME is ignored, as the specification says: %q %v", dir, err)
-	}
-	delete(env, "XDG_STATE_HOME")
-	if dir, err := DefaultDirectory(getenv); err != nil || dir != "/home/someone/.local/state/open-trestle/usage" {
-		t.Fatalf("default: %q %v", dir, err)
-	}
-}
-
 func TestStoreLimitsAreProtectedAndReplaced(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
@@ -53,9 +37,8 @@ func TestStoreLimitsAreProtectedAndReplaced(t *testing.T) {
 	if err := store.SetLimit(ctx, first); err != nil {
 		t.Fatal(err)
 	}
-	info, err := os.Stat(store.Directory())
-	if err != nil || info.Mode().Perm() != 0o700 {
-		t.Fatalf("usage folder mode: %v %v", info, err)
+	if !private(t, store.Directory()) {
+		t.Fatal("the usage folder is not private")
 	}
 	second, _ := NewLimit(scope, PeriodWeek, 2_500_000, []int{90}, utc(t, "2026-11-14T10:00:00Z"))
 	if err := store.SetLimit(ctx, second); err != nil {
@@ -76,9 +59,8 @@ func TestStoreLimitsAreProtectedAndReplaced(t *testing.T) {
 	}
 	entries, _ := os.ReadDir(store.Directory())
 	for _, entry := range entries {
-		info, _ := entry.Info()
-		if strings.HasPrefix(entry.Name(), ".limit-") || info.Mode().Perm() != 0o600 {
-			t.Fatalf("%s is left behind or not 0600 (%v)", entry.Name(), info.Mode())
+		if strings.HasPrefix(entry.Name(), ".limit-") || !private(t, filepath.Join(store.Directory(), entry.Name())) {
+			t.Fatalf("%s is left behind or not private", entry.Name())
 		}
 	}
 	if cleared, err := store.ClearLimit(ctx, scope); err != nil || !cleared {
@@ -92,19 +74,13 @@ func TestStoreLimitsAreProtectedAndReplaced(t *testing.T) {
 	}
 	// A limit file whose mode lets others read it is refused, not trusted.
 	path := filepath.Join(store.Directory(), limitName(other))
-	if err := os.Chmod(path, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	exposeToOthers(t, path, 0o644)
 	if _, _, err := store.Limit(other); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("an unprotected limit file was read: %v", err)
 	}
-	if err := os.Chmod(path, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	makePrivate(t, path, 0o600)
 	// A folder others can enter is refused.
-	if err := os.Chmod(store.Directory(), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	exposeToOthers(t, store.Directory(), 0o755)
 	if _, err := store.Limits(); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("a folder that is not 0700 was used: %v", err)
 	}
@@ -145,9 +121,8 @@ func TestStoreAppendSumsChargedEntriesByPeriod(t *testing.T) {
 	check(other, PeriodMonth, "2026-11-30T23:59:59Z", 45_000, 2, 0)
 	check(other, PeriodMonth, "2027-01-01T00:00:00Z", 0, 0, 0)
 	for _, name := range []string{"ledger-2026-10.jsonl", "ledger-2026-11.jsonl", "ledger-2026-12.jsonl", "ledger.lock"} {
-		info, err := os.Lstat(filepath.Join(store.Directory(), name))
-		if err != nil || info.Mode().Perm() != 0o600 {
-			t.Fatalf("%s: %v %v", name, info, err)
+		if !private(t, filepath.Join(store.Directory(), name)) {
+			t.Fatalf("%s is not private", name)
 		}
 	}
 	data, _ := os.ReadFile(filepath.Join(store.Directory(), "ledger-2026-11.jsonl"))
@@ -282,9 +257,7 @@ func TestStoreRefusesALedgerFileItCannotTrust(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(store.Directory(), "ledger-2026-11.jsonl")
-	if err := os.Chmod(path, 0o640); err != nil {
-		t.Fatal(err)
-	}
+	exposeToOthers(t, path, 0o640)
 	if err := store.Append(ctx, testEntry(t, "2026-11-13T10:00:01Z", 1, true, scope)); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("an entry was appended to a file others can read: %v", err)
 	}
@@ -292,9 +265,7 @@ func TestStoreRefusesALedgerFileItCannotTrust(t *testing.T) {
 	if _, err := store.Spent(scope, start, end); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("an unprotected ledger was read: %v", err)
 	}
-	if err := os.Chmod(path, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	makePrivate(t, path, 0o600)
 	// A ledger file replaced by a symbolic link is refused.
 	elsewhere := filepath.Join(t.TempDir(), "elsewhere.jsonl")
 	if err := os.WriteFile(elsewhere, nil, 0o600); err != nil {

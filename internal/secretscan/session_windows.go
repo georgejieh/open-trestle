@@ -7,12 +7,15 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"unsafe"
+
+	"github.com/georgejieh/open-trestle/internal/ownersonly"
 )
 
 const (
@@ -78,7 +81,10 @@ type jobObjectExtendedLimitInformation struct {
 // handle is open, hashes it through that handle and keeps the handle open
 // until the helper has started. Reparse points are refused. The path must
 // end in .exe, so os/exec runs exactly that path instead of trying other
-// extensions. File ownership and ACLs are not checked on Windows.
+// extensions. As on Unix, the file must also be owned by the current user,
+// LocalSystem, Administrators or TrustedInstaller, and no other principal
+// may write it, delete it or change its security; the digest already pins
+// its content, so this is defence in depth.
 func openVerifiedHelper(path string, expectedDigest string) (verifiedHelper, error) {
 	if !filepath.IsAbs(path) || filepath.Clean(path) != path || !strings.EqualFold(filepath.Ext(path), ".exe") || !validDigest(expectedDigest) {
 		return verifiedHelper{}, ErrHelperUntrusted
@@ -92,7 +98,8 @@ func openVerifiedHelper(path string, expectedDigest string) (verifiedHelper, err
 		return verifiedHelper{}, ErrHelperUntrusted
 	}
 	var information syscall.ByHandleFileInformation
-	if err := syscall.GetFileInformationByHandle(handle, &information); err != nil || information.FileAttributes&(syscall.FILE_ATTRIBUTE_DIRECTORY|syscall.FILE_ATTRIBUTE_REPARSE_POINT) != 0 {
+	if err := syscall.GetFileInformationByHandle(handle, &information); err != nil || information.FileAttributes&(syscall.FILE_ATTRIBUTE_DIRECTORY|syscall.FILE_ATTRIBUTE_REPARSE_POINT) != 0 ||
+		ownersonly.CheckHandle(handle, ownersonly.Rule{Owner: ownersonly.OwnerTrusted, Others: ownersonly.OthersRead}) != nil {
 		_ = syscall.CloseHandle(handle)
 		return verifiedHelper{}, ErrHelperUntrusted
 	}
@@ -137,15 +144,43 @@ func imageIdentity(process syscall.Handle) (fileIdentity, error) {
 	return identityOf(information), nil
 }
 
-// openCacheDirectory refuses every directory. Owner-only access on Windows is
-// a property of the directory's ACL, which is not verified, and the helper
-// refuses every working directory on Windows for the same reason, so no
-// session starts on Windows.
-func openCacheDirectory(path string, _ bool) (string, error) {
+// openCacheDirectory checks the helper's cache directory and returns the path
+// to start the helper in, as the Linux version does, with the owner and DACL
+// of each entry in place of its owner and mode bits; see package ownersonly.
+// Symbolic links above the directory are resolved once; a junction or other
+// reparse point on the resolved path is refused, since filepath.EvalSymlinks
+// does not resolve junctions. Every directory above the cache must be owned
+// by the current user, LocalSystem, Administrators or TrustedInstaller and
+// may let other principals at most read it and add entries. The cache itself
+// must be owned by the current user, must grant other principals no access
+// beyond reading its attributes and DACL, also through ACEs that entries
+// created inside it would inherit, and every entry already inside it must be
+// owned by a trusted identity and grant others nothing. The helper requires
+// the same of its working directory.
+//
+// With create, a missing cache is first created owner-only; nothing above it
+// is ever created. Another principal that may add entries to an empty parent
+// could turn the parent into a junction between the check and the creation,
+// so the cache must afterwards resolve to the expected path; once the cache
+// exists the parent is no longer empty and cannot become a junction.
+func openCacheDirectory(path string, create bool) (string, error) {
 	if !validAbsolutePath(path) || filepath.Dir(path) == path {
 		return "", ErrSessionConfig
 	}
-	return "", ErrCacheUntrusted
+	parent, err := filepath.EvalSymlinks(filepath.Dir(path))
+	if err != nil || !filepath.IsAbs(parent) || ownersonly.CheckAncestors(parent) != nil {
+		return "", ErrCacheUntrusted
+	}
+	directory := filepath.Join(parent, filepath.Base(path))
+	if create {
+		if err := ownersonly.Mkdir(directory); err != nil && !errors.Is(err, fs.ErrExist) {
+			return "", ErrCacheUntrusted
+		}
+	}
+	if ownersonly.CheckPrivateDirectoryTree(directory) != nil {
+		return "", ErrCacheUntrusted
+	}
+	return directory, nil
 }
 
 // configureHelperCommand starts the helper suspended, so it runs no code

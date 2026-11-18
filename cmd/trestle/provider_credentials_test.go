@@ -79,11 +79,9 @@ func TestProviderKeyLookupReportsAnUnusableStoreWithoutUsingIt(t *testing.T) {
 	clearSessionKeys(t)
 	t.Setenv(keyStoreTestVariable, "")
 	saveTestKey(t, keyStoreTestVariable, remoteTestKey)
-	if err := os.Chmod(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	exposeTestDirectory(t, dir)
 	value, state := providerKey(keyStoreTestVariable)
-	if value != "" || state.available() || !strings.Contains(state.where(), "the saved key cannot be used") || !strings.Contains(state.where(), "0700") {
+	if value != "" || state.available() || !strings.Contains(state.where(), "the saved key cannot be used") || !strings.Contains(state.where(), privateDirectoryRefusal) {
 		t.Fatalf("a 0755 credential folder was used (%v) or not explained: %q", value != "", state.where())
 	}
 	if strings.Contains(state.where(), remoteTestKey) {

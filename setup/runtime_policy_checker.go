@@ -392,7 +392,7 @@ func readProtectedConfigurationOnce(path string, limit int) ([]byte, runtimePoli
 			return nil, runtimePolicyLoadUnavailable
 		}
 		if current == path {
-			if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0o022 != 0 || !fileOwnedByTrustedProcessOrRoot(info) {
+			if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || !trustedUnwritable(current, info) {
 				return nil, runtimePolicyLoadBlocked
 			}
 		} else if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
@@ -406,7 +406,7 @@ func readProtectedConfigurationOnce(path string, limit int) ([]byte, runtimePoli
 		current = parent
 	}
 	for i := 1; i < len(chain); i++ {
-		if !stableConfigurationAncestorAuthority(chain[i].info, chain[i-1].info) {
+		if !configurationAncestorAuthority(chain[i].path, chain[i].info, chain[i-1].path, chain[i-1].info) {
 			return nil, runtimePolicyLoadBlocked
 		}
 	}
@@ -436,23 +436,14 @@ func readProtectedConfigurationOnce(path string, limit int) ([]byte, runtimePoli
 			return nil, runtimePolicyLoadBlocked
 		}
 		if i == 0 {
-			if !again.Mode().IsRegular() || again.Mode().Perm()&0o022 != 0 || !fileOwnedByTrustedProcessOrRoot(again) {
+			if !again.Mode().IsRegular() || !trustedUnwritable(value.path, again) {
 				return nil, runtimePolicyLoadBlocked
 			}
-		} else if !again.IsDir() || again.Mode()&os.ModeSymlink != 0 || !stableConfigurationAncestorAuthority(again, chain[i-1].info) {
+		} else if !again.IsDir() || again.Mode()&os.ModeSymlink != 0 || !configurationAncestorAuthority(value.path, again, chain[i-1].path, chain[i-1].info) {
 			return nil, runtimePolicyLoadBlocked
 		}
 	}
 	return content, runtimePolicyLoadValid
-}
-func stableConfigurationAncestorAuthority(parent, child os.FileInfo) bool {
-	if !fileOwnedByTrustedProcessOrRoot(parent) {
-		return false
-	}
-	if parent.Mode().Perm()&0o022 == 0 {
-		return true
-	}
-	return parent.Mode()&os.ModeSticky != 0 && fileOwnedByTrustedProcessOrRoot(child)
 }
 func (c *RuntimePolicyChecker) String() string   { return "setup runtime policy checker" }
 func (c *RuntimePolicyChecker) GoString() string { return "setup.RuntimePolicyChecker{<redacted>}" }

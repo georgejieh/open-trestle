@@ -49,24 +49,25 @@ func WriteNewProtectedFile(ctx context.Context, path string, content []byte, lim
 		}
 		return current
 	}
-	if info, err := root.Stat("."); err != nil || !os.SameFile(info, chain[0].info) || info.Mode() != chain[0].info.Mode() || !TrustedOwner(info) || recheckChain(chain) != nil {
+	if info, err := root.Stat("."); err != nil || !os.SameFile(info, chain[0].info) || info.Mode() != chain[0].info.Mode() || !componentTrusted(pinnedPath{path: chain[0].path, info: info, role: roleDirectory}, nil) || recheckChain(chain) != nil {
 		return closeRoot(ErrProtectedWriteRefused)
 	}
 	if err := ctx.Err(); err != nil {
 		return closeRoot(err)
 	}
-	file, err := root.OpenFile(base, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	target := filepath.Join(chain[0].path, base)
+	file, err := createProtected(root, chain[0].path, base)
 	if err != nil || file == nil {
 		return closeRoot(ErrProtectedWriteRefused)
 	}
 	created = true
 	createdInfo, err := file.Stat()
-	if err != nil || !trustedCreatedProtectedFile(createdInfo) {
+	if err != nil || !PrivateOpenFile(file, createdInfo) {
 		_ = file.Close()
 		return closeRoot(ErrProtectedWriteIncomplete)
 	}
 	linkedInfo, err := root.Lstat(base)
-	if err != nil || !os.SameFile(createdInfo, linkedInfo) || linkedInfo.Mode() != createdInfo.Mode() || !trustedCreatedProtectedFile(linkedInfo) {
+	if err != nil || !os.SameFile(createdInfo, linkedInfo) || linkedInfo.Mode() != createdInfo.Mode() || !PrivateFile(target, linkedInfo) {
 		_ = file.Close()
 		return closeRoot(ErrProtectedWriteIncomplete)
 	}
@@ -85,19 +86,11 @@ func WriteNewProtectedFile(ctx context.Context, path string, content []byte, lim
 	if err := file.Close(); err != nil {
 		return closeRoot(ErrProtectedWriteIncomplete)
 	}
-	parentFile, err := root.Open(".")
-	if err != nil || parentFile == nil {
-		return closeRoot(ErrProtectedWriteIncomplete)
-	}
-	if err := parentFile.Sync(); err != nil {
-		_ = parentFile.Close()
-		return closeRoot(ErrProtectedWriteIncomplete)
-	}
-	if err := parentFile.Close(); err != nil {
+	if err := syncRoot(root, chain[0].path); err != nil {
 		return closeRoot(ErrProtectedWriteIncomplete)
 	}
 	currentInfo, err := root.Lstat(base)
-	if err != nil || !os.SameFile(createdInfo, currentInfo) || currentInfo.Mode() != createdInfo.Mode() || currentInfo.Size() != int64(len(content)) || !trustedCreatedProtectedFile(currentInfo) || recheckChain(chain) != nil {
+	if err != nil || !os.SameFile(createdInfo, currentInfo) || currentInfo.Mode() != createdInfo.Mode() || currentInfo.Size() != int64(len(content)) || !PrivateFile(target, currentInfo) || recheckChain(chain) != nil {
 		return closeRoot(ErrProtectedWriteIncomplete)
 	}
 	if err := ctx.Err(); err != nil {
@@ -119,10 +112,6 @@ func protectedWriteTarget(name string) (string, string, error) {
 		return "", "", ErrProtectedWriteRefused
 	}
 	return parent, base, nil
-}
-
-func trustedCreatedProtectedFile(info os.FileInfo) bool {
-	return info != nil && info.Mode().IsRegular() && info.Mode().Perm() == 0o600 && info.Mode()&os.ModeSymlink == 0 && info.Mode().Perm()&0o022 == 0 && TrustedOwner(info)
 }
 
 func writeAllProtected(file *os.File, content []byte) error {

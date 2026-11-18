@@ -60,9 +60,8 @@ func TestKeysSetListAndRemove(t *testing.T) {
 	if len(report.bearers) != 2 || report.bearers[1] != remoteTestKey {
 		t.Fatalf("checks: %d", len(report.bearers))
 	}
-	info, err := os.Lstat(filepath.Join(keys, "OPEN_TRESTLE_PROVIDER_OPENROUTER"))
-	if err != nil || info.Mode().Perm() != 0o600 {
-		t.Fatalf("saved key file: %v", err)
+	if !privateTestFile(t, filepath.Join(keys, "OPEN_TRESTLE_PROVIDER_OPENROUTER")) {
+		t.Fatal("the saved key file is not private")
 	}
 	// A provider without a free check is saved with a note.
 	code, out, _ = runKeysCommand(t, initRefusedTestKey+"\n", "set", "OPEN_TRESTLE_PROVIDER_OLLAMA_CLOUD")

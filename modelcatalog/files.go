@@ -3,6 +3,8 @@ package modelcatalog
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"io"
 	"os"
@@ -165,11 +167,15 @@ func writeAtomic(ctx context.Context, path string, data []byte, expected string,
 	if err = verify(); err != nil {
 		return err
 	}
-	temp, err := os.CreateTemp(parent, ".modelcatalog-*")
+	suffix := make([]byte, 8)
+	if _, err := rand.Read(suffix); err != nil {
+		return ErrPersistence
+	}
+	temporary := filepath.Join(parent, ".modelcatalog-"+hex.EncodeToString(suffix))
+	temp, err := fileauthority.CreatePrivateFile(temporary)
 	if err != nil {
 		return ErrPersistence
 	}
-	temporary := temp.Name()
 	defer func() { _ = temp.Close(); _ = os.Remove(temporary) }()
 	if err = temp.Chmod(0600); err != nil {
 		return ErrPersistence
@@ -188,7 +194,7 @@ func writeAtomic(ctx context.Context, path string, data []byte, expected string,
 		return ErrPersistence
 	}
 	staged, err := os.Lstat(temporary)
-	if err != nil || !os.SameFile(opened, staged) || !staged.Mode().IsRegular() || staged.Mode().Perm() != 0600 {
+	if err != nil || !os.SameFile(opened, staged) || !fileauthority.PrivateFile(temporary, staged) {
 		return ErrProtected
 	}
 	if err = verify(); err != nil {
@@ -205,13 +211,7 @@ func writeAtomic(ctx context.Context, path string, data []byte, expected string,
 	} else if err = os.Rename(temporary, absolute); err != nil {
 		return ErrPersistence
 	}
-	directory, err := os.Open(parent)
-	if err != nil {
-		return ErrDurability
-	}
-	syncErr := directory.Sync()
-	closeErr := directory.Close()
-	if syncErr != nil || closeErr != nil {
+	if err := fileauthority.SyncDirectory(parent); err != nil {
 		return ErrDurability
 	}
 	return nil

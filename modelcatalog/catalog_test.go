@@ -297,13 +297,13 @@ func TestCurrentAndProposalTamperingPreservesCatalog(t *testing.T) {
 func TestProtectedManifestModeAndAncestorSymlink(t *testing.T) {
 	sources, current, proposal := paths(t)
 	manifest(t, sources, Source{ID: "s", Kind: "openai_models", URL: "http://127.0.0.1:1/models"})
-	if err := os.Chmod(sources, 0666); err != nil {
+	if err := setTestMode(t, sources, 0666); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := Refresh(context.Background(), sources, current, proposal, false); err == nil {
 		t.Fatal("writable manifest accepted")
 	}
-	_ = os.Chmod(sources, 0600)
+	_ = setTestMode(t, sources, 0600)
 	alias := filepath.Join(t.TempDir(), "alias")
 	if err := os.Symlink(filepath.Dir(sources), alias); err != nil {
 		t.Fatal(err)

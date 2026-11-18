@@ -33,7 +33,7 @@ func Acquire(path string) (*Lock, error) {
 	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, ErrInvalidPath
 	}
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	file, err := openLockFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("%w: open", ErrOperation)
 	}
@@ -48,6 +48,9 @@ func Acquire(path string) (*Lock, error) {
 	}
 	if err := file.Chmod(0o600); err != nil {
 		return fail(fmt.Errorf("%w: protect", ErrOperation))
+	}
+	if !lockFilePrivate(file) {
+		return fail(ErrInvalidPath)
 	}
 	if err := platformLock(file); err != nil {
 		return fail(err)

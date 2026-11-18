@@ -47,7 +47,7 @@ func OpenStateFile(path string) (*StateFile, error) {
 		return nil, ErrInvalidStatePath
 	}
 	info, err := os.Lstat(parent)
-	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0o022 != 0 {
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || !unwritableByOthers(parent, info) {
 		return nil, ErrInvalidStatePath
 	}
 	resolved, err := filepath.EvalSymlinks(parent)
@@ -64,7 +64,7 @@ func OpenStateFile(path string) (*StateFile, error) {
 	}
 	if !stateMissing {
 		receiptInfo, receiptErr := os.Lstat(absolute + ".receipts")
-		if receiptErr != nil || !receiptInfo.IsDir() || receiptInfo.Mode()&os.ModeSymlink != 0 || receiptInfo.Mode().Perm()&0o077 != 0 || !fileOwnedByCurrentProcess(receiptInfo) {
+		if receiptErr != nil || !receiptInfo.IsDir() || receiptInfo.Mode()&os.ModeSymlink != 0 || !privateToProcess(absolute+".receipts", receiptInfo, ownerOnlyPermission) {
 			return nil, ErrInvalidStatePath
 		}
 	}
@@ -112,7 +112,7 @@ func InspectStateFile(ctx context.Context, path string) (Plan, error) {
 		return Plan{}, ErrInvalidStatePath
 	}
 	parentInfo, err := os.Lstat(parent)
-	if err != nil || !parentInfo.IsDir() || parentInfo.Mode()&os.ModeSymlink != 0 || parentInfo.Mode().Perm()&0o022 != 0 {
+	if err != nil || !parentInfo.IsDir() || parentInfo.Mode()&os.ModeSymlink != 0 || !unwritableByOthers(parent, parentInfo) {
 		return Plan{}, ErrInvalidStatePath
 	}
 	resolved, err := filepath.EvalSymlinks(parent)
@@ -130,7 +130,7 @@ func InspectStateFile(ctx context.Context, path string) (Plan, error) {
 	}
 	receiptRoot := absolute + ".receipts"
 	receiptInfo, err := os.Lstat(receiptRoot)
-	if err != nil || !receiptInfo.IsDir() || receiptInfo.Mode()&os.ModeSymlink != 0 || receiptInfo.Mode().Perm()&0o077 != 0 || !fileOwnedByCurrentProcess(receiptInfo) {
+	if err != nil || !receiptInfo.IsDir() || receiptInfo.Mode()&os.ModeSymlink != 0 || !privateToProcess(receiptRoot, receiptInfo, ownerOnlyPermission) {
 		return Plan{}, ErrInvalidStatePath
 	}
 	reader := &StateFile{path: absolute, parent: parent, receiptRoot: receiptRoot, parentInfo: parentInfo, receiptRootInfo: receiptInfo}
@@ -259,7 +259,7 @@ func (s *StateFile) applyReceipt(ctx context.Context, receipt CheckReceipt, cata
 		return Plan{}, err
 	}
 	temporaryPath := s.path + ".next"
-	temporary, err := os.OpenFile(temporaryPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	temporary, err := createPrivateFile(temporaryPath)
 	if err != nil {
 		return Plan{}, ErrStatePersistence
 	}
@@ -342,7 +342,7 @@ func (s *StateFile) readPlan() (Plan, error) {
 	if errors.Is(err, os.ErrNotExist) {
 		return Plan{}, ErrStateNotFound
 	}
-	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 || !fileOwnedByCurrentProcess(info) {
+	if err != nil || !info.Mode().IsRegular() || !privateToProcess(s.path, info, ownerOnlyPermission) {
 		return Plan{}, ErrInvalidStatePath
 	}
 	file, err := os.Open(s.path)
@@ -372,7 +372,7 @@ func (s *StateFile) writeExclusive(encoded []byte) error {
 		return err
 	}
 	staging := s.path + ".next"
-	file, err := os.OpenFile(staging, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	file, err := createPrivateFile(staging)
 	if err != nil {
 		if errors.Is(err, os.ErrExist) {
 			return ErrStateConflict
@@ -382,7 +382,7 @@ func (s *StateFile) writeExclusive(encoded []byte) error {
 	defer file.Close()
 	opened, err := file.Stat()
 	pathInfo, pathErr := os.Lstat(staging)
-	if err != nil || pathErr != nil || !opened.Mode().IsRegular() || opened.Mode().Perm()&0o077 != 0 || !fileOwnedByCurrentProcess(opened) || pathInfo.Mode()&os.ModeSymlink != 0 || !os.SameFile(opened, pathInfo) {
+	if err != nil || pathErr != nil || !opened.Mode().IsRegular() || !openPrivateToProcess(file, opened, ownerOnlyPermission) || pathInfo.Mode()&os.ModeSymlink != 0 || !os.SameFile(opened, pathInfo) {
 		return ErrInvalidStatePath
 	}
 	written, err := file.Write(encoded)
@@ -399,7 +399,7 @@ func (s *StateFile) writeExclusive(encoded []byte) error {
 		return err
 	}
 	again, err := os.Lstat(staging)
-	if err != nil || !again.Mode().IsRegular() || again.Mode().Perm()&0o077 != 0 || !fileOwnedByCurrentProcess(again) || !os.SameFile(opened, again) {
+	if err != nil || !again.Mode().IsRegular() || !privateToProcess(staging, again, ownerOnlyPermission) || !os.SameFile(opened, again) {
 		return ErrInvalidStatePath
 	}
 	if err = os.Link(staging, s.path); err != nil {
@@ -420,7 +420,7 @@ func (s *StateFile) openReceiptRoot(allowCreate bool) error {
 		if !allowCreate {
 			return ErrInvalidStatePath
 		}
-		if err = os.Mkdir(s.receiptRoot, 0o700); err != nil {
+		if err = makePrivateDirectory(s.receiptRoot); err != nil {
 			return ErrStatePersistence
 		}
 		if err = syncSetupDirectory(s.parent); err != nil {
@@ -428,7 +428,7 @@ func (s *StateFile) openReceiptRoot(allowCreate bool) error {
 		}
 		info, err = os.Lstat(s.receiptRoot)
 	}
-	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0o077 != 0 || !fileOwnedByCurrentProcess(info) {
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || !privateToProcess(s.receiptRoot, info, ownerOnlyPermission) {
 		return ErrInvalidStatePath
 	}
 	s.receiptRootInfo = info
@@ -462,7 +462,7 @@ func (s *StateFile) persistReceipt(revision uint64, receipt CheckReceipt) error 
 		return ErrStatePersistence
 	}
 	staging := path + ".next"
-	file, err := os.OpenFile(staging, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	file, err := createPrivateFile(staging)
 	if err != nil {
 		return ErrStatePersistence
 	}
@@ -508,7 +508,7 @@ func (s *StateFile) persistReceipt(revision uint64, receipt CheckReceipt) error 
 }
 func (s *StateFile) readReceipt(path string) (CheckReceipt, error) {
 	info, err := os.Lstat(path)
-	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0o077 != 0 || !fileOwnedByCurrentProcess(info) {
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || !privateToProcess(path, info, ownerOnlyPermission) {
 		return CheckReceipt{}, ErrCorruptState
 	}
 	file, err := os.Open(path)
@@ -604,9 +604,10 @@ func protectedReceiptStaging(path string) (os.FileInfo, error) {
 		return nil, ErrInvalidStatePath
 	}
 	opened, statErr := file.Stat()
+	openedPrivate := statErr == nil && openPrivateToProcess(file, opened, ownerOnlyPermission)
 	closeErr := file.Close()
 	again, pathErr := os.Lstat(path)
-	if statErr != nil || closeErr != nil || pathErr != nil || !opened.Mode().IsRegular() || opened.Mode().Perm()&0o077 != 0 || !fileOwnedByCurrentProcess(opened) || !os.SameFile(info, opened) || !os.SameFile(opened, again) || again.Mode()&os.ModeSymlink != 0 {
+	if statErr != nil || closeErr != nil || pathErr != nil || !opened.Mode().IsRegular() || !openedPrivate || !os.SameFile(info, opened) || !os.SameFile(opened, again) || again.Mode()&os.ModeSymlink != 0 {
 		return nil, ErrInvalidStatePath
 	}
 	return opened, nil
@@ -753,7 +754,7 @@ func (s *StateFile) reclaimPlanTemporary() error {
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
-	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0o077 != 0 || !fileOwnedByCurrentProcess(info) {
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || !privateToProcess(path, info, ownerOnlyPermission) {
 		return ErrInvalidStatePath
 	}
 	if err = os.Remove(path); err != nil {
@@ -776,11 +777,11 @@ func (s *StateFile) validateRoot() error {
 		return ErrInvalidStatePath
 	}
 	info, err := os.Lstat(s.parent)
-	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0o022 != 0 || !os.SameFile(info, s.parentInfo) {
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || !unwritableByOthers(s.parent, info) || !os.SameFile(info, s.parentInfo) {
 		return ErrInvalidStatePath
 	}
 	receipts, err := os.Lstat(s.receiptRoot)
-	if err != nil || !receipts.IsDir() || receipts.Mode()&os.ModeSymlink != 0 || receipts.Mode().Perm()&0o077 != 0 || s.receiptRootInfo == nil || !os.SameFile(receipts, s.receiptRootInfo) || !fileOwnedByCurrentProcess(receipts) {
+	if err != nil || !receipts.IsDir() || receipts.Mode()&os.ModeSymlink != 0 || s.receiptRootInfo == nil || !os.SameFile(receipts, s.receiptRootInfo) || !privateToProcess(s.receiptRoot, receipts, ownerOnlyPermission) {
 		return ErrInvalidStatePath
 	}
 	return nil
@@ -790,19 +791,13 @@ func validateStatePath(path string, allowMissing bool) error {
 	if errors.Is(err, os.ErrNotExist) && allowMissing {
 		return nil
 	}
-	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0o077 != 0 || !fileOwnedByCurrentProcess(info) {
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || !privateToProcess(path, info, ownerOnlyPermission) {
 		return ErrInvalidStatePath
 	}
 	return nil
 }
 func syncSetupDirectory(path string) error {
-	directory, err := os.Open(path)
-	if err != nil {
-		return ErrStatePersistence
-	}
-	syncErr := directory.Sync()
-	closeErr := directory.Close()
-	if syncErr != nil || closeErr != nil {
+	if fileauthority.SyncDirectory(path) != nil {
 		return ErrStatePersistence
 	}
 	return nil

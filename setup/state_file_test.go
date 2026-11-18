@@ -41,8 +41,8 @@ func TestStateFileInitializesReadsAndFencesReplacement(t *testing.T) {
 	if err != nil || current.Identity() != next.Identity() || len(current.Receipts()) != 1 {
 		t.Fatalf("updated=%v", err)
 	}
-	if info, _ := os.Stat(path); info.Mode().Perm() != 0o600 {
-		t.Fatalf("mode=%o", info.Mode().Perm())
+	if info, _ := os.Stat(path); !hasTestMode(t, path, info, 0o600) {
+		t.Fatalf("mode=%v", info.Mode())
 	}
 }
 func TestStateFileUsesExclusiveWriterLock(t *testing.T) {
@@ -73,7 +73,7 @@ func TestStateFileRejectsCorruptionAndUnsafePath(t *testing.T) {
 		t.Fatalf("corrupt=%v", err)
 	}
 	_ = store.Close()
-	_ = os.Chmod(path, 0o644)
+	_ = setTestMode(t, path, 0o644)
 	if store, err = OpenStateFile(path); !errors.Is(err, ErrInvalidStatePath) || store != nil {
 		t.Fatalf("broad=%#v %v", store, err)
 	}

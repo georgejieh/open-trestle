@@ -312,3 +312,61 @@ jobs:
           docker run --rm --network=none --read-only --cap-drop=ALL --pids-limit=64 --memory=256m --security-opt=no-new-privileges=true -i --entrypoint /usr/local/libexec/open-trestle/open-trestle-secret-scanner open-trestle:verify --stdio-v1 < "$RUNNER_TEMP/scanner-request" > "$RUNNER_TEMP/scanner-response" 2> "$RUNNER_TEMP/scanner-stderr"
           test ! -s "$RUNNER_TEMP/scanner-stderr"
           python3 -c 'import json,struct,sys; data=open(sys.argv[1],"rb").read(); size=struct.unpack(">I",data[:4])[0]; doc=json.loads(data[4:]); assert size==len(data)-4 and doc["status"]=="complete" and doc["matches"]==[] and doc["scanner"]=="betterleaks" and doc["scanner_version"]=="v1.8.1" and doc["build_profile"]=="public_detect_run_re2_purego_go1.26.11_linux_amd64_v1"' "$RUNNER_TEMP/scanner-response"
+
+  windows-owner-checks:
+    name: Verify Windows owner-only checks
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      GOWORK: "off"
+      GOTOOLCHAIN: go1.26.11
+    steps:
+      - name: Keep line endings as committed
+        run: git config --global core.autocrlf false
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: go.mod
+          cache: false
+      # The tests need a temporary folder whose ancestors no other account
+      # can change. A new folder below the profile inherits only the
+      # runner account, SYSTEM and Administrators.
+      - name: Use a temporary folder below the profile
+        run: |
+          $folder = Join-Path $env:USERPROFILE "open-trestle-test-tmp"
+          New-Item -ItemType Directory -Force $folder | Out-Null
+          icacls $folder
+          "TMP=$folder" >> $env:GITHUB_ENV
+          "TEMP=$folder" >> $env:GITHUB_ENV
+      - name: Build and vet the root module
+        run: |
+          go build ./...
+          go vet ./...
+      - name: Run the root packages with Windows owner checks
+        run: >-
+          go test -count=1 -timeout=30m
+          ./internal/ownersonly/...
+          ./internal/fileauthority/
+          ./internal/filelock/
+          ./internal/credentialstore/
+          ./spending/
+          ./setup/
+          ./modelcatalog/
+          ./runtimeconfig/
+          ./internal/secretscan/
+      - name: Build, vet and test the secret-scanner Windows packages
+        working-directory: workers/secret-scanner
+        run: |
+          go build ./...
+          go vet ./internal/scanhelper/ ./internal/ownersonly/ ./cmd/...
+          go test -count=1 -timeout=15m ./internal/scanhelper/ ./internal/ownersonly/
+      - name: Run scan helper session integration tests
+        env:
+          OPEN_TRESTLE_SCAN_HELPER_INTEGRATION: "1"
+        run: go test -count=1 -timeout=30m -run='^TestScanHelper' -v ./internal/secretscan/

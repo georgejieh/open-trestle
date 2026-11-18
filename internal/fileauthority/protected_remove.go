@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 )
 
 var (
@@ -42,8 +43,9 @@ func RemoveValidatedProtectedFile(ctx context.Context, path string, limit int, v
 	if err != nil || !os.SameFile(rootInfo, chain[0].info) || rootInfo.Mode() != chain[0].info.Mode() || recheckChain(chain) != nil {
 		return finish(ErrProtectedRemoveRefused)
 	}
+	target := filepath.Join(chain[0].path, base)
 	before, err := root.Lstat(base)
-	if err != nil || !trustedCreatedProtectedFile(before) || before.Size() <= 0 || before.Size() > int64(limit) {
+	if err != nil || !PrivateFile(target, before) || before.Size() <= 0 || before.Size() > int64(limit) {
 		return finish(ErrProtectedRemoveRefused)
 	}
 	file, err := root.Open(base)
@@ -51,13 +53,13 @@ func RemoveValidatedProtectedFile(ctx context.Context, path string, limit int, v
 		return finish(ErrProtectedRemoveRefused)
 	}
 	opened, err := file.Stat()
-	if err != nil || !sameProtectedRemovalInfo(before, opened) {
+	if err != nil || !PrivateOpenFile(file, opened) || !sameProtectedRemovalInfo(before, opened) {
 		_ = file.Close()
 		return finish(ErrProtectedRemoveRefused)
 	}
 	encoded, err := io.ReadAll(io.LimitReader(file, int64(limit)+1))
 	after, statErr := file.Stat()
-	if err != nil || statErr != nil || !sameProtectedRemovalInfo(before, after) || len(encoded) > limit || ctx.Err() != nil || validate(append([]byte(nil), encoded...)) != nil {
+	if err != nil || statErr != nil || !PrivateOpenFile(file, after) || !sameProtectedRemovalInfo(before, after) || len(encoded) > limit || ctx.Err() != nil || validate(append([]byte(nil), encoded...)) != nil {
 		_ = file.Close()
 		return finish(ErrProtectedRemoveRefused)
 	}
@@ -67,28 +69,27 @@ func RemoveValidatedProtectedFile(ctx context.Context, path string, limit int, v
 	}
 	again, readErr := io.ReadAll(io.LimitReader(file, int64(limit)+1))
 	final, statErr := file.Stat()
+	finalPrivate := statErr == nil && PrivateOpenFile(file, final)
 	closeErr := file.Close()
 	linked, linkErr := root.Lstat(base)
-	if readErr != nil || statErr != nil || closeErr != nil || linkErr != nil || !bytes.Equal(encoded, again) || !sameProtectedRemovalInfo(before, final) || !sameProtectedRemovalInfo(before, linked) || recheckChain(chain) != nil || ctx.Err() != nil {
+	if readErr != nil || statErr != nil || closeErr != nil || linkErr != nil || !finalPrivate || !PrivateFile(target, linked) || !bytes.Equal(encoded, again) || !sameProtectedRemovalInfo(before, final) || !sameProtectedRemovalInfo(before, linked) || recheckChain(chain) != nil || ctx.Err() != nil {
 		return finish(ErrProtectedRemoveRefused)
 	}
 	if err := root.Remove(base); err != nil {
 		return finish(ErrProtectedRemoveIncomplete)
 	}
 	removed = true
-	directory, err := root.Open(".")
-	if err != nil {
-		return finish(ErrProtectedRemoveIncomplete)
-	}
-	syncErr := directory.Sync()
-	closeErr = directory.Close()
+	syncErr := syncRoot(root, chain[0].path)
 	_, absentErr := root.Lstat(base)
-	if syncErr != nil || closeErr != nil || !os.IsNotExist(absentErr) || recheckChain(chain) != nil || ctx.Err() != nil {
+	if syncErr != nil || !os.IsNotExist(absentErr) || recheckChain(chain) != nil || ctx.Err() != nil {
 		return finish(ErrProtectedRemoveIncomplete)
 	}
 	return finish(nil)
 }
 
+// sameProtectedRemovalInfo reports whether a and b describe the same regular
+// file with the same mode, size and modification time. The callers check
+// separately that each is a private file.
 func sameProtectedRemovalInfo(a, b os.FileInfo) bool {
-	return a != nil && b != nil && trustedCreatedProtectedFile(a) && trustedCreatedProtectedFile(b) && os.SameFile(a, b) && a.Mode() == b.Mode() && a.Size() == b.Size() && a.ModTime().Equal(b.ModTime())
+	return a != nil && b != nil && a.Mode().IsRegular() && b.Mode().IsRegular() && os.SameFile(a, b) && a.Mode() == b.Mode() && a.Size() == b.Size() && a.ModTime().Equal(b.ModTime())
 }

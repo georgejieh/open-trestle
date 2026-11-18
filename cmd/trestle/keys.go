@@ -181,7 +181,7 @@ func runKeysSet(ctx context.Context, name string, stdin io.Reader, stdout, stder
 	if err := store.Set(ctx, name, key); err != nil {
 		return keysFail(stderr, 1, "the key could not be saved: %v", err)
 	}
-	fmt.Fprintf(stdout, "Saved the key for %s in %s (owner-only, mode 0600).\n", name, providerCredentialDisplayDirectory())
+	fmt.Fprintf(stdout, "Saved the key for %s in %s (%s).\n", name, providerCredentialDisplayDirectory(), providerCredentialProtection())
 	if os.Getenv(name) != "" {
 		fmt.Fprintf(stdout, "Note: %s is also set in this shell, and the environment wins over the saved key until you unset it.\n", name)
 	}

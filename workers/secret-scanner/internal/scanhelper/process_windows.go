@@ -5,11 +5,14 @@ package scanhelper
 import (
 	"errors"
 	"os"
+	"path/filepath"
 
 	"golang.org/x/sys/windows"
+
+	"github.com/georgejieh/open-trestle/workers/secret-scanner/internal/ownersonly"
 )
 
-var errCacheDirectory = errors.New("private cache directories are not verified on Windows")
+var errCacheDirectory = errors.New("working directory is not a private cache directory")
 
 // IsolateStandardStreams keeps the standard output handle for the protocol
 // and makes the process's standard output and error handles the null device.
@@ -47,10 +50,19 @@ func WatchInputHangup(int) (stop func()) { return func() {} }
 // in a job object that ends it with the parent.
 func ExitWithParent() {}
 
-// PrivateCacheDirectory refuses every directory, so the helper exits with
-// ExitCacheDirectory before it serves a request on Windows. Owner-only access
-// on Windows is a property of the directory's ACL, which this helper does not
-// check, and an unchecked cache directory is a path for code injection.
+// PrivateCacheDirectory returns the working directory after checking it with
+// ownersonly.CheckPrivateDirectoryTree: it must be owned by the current user
+// and grant other principals no access beyond reading its attributes and
+// DACL, also through ACEs that new entries would inherit; it must resolve to
+// itself with no junction on the way; every directory above it must let
+// others at most read it and add entries; and every entry inside it must be
+// owned by a trusted identity and grant others nothing. wazero loads native
+// code from the cache, so an entry anyone else can write would let them run
+// code in the helper.
 func PrivateCacheDirectory() (string, error) {
-	return "", errCacheDirectory
+	directory, err := os.Getwd()
+	if err != nil || !filepath.IsAbs(directory) || ownersonly.CheckPrivateDirectoryTree(directory) != nil {
+		return "", errCacheDirectory
+	}
+	return directory, nil
 }
