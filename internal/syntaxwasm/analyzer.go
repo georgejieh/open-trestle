@@ -40,6 +40,7 @@ import (
 	"errors"
 	"runtime"
 	"sync"
+	"time"
 
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/imports/wasi_snapshot_preview1"
@@ -357,42 +358,127 @@ func (a *Analyzer) Analyze(ctx context.Context, source syntaxanalysis.Source) (s
 			source, entry = cpp, cppEntry
 		}
 	}
-	a.calls.RLock()
-	if a.isClosed() {
-		a.calls.RUnlock()
-		return gap(syntaxanalysis.GapAnalysisUnavailable, "")
-	}
-	result, roles, failure := entry.family.analyze(ctx, source.Language(), entry.pack, content, a.limits)
-	a.calls.RUnlock()
+	started := time.Now()
+	raw, embedded, failure := a.parse(ctx, entry, source.Language(), content, a.limits, syntaxanalysis.Span{})
 	if failure != nil {
 		if err := ctx.Err(); err != nil {
 			return syntaxanalysis.FileAnalysis{}, err
 		}
 		return gap(failure.reason, failure.limit)
 	}
-	raw, err := rawFile(content, result, roles)
-	if err != nil {
-		return gap(syntaxanalysis.GapAnalysisFailed, "")
+	if entry.pack.filter != nil {
+		entry.pack.filter(content, &raw)
 	}
-	if result.flags&flagMatchLimit != 0 {
-		raw.Gaps = append(raw.Gaps, syntaxanalysis.RawGap{Reason: syntaxanalysis.GapLimitExceeded, Limit: syntaxanalysis.LimitMatches})
-	}
-	if result.flags&flagResultLimit != 0 {
-		raw.Gaps = append(raw.Gaps, syntaxanalysis.RawGap{Reason: syntaxanalysis.GapLimitExceeded, Limit: syntaxanalysis.LimitRecords, Span: tailSpan(result, len(content))})
-	}
-	if result.flags&flagErrorLimit != 0 {
-		raw.Gaps = append(raw.Gaps, syntaxanalysis.RawGap{Reason: syntaxanalysis.GapLimitExceeded, Limit: syntaxanalysis.LimitErrorRegions})
-	}
-	if result.flags&flagTreeHasError != 0 && len(result.regions) == 0 && result.flags&flagErrorLimit == 0 {
-		// The tree reports an error the region walk did not find; the
-		// whole file is then not trustworthy.
-		raw.Gaps = append(raw.Gaps, syntaxanalysis.RawGap{Reason: syntaxanalysis.GapParseError, Span: syntaxanalysis.Span{Start: 0, End: len(content)}})
+	for _, e := range embedded {
+		if err := a.addEmbedded(ctx, content, e, &raw, started); err != nil {
+			return syntaxanalysis.FileAnalysis{}, err
+		}
 	}
 	analysis := syntaxanalysis.Assemble(source, Identity, raw, a.limits)
 	if entry.pack.finish != nil && !hasGap(analysis, syntaxanalysis.GapAnalysisFailed) {
 		entry.pack.finish(content, raw, &analysis)
 	}
 	return analysis, nil
+}
+
+// parse runs one guest analysis of content and turns its result into raw
+// records. The gaps for the guest's limits cover scope, or the whole file
+// when scope is empty.
+func (a *Analyzer) parse(ctx context.Context, entry languageEntry, language syntaxanalysis.Language, content []byte, limits syntaxanalysis.Limits, scope syntaxanalysis.Span) (syntaxanalysis.RawFile, []embeddedCode, *failure) {
+	a.calls.RLock()
+	if a.isClosed() {
+		a.calls.RUnlock()
+		return syntaxanalysis.RawFile{}, nil, &failure{reason: syntaxanalysis.GapAnalysisUnavailable}
+	}
+	result, roles, fail := entry.family.analyze(ctx, language, entry.pack, content, limits)
+	a.calls.RUnlock()
+	if fail != nil {
+		return syntaxanalysis.RawFile{}, nil, fail
+	}
+	raw, embedded, err := rawFile(content, result, roles)
+	if err != nil {
+		return syntaxanalysis.RawFile{}, nil, &failure{reason: syntaxanalysis.GapAnalysisFailed}
+	}
+	if result.flags&flagMatchLimit != 0 {
+		raw.Gaps = append(raw.Gaps, syntaxanalysis.RawGap{Reason: syntaxanalysis.GapLimitExceeded, Limit: syntaxanalysis.LimitMatches, Span: scope})
+	}
+	if result.flags&flagResultLimit != 0 {
+		raw.Gaps = append(raw.Gaps, syntaxanalysis.RawGap{Reason: syntaxanalysis.GapLimitExceeded, Limit: syntaxanalysis.LimitRecords, Span: tailSpan(result, len(content))})
+	}
+	if result.flags&flagErrorLimit != 0 {
+		raw.Gaps = append(raw.Gaps, syntaxanalysis.RawGap{Reason: syntaxanalysis.GapLimitExceeded, Limit: syntaxanalysis.LimitErrorRegions, Span: scope})
+	}
+	if result.flags&flagTreeHasError != 0 && len(result.regions) == 0 && result.flags&flagErrorLimit == 0 {
+		// The tree reports an error the region walk did not find; the
+		// whole file is then not trustworthy.
+		raw.Gaps = append(raw.Gaps, syntaxanalysis.RawGap{Reason: syntaxanalysis.GapParseError, Span: syntaxanalysis.Span{Start: 0, End: len(content)}})
+	}
+	return raw, embedded, nil
+}
+
+// addEmbedded analyses code embedded in a file, such as an inline HTML
+// script, with the pack of its language, and adds its records to the
+// file's at their offsets in the file. It shares the file's deadline. A
+// failure becomes a gap over the embedded code; only cancellation of ctx
+// is an error.
+func (a *Analyzer) addEmbedded(ctx context.Context, content []byte, e embeddedCode, raw *syntaxanalysis.RawFile, started time.Time) error {
+	language, ok := htmlScriptLanguage(content[e.tag.Start:e.tag.End])
+	entry, known := a.languages[language]
+	if !ok || !known || entry.pack == nil || e.code.Empty() {
+		return nil
+	}
+	limits := a.limits
+	limits.FileDeadline -= time.Since(started)
+	if limits.FileDeadline <= 0 {
+		raw.Gaps = append(raw.Gaps, syntaxanalysis.RawGap{Reason: syntaxanalysis.GapDeadlineExceeded, Span: e.code})
+		return nil
+	}
+	code := content[e.code.Start:e.code.End]
+	embedded, _, fail := a.parse(ctx, entry, language, code, limits, syntaxanalysis.Span{Start: 0, End: len(code)})
+	if fail != nil {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		raw.Gaps = append(raw.Gaps, syntaxanalysis.RawGap{Reason: fail.reason, Limit: fail.limit, Span: e.code})
+		return nil
+	}
+	if entry.pack.filter != nil {
+		entry.pack.filter(code, &embedded)
+	}
+	// The script's export list, if any, names its own bindings and not the
+	// page's, so embedded.Exports is left out.
+	at := e.code.Start
+	shift := func(s syntaxanalysis.Span) syntaxanalysis.Span {
+		if s.Empty() {
+			return s
+		}
+		return syntaxanalysis.Span{Start: s.Start + at, End: s.End + at}
+	}
+	for _, d := range embedded.Definitions {
+		d.Name, d.Node, d.Container = shift(d.Name), shift(d.Node), shift(d.Container)
+		raw.Definitions = append(raw.Definitions, d)
+	}
+	for _, r := range embedded.References {
+		r.Name, r.Qualifier = shift(r.Name), shift(r.Qualifier)
+		raw.References = append(raw.References, r)
+	}
+	for _, i := range embedded.Imports {
+		i.Source, i.Name, i.Alias, i.Node = shift(i.Source), shift(i.Name), shift(i.Alias), shift(i.Node)
+		raw.Imports = append(raw.Imports, i)
+	}
+	for _, g := range embedded.Gaps {
+		switch {
+		case g.Reason == syntaxanalysis.GapParseError:
+			// A missing token is a parse error of zero width.
+			g.Span = syntaxanalysis.Span{Start: g.Span.Start + at, End: g.Span.End + at}
+		case g.Span.Empty():
+			g.Span = e.code
+		default:
+			g.Span = shift(g.Span)
+		}
+		raw.Gaps = append(raw.Gaps, g)
+	}
+	return nil
 }
 
 // tailSpan covers the source from the last returned match to the end, the

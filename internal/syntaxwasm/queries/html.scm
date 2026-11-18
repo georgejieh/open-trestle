@@ -1,8 +1,12 @@
 ; HTML query pack. Capture vocabulary: docs/syntax-analysis.md.
 ; An element with an id attribute is recorded as a variable named by the id.
-; Every tag name is recorded as a construction, and finishHTML keeps only
+; Every tag name is recorded as a construction, and filterHTML keeps only
 ; custom element names. Targets are recorded as imports: src, href and
-; action. Scripts and styles are not parsed for their own language.
+; action. The text of a script is embedded code, analysed with the pack
+; its start tag names; style text is not analysed.
+
+; Inline scripts.
+(script_element (start_tag) @embedded.tag (raw_text) @embedded)
 
 ; Element ids.
 (element (start_tag (attribute (attribute_name) @match.id [(attribute_value) @name (quoted_attribute_value (attribute_value) @name)]))) @definition.variable

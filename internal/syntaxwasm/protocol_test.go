@@ -106,11 +106,11 @@ func TestRawFileNeedsExactlyOneRecordCapture(t *testing.T) {
 		{captures: []capture{{index: 2, start: 0, end: 7}}},
 		{captures: []capture{{index: 0, start: 0, end: 9}, {index: 1, start: 0, end: 9}}},
 	} {
-		if _, err := rawFile(content, analysisResult{matches: []match{m}}, roles); !errors.Is(err, errQueryPack) {
+		if _, _, err := rawFile(content, analysisResult{matches: []match{m}}, roles); !errors.Is(err, errQueryPack) {
 			t.Fatalf("match %+v accepted", m)
 		}
 	}
-	kept, err := rawFile(content, analysisResult{matches: []match{
+	kept, _, err := rawFile(content, analysisResult{matches: []match{
 		{captures: []capture{{index: 1, start: 0, end: 10}, {index: 2, start: 0, end: 7}, {index: 3, start: 0, end: 7}}},
 		{captures: []capture{{index: 1, start: 0, end: 10}, {index: 2, start: 0, end: 7}, {index: 3, start: 8, end: 9}}},
 	}}, roles)

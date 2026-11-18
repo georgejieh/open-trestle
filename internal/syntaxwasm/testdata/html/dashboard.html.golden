@@ -69,7 +69,10 @@
     249:7-249:61 variable "support.support-form.ticket-submit"
   251:5-256:10 variable "support.support-hours"
   257:5-262:10 variable "support.support-links"
+270:5-270:83 function "openHelp"
 # references
+24:12 call "addEventListener" qualifier="window" in "inline-boot"
+24:51 call "startPolling" in "inline-boot"
 49:6 construct "user-menu" in "site-header.account-menu"
 56:10 construct "stat-card" in "main-content.summary.card-active"
 57:10 construct "stat-card" in "main-content.summary.card-idle"
@@ -84,6 +87,10 @@
 188:8 construct "report-item" in "reports.report-list.report-2026-10"
 192:8 construct "report-item" in "reports.report-list.report-2026-09"
 196:8 construct "report-item" in "reports.report-list.report-2026-08"
+269:14 call "getElementById" qualifier="document"
+269:42 call "addEventListener"
+270:36 call "getElementById" qualifier="document" in "openHelp"
+270:69 call "showModal" in "openHelp"
 # imports
 8:20-8:42 source="img/favicon.svg"
 9:26-9:46 source="css/reset.css"

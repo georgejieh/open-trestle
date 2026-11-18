@@ -17,17 +17,24 @@ var queryFiles embed.FS
 var errQueryPack = errors.New("syntax query pack is invalid")
 
 // pack is the analysis a language gets on top of its grammar: query files
-// in queries/, concatenated, and an optional finishing step for rules that
-// depend on the assembled definition tree.
+// in queries/, concatenated, an optional filter of the raw records the
+// queries found, and an optional finishing step for rules that depend on
+// the assembled definition tree. The filter sees only the language's own
+// records, before code embedded in the file, such as an HTML script, is
+// added.
 type pack struct {
 	query  string
+	filter rawFilter
 	finish finisher
 }
+
+type rawFilter func(content []byte, raw *syntaxanalysis.RawFile)
 
 type finisher func(content []byte, raw syntaxanalysis.RawFile, analysis *syntaxanalysis.FileAnalysis)
 
 type packSpec struct {
 	files  []string
+	filter rawFilter
 	finish finisher
 }
 
@@ -46,7 +53,7 @@ var packSpecs = map[syntaxanalysis.Language]packSpec{
 	syntaxanalysis.LanguageRust:       {files: []string{"rust"}, finish: finishRust},
 	syntaxanalysis.LanguagePHP:        {files: []string{"php"}, finish: finishPHP},
 	syntaxanalysis.LanguageRuby:       {files: []string{"ruby"}, finish: finishRuby},
-	syntaxanalysis.LanguageHTML:       {files: []string{"html"}, finish: finishHTML},
+	syntaxanalysis.LanguageHTML:       {files: []string{"html"}, filter: filterHTML, finish: finishECMAScript},
 }
 
 func loadPacks() (map[syntaxanalysis.Language]pack, error) {
@@ -61,7 +68,7 @@ func loadPacks() (map[syntaxanalysis.Language]pack, error) {
 			query.Write(text)
 			query.WriteByte('\n')
 		}
-		packs[language] = pack{query: query.String(), finish: spec.finish}
+		packs[language] = pack{query: query.String(), filter: spec.filter, finish: spec.finish}
 	}
 	return packs, nil
 }
@@ -95,6 +102,8 @@ const (
 	roleOpaque
 	roleLocal
 	roleSymbol
+	roleEmbedded
+	roleEmbeddedTag
 )
 
 // captureRoles maps every capture name of a query to its role and refuses
@@ -133,6 +142,7 @@ func captureRoles(names []string) ([]role, error) {
 				"import.source": roleImportSource, "import.name": roleImportName,
 				"import.alias": roleImportAlias, "container": roleContainer, "opaque": roleOpaque,
 				"local": roleLocal, "symbol": roleSymbol,
+				"embedded": roleEmbedded, "embedded.tag": roleEmbeddedTag,
 			}[name]
 			if !ok {
 				return nil, errQueryPack
@@ -143,17 +153,25 @@ func captureRoles(names []string) ([]role, error) {
 	return roles, nil
 }
 
+// embeddedCode is code of another language inside a file, such as the
+// text of an HTML script element, with the start tag that says what it is.
+type embeddedCode struct {
+	code, tag syntaxanalysis.Span
+}
+
 // rawFile turns decoded matches into raw records. Each match must carry
 // exactly one record capture: a definition, a reference, an import or an
-// export, unless it only marks opaque or local spans.
-func rawFile(content []byte, result analysisResult, roles []role) (syntaxanalysis.RawFile, error) {
+// export, unless it only marks opaque, local or embedded spans.
+func rawFile(content []byte, result analysisResult, roles []role) (syntaxanalysis.RawFile, []embeddedCode, error) {
 	raw := syntaxanalysis.RawFile{}
 	var opaqueSpans, localSpans []syntaxanalysis.Span
+	var embedded []embeddedCode
 matches:
 	for _, m := range result.matches {
 		var record *capture
 		var recordRole role
-		var name, qualifier, source, imported, alias, container syntaxanalysis.Span
+		var name, qualifier, source, imported, alias, container, code, tag syntaxanalysis.Span
+		marker := false
 		var names, opaque, local []syntaxanalysis.Span
 		exported := false
 		for i := range m.captures {
@@ -163,7 +181,7 @@ matches:
 			switch r.kind {
 			case roleDefinition, roleReference, roleImport, roleExport:
 				if record != nil {
-					return syntaxanalysis.RawFile{}, errQueryPack
+					return syntaxanalysis.RawFile{}, nil, errQueryPack
 				}
 				record, recordRole = c, r
 			case roleName, roleSymbol:
@@ -188,8 +206,15 @@ matches:
 				container = span
 			case roleOpaque:
 				opaque = append(opaque, span)
+				marker = true
 			case roleLocal:
 				local = append(local, span)
+				marker = true
+			case roleEmbedded:
+				code = span
+				marker = true
+			case roleEmbeddedTag:
+				tag = span
 			case roleMatch:
 				if string(content[c.start:c.end]) != r.text {
 					continue matches
@@ -198,11 +223,14 @@ matches:
 		}
 		opaqueSpans = append(opaqueSpans, opaque...)
 		localSpans = append(localSpans, local...)
+		if !code.Empty() {
+			embedded = append(embedded, embeddedCode{code: code, tag: tag})
+		}
 		if record == nil {
-			if len(opaque)+len(local) > 0 {
+			if marker {
 				continue
 			}
-			return syntaxanalysis.RawFile{}, errQueryPack
+			return syntaxanalysis.RawFile{}, nil, errQueryPack
 		}
 		node := syntaxanalysis.Span{Start: record.start, End: record.end}
 		switch recordRole.kind {
@@ -221,7 +249,7 @@ matches:
 	for _, r := range result.regions {
 		raw.Gaps = append(raw.Gaps, syntaxanalysis.RawGap{Reason: syntaxanalysis.GapParseError, Span: syntaxanalysis.Span{Start: r.start, End: r.end}})
 	}
-	return raw, nil
+	return raw, embedded, nil
 }
 
 // mergeSpans sorts spans by start and joins the overlapping ones.

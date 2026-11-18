@@ -1,0 +1,37 @@
+<!doctype html>
+<html>
+<head>
+  <style id="theme">
+    .card { color: red; }
+    @import url("print.css");
+  </style>
+  <script src="vendor.js"></script>
+  <script type="importmap">{ "imports": { "app": "./app.js" } }</script>
+  <script type="application/json" id="config">{ "function": "notCode" }</script>
+</head>
+<body>
+  <div id="app">
+    <script>
+      function boot(root) {
+        render(root, document.getElementById("app"));
+      }
+      class Store {
+        constructor() { this.items = []; }
+        add(item) { this.items.push(item); }
+      }
+    </script>
+  </div>
+  <script type="module">
+    import { mount } from "./mount.js";
+    export const ready = mount(document.body);
+  </script>
+  <script lang="ts">
+    interface Options { verbose: boolean }
+    function configure(options: Options): void { apply(options); }
+  </script>
+  <script>
+    function broken( {
+  </script>
+  <x-panel id="side"></x-panel>
+</body>
+</html>
