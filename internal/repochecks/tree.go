@@ -9,6 +9,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"sort"
 
 	"github.com/georgejieh/open-trestle/internal/evidence"
 	"github.com/georgejieh/open-trestle/internal/scm"
@@ -69,6 +70,43 @@ func Materialize(ctx context.Context, store *scm.LocalGitObjectStore, commit evi
 		}
 	}
 	return nil
+}
+
+// ChangedPaths lists the paths whose entry differs between the trees of
+// base and head: added, removed, or changed in content or mode.
+func ChangedPaths(ctx context.Context, store *scm.LocalGitObjectStore, base, head evidence.RevisionIdentity) ([]string, error) {
+	entries := func(commit evidence.RevisionIdentity) (map[string]scm.LocalGitTreeEntry, error) {
+		found := map[string]scm.LocalGitTreeEntry{}
+		walk, err := store.WalkTree(ctx, commit, maxTreeEntries, func(entry scm.LocalGitTreeEntry) error {
+			found[entry.Path] = entry
+			return nil
+		})
+		if err == nil && walk.Truncated {
+			err = errors.New("the commit's tree has too many files to check")
+		}
+		return found, err
+	}
+	before, err := entries(base)
+	if err != nil {
+		return nil, err
+	}
+	after, err := entries(head)
+	if err != nil {
+		return nil, err
+	}
+	changed := []string{}
+	for name, entry := range after {
+		if old, ok := before[name]; !ok || old != entry {
+			changed = append(changed, name)
+		}
+	}
+	for name := range before {
+		if _, ok := after[name]; !ok {
+			changed = append(changed, name)
+		}
+	}
+	sort.Strings(changed)
+	return changed, nil
 }
 
 func wanted(entry scm.LocalGitTreeEntry) bool {

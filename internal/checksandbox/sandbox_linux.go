@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -53,9 +54,19 @@ type childStatus struct {
 const namespaceFlags = syscall.CLONE_NEWUSER | syscall.CLONE_NEWNS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNET |
 	syscall.CLONE_NEWIPC | syscall.CLONE_NEWUTS | syscall.CLONE_NEWCGROUP
 
-func run(ctx context.Context, spec Spec) (Result, error) {
+func available() error {
 	if reason := userNamespacesDisabled(); reason != "" {
-		return Result{}, unavailable("%s", reason)
+		return unavailable("%s", reason)
+	}
+	if runtime.GOARCH != "amd64" && runtime.GOARCH != "arm64" {
+		return unavailable("the system call filter supports only amd64 and arm64")
+	}
+	return nil
+}
+
+func run(ctx context.Context, spec Spec) (Result, error) {
+	if err := available(); err != nil {
+		return Result{}, err
 	}
 	scratch, err := os.MkdirTemp("", "open-trestle-check-")
 	if err != nil {

@@ -152,4 +152,17 @@ func TestMaterializeWritesTheCommitTree(t *testing.T) {
 	if err := Materialize(context.Background(), store, commit, t.TempDir(), 3); err == nil {
 		t.Fatal("a tree past the limit was written")
 	}
+
+	writeFile("a/b.txt", "changed", 0o644)
+	writeFile("c.txt", "new", 0o644)
+	git("add", ".")
+	git("commit", "-q", "-m", "d")
+	next, err := evidence.NewRevisionIdentity(evidence.RevisionKindGitCommit, evidence.RevisionAlgorithmSHA1, git("rev-parse", "HEAD"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed, err := ChangedPaths(context.Background(), store, commit, next)
+	if err != nil || !slices.Equal(changed, []string{"a/b.txt", "c.txt"}) {
+		t.Fatalf("changed %v, %v", changed, err)
+	}
 }

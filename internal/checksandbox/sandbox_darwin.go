@@ -18,9 +18,16 @@ const sandboxExec = "/usr/bin/sandbox-exec"
 // in its own process group. macOS has no unprivileged per-tree process or
 // memory limit, so those rely on the system's per-user limits; file size,
 // open files, time, output and scratch size are bounded here.
-func run(ctx context.Context, spec Spec) (Result, error) {
+func available() error {
 	if _, err := os.Stat(sandboxExec); err != nil {
-		return Result{}, unavailable("sandbox-exec is missing")
+		return unavailable("sandbox-exec is missing")
+	}
+	return nil
+}
+
+func run(ctx context.Context, spec Spec) (Result, error) {
+	if err := available(); err != nil {
+		return Result{}, err
 	}
 	created, err := os.MkdirTemp("", "open-trestle-check-")
 	if err != nil {

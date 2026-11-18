@@ -18,6 +18,10 @@ import (
 	"github.com/georgejieh/open-trestle/internal/jobobject"
 )
 
+// available is nil: AppContainers and job objects exist on every supported
+// Windows version.
+func available() error { return nil }
+
 // run starts the command in a fresh AppContainer with no capability but
 // the toolchain one, so it has no network and reaches only its scratch and
 // the folders granted to every sandbox, inside a job object that bounds and

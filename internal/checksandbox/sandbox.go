@@ -117,6 +117,10 @@ func IsUnavailable(err error) bool {
 	return errors.As(err, &target)
 }
 
+// Available reports, without running anything, whether this system has
+// what the sandbox needs. A run can still report Unavailable.
+func Available() error { return available() }
+
 // Run runs spec in the sandbox. A non-nil error is always *Unavailable; it
 // means nothing ran. The command is never run without the sandbox.
 func Run(ctx context.Context, spec Spec) (Result, error) {
