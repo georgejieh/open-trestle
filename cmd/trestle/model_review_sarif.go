@@ -66,7 +66,7 @@ func buildModelReviewSARIFWithContributors(report localreview.Report, contributo
 		if labels := contributors[finding.Identity]; len(labels) > 0 {
 			properties.Contributors = append([]string(nil), labels...)
 		}
-		properties.Rank, properties.PreExisting = finding.Rank, finding.PreExisting
+		properties.Rank, properties.PreExisting, properties.UnprovenOrigin = finding.Rank, finding.PreExisting, finding.UnprovenOrigin
 		result, notification := placeVerifiedFinding(finding.Path, finding.Side, finding.StartLine, finding.EndLine, finding.HeadLine, finding.Title+": "+finding.Claim, sarifResult{
 			RuleID: ruleID, Level: level,
 			Fingerprints: map[string]string{"openTrestleVerifiedFindingId/v1": finding.Identity},

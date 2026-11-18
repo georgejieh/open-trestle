@@ -36,7 +36,7 @@ Today the deterministic analysis stage runs one built-in rule (`static_debug_out
 
 After verification, a direct review runs a deterministic judge stage in the `localreview` package. No model takes part in it. The judge does three things:
 
-- It classifies each verified finding as introduced or pre-existing. A pre-existing finding is anchored only on unchanged lines and cites no evidence of the change.
+- It classifies each verified finding as introduced, pre-existing or of unproven origin. A pre-existing finding is on unchanged lines, cites no evidence of the change, and the semantic-impact profile shows that nothing outside the changed declarations reaches them. Any other finding on unchanged lines, such as a caller of a changed function, is of unproven origin and blocks like an introduced one.
 - It merges duplicates of one defect within a run and across the members of a `--specialists` set.
 - It ranks the distinct findings.
 

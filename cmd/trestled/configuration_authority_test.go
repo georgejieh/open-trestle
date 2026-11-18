@@ -14,7 +14,7 @@ func TestRuntimeConfigurationRejectsReplaceableAncestor(t *testing.T) {
 	if err := os.MkdirAll(private, 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(shared, 0777); err != nil {
+	if err := setTestMode(t, shared, 0777); err != nil {
 		t.Fatal(err)
 	}
 	filename := filepath.Join(private, "policy.json")

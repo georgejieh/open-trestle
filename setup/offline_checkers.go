@@ -144,7 +144,7 @@ func CreateBackupSnapshot(ctx context.Context, primaryPath, backupPath, expected
 	if err != nil {
 		return Plan{}, ErrInvalidBackupSnapshot
 	}
-	file, err := os.OpenFile(backup, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	file, err := createPrivateFile(backup)
 	if err != nil {
 		if errors.Is(err, os.ErrExist) {
 			return Plan{}, ErrBackupSnapshotExists
@@ -161,7 +161,7 @@ func CreateBackupSnapshot(ctx context.Context, primaryPath, backupPath, expected
 	}()
 	info, statErr := file.Stat()
 	pathInfo, pathErr := os.Lstat(backup)
-	if statErr != nil || pathErr != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 || pathInfo.Mode()&os.ModeSymlink != 0 || !os.SameFile(info, pathInfo) || !fileOwnedByCurrentProcess(info) {
+	if statErr != nil || pathErr != nil || !info.Mode().IsRegular() || !openPrivateToProcess(file, info, exactPermission(0o600)) || pathInfo.Mode()&os.ModeSymlink != 0 || !os.SameFile(info, pathInfo) {
 		return Plan{}, ErrInvalidBackupSnapshot
 	}
 	if _, err = file.Write(encoded); err != nil {
@@ -180,7 +180,7 @@ func CreateBackupSnapshot(ctx context.Context, primaryPath, backupPath, expected
 		return Plan{}, ErrInvalidBackupSnapshot
 	}
 	again, againErr := os.Lstat(backup)
-	if againErr != nil || !again.Mode().IsRegular() || again.Mode().Perm() != 0o600 || !os.SameFile(info, again) || !stablePrivateDirectory(filepath.Dir(backup)) {
+	if againErr != nil || !again.Mode().IsRegular() || !privateToProcess(backup, again, exactPermission(0o600)) || !os.SameFile(info, again) || !stablePrivateDirectory(filepath.Dir(backup)) {
 		return Plan{}, ErrInvalidBackupSnapshot
 	}
 	copied, readErr := InspectBackupSnapshot(ctx, backup)
@@ -304,7 +304,7 @@ func InspectBackupSnapshot(ctx context.Context, path string) (Plan, error) {
 }
 func readBackupSnapshot(path string) (Plan, error) {
 	info, err := os.Lstat(path)
-	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0o600 || !fileOwnedByCurrentProcess(info) {
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || !privateToProcess(path, info, exactPermission(0o600)) {
 		return Plan{}, ErrInvalidBackupSnapshot
 	}
 	file, err := os.Open(path)

@@ -292,7 +292,7 @@ func runRemoteSetupBootstrap(ctx context.Context, args []string, stdout, stderr 
 		return writeRemoteBootstrapRefusal(stdout, stderr, "invalid --directory")
 	}
 	info, err := os.Lstat(directoryAbs)
-	if err != nil || !info.IsDir() || info.Mode().Perm() != 0700 || fileauthority.CheckDirectory(directoryAbs) != nil {
+	if err != nil || !fileauthority.PrivateDirectory(directoryAbs, info) || fileauthority.CheckDirectory(directoryAbs) != nil {
 		return writeRemoteBootstrapRefusal(stdout, stderr, "--directory must be an existing private (0700) directory owned by this account")
 	}
 	if args[0] == "init" {

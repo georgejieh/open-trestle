@@ -104,7 +104,7 @@ func (w *initWizard) askProviderKey(name, provider, label string, saveNow bool) 
 			return nil
 		}
 		w.enteredKeys = append(w.enteredKeys, name)
-		w.say("  It will be saved in %s (owner-only, mode 0600) once the setup is saved.", providerCredentialDisplayDirectory())
+		w.say("  It will be saved in %s (%s) once the setup is saved.", providerCredentialDisplayDirectory(), providerCredentialProtection())
 		return nil
 	}
 	w.say("  Skipped after three tries; no key was saved. Save one later with `trestle keys set %s`.", name)
@@ -122,7 +122,7 @@ func (w *initWizard) saveKey(name, key string) {
 		w.say("  %s The key could not be saved (%v). It is used for this session only; save it later with `trestle keys set %s`.", w.bad, err, name)
 		return
 	}
-	w.say("  %s Saved the key for %s in %s (owner-only, mode 0600). `trestle keys remove %s` deletes it.", w.ok, name, providerCredentialDisplayDirectory(), name)
+	w.say("  %s Saved the key for %s in %s (%s). `trestle keys remove %s` deletes it.", w.ok, name, providerCredentialDisplayDirectory(), providerCredentialProtection(), name)
 }
 
 // saveEnteredKey saves the keys the operator asked to keep, once the setup is

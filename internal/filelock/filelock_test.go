@@ -25,7 +25,7 @@ func TestLockIsExclusiveAndReclaimableAfterClose(t *testing.T) {
 	}
 	defer reclaimed.Close()
 	information, err := os.Lstat(path)
-	if err != nil || !information.Mode().IsRegular() || information.Mode().Perm()&0o077 != 0 {
+	if err != nil || !information.Mode().IsRegular() || !privateLockFile(t, path) {
 		t.Fatalf("lock=(%v,%v)", information, err)
 	}
 }

@@ -23,7 +23,7 @@ func rmFeedbackFile(t *testing.T, encoded []byte) string {
 		t.Skip("protected feedback loader requires trusted local file ownership")
 	}
 	dir := t.TempDir()
-	if err := os.Chmod(dir, 0o700); err != nil {
+	if err := setTestMode(t, dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(dir, "feedback.json")
@@ -111,7 +111,7 @@ func TestLoadProtectedRetainedMemoryFeedbackRejectsUnprotectedFiles(t *testing.T
 		t.Skip("protected feedback loader requires trusted local file ownership")
 	}
 	dir := t.TempDir()
-	if err := os.Chmod(dir, 0o700); err != nil {
+	if err := setTestMode(t, dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	target := filepath.Join(dir, "feedback.json")
@@ -129,7 +129,7 @@ func TestLoadProtectedRetainedMemoryFeedbackRejectsUnprotectedFiles(t *testing.T
 	} {
 		t.Run(name, func(t *testing.T) {
 			if name == "world writable" {
-				if err := os.Chmod(path, 0o666); err != nil {
+				if err := setTestMode(t, path, 0o666); err != nil {
 					t.Fatal(err)
 				}
 			}

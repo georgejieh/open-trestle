@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"runtime"
 	"sync"
 
 	"github.com/georgejieh/open-trestle/internal/credentialstore"
@@ -129,4 +130,12 @@ func providerCredentialDisplayDirectory() string {
 		return "~/.config/open-trestle/credentials"
 	}
 	return initDisplayPath(dir)
+}
+
+// providerCredentialProtection says how a saved key file is protected.
+func providerCredentialProtection() string {
+	if runtime.GOOS == "windows" {
+		return "owner-only"
+	}
+	return "owner-only, mode 0600"
 }

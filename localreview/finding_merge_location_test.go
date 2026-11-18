@@ -54,6 +54,10 @@ const (
 	divideClaim = "Avg returns sum / len(xs) without checking that xs is non-empty, so an empty slice divides by zero."
 	panicTitle  = "Avg panics on empty slice"
 	panicClaim  = "The empty-slice guard was removed, and calling Avg(nil) now panics at runtime."
+	// The paraphrase shares most of the divide-by-zero statement's words, but
+	// fewer than the four fifths of the strict rule.
+	paraphraseTitle = "Avg panics on an empty slice"
+	paraphraseClaim = "Avg divides sum by len(xs), which is zero when xs is empty, so the division panics."
 )
 
 // The changed declaration of the profile anchors a finding that lies inside
@@ -76,13 +80,17 @@ func TestDeclarationAnchorUsesTheChangedDeclaration(t *testing.T) {
 }
 
 // Two specialists' paraphrases of one bug, inside the same changed
-// declaration and in one category family, are one defect: the strongest is
-// the representative and the other wording is kept as "also reported as".
+// declaration, in one category family and sharing most of their wording, are
+// one defect: the strongest is the representative and the other wording is
+// kept as "also reported as".
 func TestDeduplicateFindingsMergesParaphrasesInOneDeclaration(t *testing.T) {
 	// The paraphrase spans the whole function, wider than five lines, so only
 	// the declaration anchor makes them one defect.
 	divide := anchored(t, mergeFixture("a", divideTitle, divideClaim, diagnostics.SeverityError, "stats.go", 9, 9, "correctness", "hunk", "caller"))
-	panics := anchored(t, mergeFixture("b", panicTitle, panicClaim, diagnostics.SeverityError, "stats.go", 4, 10, "reliability"))
+	panics := anchored(t, mergeFixture("b", paraphraseTitle, paraphraseClaim, diagnostics.SeverityError, "stats.go", 4, 10, "reliability"))
+	if nearIdentical(defectStatementTokens(divideTitle, divideClaim), defectStatementTokens(paraphraseTitle, paraphraseClaim)) {
+		t.Fatal("the paraphrase is near-identical, so it does not exercise the location pass")
+	}
 	merged := RankFindings(DeduplicateFindings([]FindingOrigin{{Label: "bug_hunter", Findings: []ReportFinding{divide}}, {Label: "backend", Findings: []ReportFinding{panics}}}))
 	if len(merged) != 1 || merged[0].Origins != 2 || len(merged[0].Contributors) != 2 {
 		t.Fatalf("the Avg paraphrases were not merged: %d groups", len(merged))
@@ -92,23 +100,29 @@ func TestDeduplicateFindingsMergesParaphrasesInOneDeclaration(t *testing.T) {
 		t.Fatalf("representative or rule: %+v", group.Contributors)
 	}
 	also := group.AlsoReportedAs()
-	if len(also) != 1 || also[0].Title != panicTitle || also[0].Claim != panicClaim || also[0].Origin != "backend" {
+	if len(also) != 1 || also[0].Title != paraphraseTitle || also[0].Claim != paraphraseClaim || also[0].Origin != "backend" {
 		t.Fatalf("also reported as = %+v", also)
 	}
 	text := FindingText(group, group.OriginLabels())
-	if !strings.Contains(text, "also reported as: "+panicTitle+" (backend)\n") {
+	if !strings.Contains(text, "also reported as: "+paraphraseTitle+" (backend)\n") {
 		t.Fatalf("text lacks the other wording:\n%s", text)
 	}
-	if markdown := findingMarkdown(group, group.OriginLabels()); !strings.Contains(markdown, "   Also reported as: Avg panics on empty slice (`backend`)\n") {
+	if markdown := findingMarkdown(group, group.OriginLabels()); !strings.Contains(markdown, "   Also reported as: Avg panics on an empty slice (`backend`)\n") {
 		t.Fatalf("Markdown lacks the other wording:\n%s", markdown)
 	}
 	// A single review names no reviewer: it counts the merge and lists the
 	// other wording.
-	if single := FindingText(group, nil); !strings.Contains(single, "merged duplicates: 1\nalso reported as: "+panicTitle+"\n") {
+	if single := FindingText(group, nil); !strings.Contains(single, "merged duplicates: 1\nalso reported as: "+paraphraseTitle+"\n") {
 		t.Fatalf("single-review text lacks the other wording:\n%s", single)
 	}
-	if markdown := findingMarkdown(group, nil); !strings.Contains(markdown, "   Merged duplicates: 1\n   Also reported as: Avg panics on empty slice\n") {
+	if markdown := findingMarkdown(group, nil); !strings.Contains(markdown, "   Merged duplicates: 1\n   Also reported as: Avg panics on an empty slice\n") {
 		t.Fatalf("single-review Markdown lacks the other wording:\n%s", markdown)
+	}
+	// A rewording that shares too few words stays a finding of its own: the
+	// command cannot tell it from a second defect at the same place.
+	unrelated := anchored(t, mergeFixture("c", panicTitle, panicClaim, diagnostics.SeverityError, "stats.go", 4, 10, "reliability"))
+	if apart := DeduplicateFindings([]FindingOrigin{{Label: "bug_hunter", Findings: []ReportFinding{divide}}, {Label: "backend", Findings: []ReportFinding{unrelated}}}); len(apart) != 2 || apart[0].Origins != 1 || apart[1].Origins != 1 {
+		t.Fatalf("a loosely worded finding at the same place merged: %d groups", len(apart))
 	}
 	// Without a profile, the same paraphrases within five lines merge by the
 	// narrow-range rule.
@@ -133,19 +147,46 @@ func TestDeduplicateFindingsKeepsDistinctBugsOnOneLineApart(t *testing.T) {
 	divide := anchored(t, mergeFixture("a", divideTitle, divideClaim, diagnostics.SeverityError, "stats.go", 9, 9, "correctness"))
 	cases := map[string]ReportFinding{
 		"other family":  anchored(t, mergeFixture("b", "Avg truncates the mean", "Integer division drops the fraction, so the documented mean is rounded down.", diagnostics.SeverityWarning, "stats.go", 9, 9, "documentation")),
-		"unanchored":    anchored(t, mergeFixture("b", panicTitle, panicClaim, diagnostics.SeverityError, "stats.go", 9, 12, "correctness")),
-		"uncategorized": anchored(t, mergeFixture("b", panicTitle, panicClaim, diagnostics.SeverityError, "stats.go", 9, 9, "")),
+		"unanchored":    anchored(t, mergeFixture("b", paraphraseTitle, paraphraseClaim, diagnostics.SeverityError, "stats.go", 9, 12, "correctness")),
+		"uncategorized": anchored(t, mergeFixture("b", paraphraseTitle, paraphraseClaim, diagnostics.SeverityError, "stats.go", 9, 9, "")),
 		"other anchor": func() ReportFinding {
-			f := mergeFixture("b", panicTitle, panicClaim, diagnostics.SeverityError, "stats.go", 9, 9, "correctness")
+			f := mergeFixture("b", paraphraseTitle, paraphraseClaim, diagnostics.SeverityError, "stats.go", 9, 9, "correctness")
 			f.Anchor = FindingAnchor{StartLine: 8, EndLine: 11}
 			return f
 		}(),
-		"other side":      {Identity: "b", Title: panicTitle, Claim: panicClaim, Severity: diagnostics.SeverityError, Path: "stats.go", Side: diagnostics.LineSideBase, StartLine: 9, EndLine: 9, Category: "correctness", EvidenceIDs: []string{"removed"}},
-		"no line overlap": anchored(t, mergeFixture("b", panicTitle, panicClaim, diagnostics.SeverityError, "stats.go", 5, 7, "correctness")),
+		"other side":      {Identity: "b", Title: paraphraseTitle, Claim: paraphraseClaim, Severity: diagnostics.SeverityError, Path: "stats.go", Side: diagnostics.LineSideBase, StartLine: 9, EndLine: 9, Category: "correctness", EvidenceIDs: []string{"removed"}},
+		"no line overlap": anchored(t, mergeFixture("b", paraphraseTitle, paraphraseClaim, diagnostics.SeverityError, "stats.go", 5, 7, "correctness")),
 	}
 	for name, other := range cases {
 		if merged := DeduplicateFindings([]FindingOrigin{{Label: "general", Findings: []ReportFinding{divide}}, {Label: "bug_hunter", Findings: []ReportFinding{other}}}); len(merged) != 2 {
 			t.Fatalf("%s: distinct findings merged into %d groups", name, len(merged))
+		}
+	}
+}
+
+// Two different defects on one line in one changed declaration and one
+// category family are two findings: the location alone is no evidence that
+// they are the same defect. Neither is shown as the other's wording, and each
+// keeps its own corroboration count.
+func TestDeduplicateFindingsKeepsDistinctClaimsAtOnePlaceApart(t *testing.T) {
+	divide := anchored(t, mergeFixture("a", divideTitle, divideClaim, diagnostics.SeverityError, "stats.go", 9, 9, "correctness"))
+	truncate := anchored(t, mergeFixture("b", "Avg truncates the mean", "Integer division drops the fraction, so the mean of 1 and 2 is reported as 1.", diagnostics.SeverityWarning, "stats.go", 9, 9, "correctness"))
+	for name, groups := range map[string][]MergedFinding{
+		"anchored":   DeduplicateFindings([]FindingOrigin{{Label: "bug_hunter", Findings: []ReportFinding{divide}}, {Label: "backend", Findings: []ReportFinding{truncate}}}),
+		"one origin": DeduplicateFindings([]FindingOrigin{{Label: "general", Findings: []ReportFinding{divide, truncate}}}),
+		"unanchored": func() []MergedFinding {
+			divide, truncate := divide, truncate
+			divide.Anchor, truncate.Anchor = FindingAnchor{}, FindingAnchor{}
+			return DeduplicateFindings([]FindingOrigin{{Label: "bug_hunter", Findings: []ReportFinding{divide}}, {Label: "backend", Findings: []ReportFinding{truncate}}})
+		}(),
+	} {
+		if len(groups) != 2 {
+			t.Fatalf("%s: a division by zero and a truncation merged into %d groups", name, len(groups))
+		}
+		for _, group := range groups {
+			if group.Origins != 1 || len(group.Contributors) != 1 || len(group.AlsoReportedAs()) != 0 {
+				t.Fatalf("%s: group %s has %d origins and %d contributors", name, group.Finding.Identity, group.Origins, len(group.Contributors))
+			}
 		}
 	}
 }
@@ -174,7 +215,7 @@ func TestDeduplicateFindingsMergesSecurityOnlyByTheStrictRule(t *testing.T) {
 // order or rules.
 func TestDeduplicateFindingsLocationRuleIsDeterministic(t *testing.T) {
 	divide := anchored(t, mergeFixture("a", divideTitle, divideClaim, diagnostics.SeverityError, "stats.go", 9, 9, "correctness", "hunk", "caller"))
-	panics := anchored(t, mergeFixture("b", panicTitle, panicClaim, diagnostics.SeverityError, "stats.go", 4, 10, "reliability"))
+	panics := anchored(t, mergeFixture("b", paraphraseTitle, paraphraseClaim, diagnostics.SeverityError, "stats.go", 4, 10, "reliability"))
 	repeat := anchored(t, mergeFixture("c", divideTitle, divideClaim, diagnostics.SeverityWarning, "stats.go", 9, 9, "correctness"))
 	style := anchored(t, mergeFixture("d", "Avg lacks a doc example", "The comment of Avg shows no example call.", diagnostics.SeverityInformation, "stats.go", 3, 4, "documentation"))
 	one := RankFindings(DeduplicateFindings([]FindingOrigin{{Label: "general", Findings: []ReportFinding{divide, style}}, {Label: "bug_hunter", Findings: []ReportFinding{panics, repeat}}}))
@@ -195,5 +236,21 @@ func TestDeduplicateFindingsLocationRuleIsDeterministic(t *testing.T) {
 	// rankEntries, as recorded in a result, is stable too.
 	if !reflect.DeepEqual(rankEntries([]ReportFinding{divide, style, panics}, "general", ""), rankEntries([]ReportFinding{panics, divide, style}, "general", "")) {
 		t.Fatal("recorded rank entries depend on finding order")
+	}
+}
+
+// A result recorded under the location-only rule merged findings at one
+// place whatever their wording; the reader can still re-derive that rank
+// (validRecordedJudgement), while the current rule keeps them apart.
+func TestRankEntriesReDeriveTheLocationOnlyRule(t *testing.T) {
+	divide := anchored(t, mergeFixture("a", divideTitle, divideClaim, diagnostics.SeverityError, "stats.go", 9, 9, "correctness"))
+	truncate := anchored(t, mergeFixture("b", "Avg truncates the mean", "Integer division drops the fraction.", diagnostics.SeverityWarning, "stats.go", 9, 9, "correctness"))
+	findings := []ReportFinding{divide, truncate}
+	if current := rankEntriesBy(findings, "general", "", false); len(current) != 2 || !reflect.DeepEqual(current, rankEntries(findings, "general", "")) {
+		t.Fatalf("current rule: %+v", current)
+	}
+	legacy := rankEntriesBy(findings, "general", "", true)
+	if len(legacy) != 1 || legacy[0].FindingIdentity != "a" || !reflect.DeepEqual(legacy[0].Merged, []string{"b"}) {
+		t.Fatalf("location-only rule: %+v", legacy)
 	}
 }

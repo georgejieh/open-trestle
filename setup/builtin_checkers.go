@@ -74,11 +74,11 @@ func stablePrivateDirectory(path string) bool {
 		}
 		current = parent
 	}
-	if chain[0].info.Mode().Perm() != 0o700 || !fileOwnedByCurrentProcess(chain[0].info) {
+	if !privateToProcess(chain[0].path, chain[0].info, exactPermission(0o700)) {
 		return false
 	}
 	for i := 1; i < len(chain); i++ {
-		if !stableAncestorAuthority(chain[i].info, chain[i-1].info) {
+		if !ancestorAuthority(chain[i].path, chain[i].info, chain[i-1].path, chain[i-1].info) {
 			return false
 		}
 	}
@@ -87,9 +87,10 @@ func stablePrivateDirectory(path string) bool {
 		return false
 	}
 	openedInfo, statErr := opened.Stat()
+	openedPrivate := statErr == nil && openPrivateToProcess(opened, openedInfo, exactPermission(0o700))
 	resolved, resolveErr := filepath.EvalSymlinks(path)
 	closeErr := opened.Close()
-	if statErr != nil || resolveErr != nil || closeErr != nil || !openedInfo.IsDir() || openedInfo.Mode().Perm() != 0o700 || resolved != path || !os.SameFile(openedInfo, chain[0].info) {
+	if statErr != nil || resolveErr != nil || closeErr != nil || !openedInfo.IsDir() || !openedPrivate || resolved != path || !os.SameFile(openedInfo, chain[0].info) {
 		return false
 	}
 	for i, value := range chain {
@@ -97,21 +98,11 @@ func stablePrivateDirectory(path string) bool {
 		if err != nil || !again.IsDir() || again.Mode()&os.ModeSymlink != 0 || !os.SameFile(again, value.info) {
 			return false
 		}
-		if i > 0 && !stableAncestorAuthority(again, chain[i-1].info) {
+		if i > 0 && !ancestorAuthority(value.path, again, chain[i-1].path, chain[i-1].info) {
 			return false
 		}
 	}
 	return true
-}
-
-func stableAncestorAuthority(parent, child os.FileInfo) bool {
-	if !fileOwnedByTrustedProcessOrRoot(parent) {
-		return false
-	}
-	if parent.Mode().Perm()&0o022 == 0 {
-		return true
-	}
-	return parent.Mode()&os.ModeSticky != 0 && fileOwnedByCurrentProcess(child)
 }
 
 // ObserverCredentialPostureChecker checks bounded distinct operator and observer values without retaining them.

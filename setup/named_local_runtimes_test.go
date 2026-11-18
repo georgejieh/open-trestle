@@ -84,7 +84,7 @@ func namedLocalConfigurationWith(t *testing.T, name, endpoint string, qualified 
 		template, _ = json.Marshal(wire)
 	}
 	directory := t.TempDir()
-	if err := os.Chmod(directory, 0o700); err != nil {
+	if err := setTestMode(t, directory, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	inventoryPath, templatePath := filepath.Join(directory, "routes.json"), filepath.Join(directory, "template.json")

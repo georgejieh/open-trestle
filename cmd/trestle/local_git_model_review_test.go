@@ -299,9 +299,7 @@ func TestRunLocalGitModelReviewRejectsUnprotectedOrMismatchedConfiguration(t *te
 			f := newLocalModelFixture(t, localModelFixtureOptions{})
 			switch name {
 			case "writable policy":
-				if err := os.Chmod(f.policyPath, 0o666); err != nil {
-					t.Fatal(err)
-				}
+				setTestMode(t, f.policyPath, 0o666)
 			case "symlink policy":
 				link := filepath.Join(filepath.Dir(f.policyPath), "linked.json")
 				if err := os.Symlink(f.policyPath, link); err != nil {

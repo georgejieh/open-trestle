@@ -440,9 +440,11 @@ Each part of the result means the following.
   findings are counted on a `hidden:` line, and `trestle review --all` lists
   them. When every confirmed finding is low severity, up to ten of them are
   listed, so the result never hides all of them.
-- `pre-existing findings`: Confirmed problems on unchanged lines that cite
-  nothing the change touched. They are listed separately and never make the
-  review blocking.
+- `pre-existing findings`: Confirmed problems on unchanged lines that the
+  change provably cannot reach. They are listed separately and never make the
+  review blocking. A confirmed problem on unchanged lines that the change may
+  affect, such as a caller of a changed function, stays with the confirmed
+  findings with an `origin: unproven` line and blocks like a new one.
 - `ci: inconclusive` with `status: findings`: This is an advisory review. Every
   confirmed finding is low severity or pre-existing, so none blocks CI (exit `3`
   by default, `0` with `--exit-code-policy findings`), and the closing line says

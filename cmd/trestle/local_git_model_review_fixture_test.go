@@ -353,9 +353,15 @@ func (m *localModelEndpoint) serve(t *testing.T, w http.ResponseWriter, r *http.
 			title, claim, category := "Zero-valued caller now panics", "Consume passes zero to Changed after removal of the division guard.", "correctness"
 			// paraphrase_specialist words the same defect differently in a
 			// specialist's request: another title, claim and category of the
-			// same family, at the same lines.
-			if m.mode == "paraphrase_specialist" && len(packet.Specialist) > 0 && string(packet.Specialist) != "null" {
-				title, claim, category = "Changed panics on a zero divisor", "Changed divides 10 by x without a zero check, so the call with 0 in Consume crashes.", "reliability"
+			// same family, at the same lines, sharing half of the wording.
+			// distinct_specialist reports another defect of the same family at
+			// the same lines.
+			specialist := len(packet.Specialist) > 0 && string(packet.Specialist) != "null"
+			if m.mode == "paraphrase_specialist" && specialist {
+				title, claim, category = "Changed panics on a zero divisor", "Consume passes zero to Changed, and the missing division guard makes Changed panic.", "reliability"
+			}
+			if m.mode == "distinct_specialist" && specialist {
+				title, claim, category = "Changed truncates the quotient", "Integer division in Changed drops the remainder, so odd inputs lose precision.", "correctness"
 			}
 			candidates = append(candidates, map[string]any{
 				"title": title, "claim": claim, "severity_hint": "high",

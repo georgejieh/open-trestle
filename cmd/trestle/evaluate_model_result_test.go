@@ -254,6 +254,56 @@ func TestEvaluateModelResultRejectsChangedSealedLineage(t *testing.T) {
 	}
 }
 
+// A version 6 result whose disposition its recorded pre_existing list relaxed
+// is still a completed review that evaluation can observe: the import reads
+// it, while the strict reader keeps refusing to trust the relaxation.
+func TestEvaluateModelResultImportsADispositionRelaxedByTheRecordedClass(t *testing.T) {
+	f, captured := modelResultCorpusCapture(t, false, false)
+	var receipt judgementReceipt
+	if err := json.Unmarshal(captured, &receipt); err != nil {
+		t.Fatal(err)
+	}
+	if receipt.CI != "blocked" || len(receipt.Rank) != 1 || len(receipt.PreExisting) != 0 {
+		t.Fatalf("capture: ci=%s rank=%+v pre_existing=%v", receipt.CI, receipt.Rank, receipt.PreExisting)
+	}
+	identity := receipt.Rank[0].FindingIdentity
+	rank := []byte(`"rank":[{"rank":1,"finding_identity":"` + identity + `"}]`)
+	relaxed := bytes.Replace(captured, rank, append(append([]byte(nil), rank...), []byte(`,"pre_existing":["`+identity+`"]`)...), 1)
+	relaxed = bytes.Replace(relaxed, []byte(`"ci_disposition":"blocked"`), []byte(`"ci_disposition":"inconclusive"`), 1)
+	if bytes.Equal(relaxed, captured) || !bytes.Contains(relaxed, []byte(`"pre_existing":["`+identity+`"]`)) || !bytes.Contains(relaxed, []byte(`"ci_disposition":"inconclusive"`)) {
+		t.Fatal("the relaxed result was not built")
+	}
+	if _, err := localreview.ParseCompletedResult(relaxed); err == nil {
+		t.Fatal("the strict reader trusted a recorded pre-existing relaxation")
+	}
+	file := filepath.Join(t.TempDir(), "result.json")
+	if err := os.WriteFile(file, relaxed, 0600); err != nil {
+		t.Fatal(err)
+	}
+	args := append([]string{"--result", file, "--result-sha256", localModelDigest(relaxed), "--case", "debug_direct_and_multiline"}, localGitChangeArgs(f.objects, evidence.RevisionAlgorithmSHA1, f.base, f.head)...)
+	var out, stderr bytes.Buffer
+	if code := runEvaluateModelResult(args, &out, &stderr); code != 4 || stderr.Len() != 0 {
+		t.Fatalf("relaxed import: exit=%d stderr=%s", code, &stderr)
+	}
+	var report struct {
+		Result json.RawMessage `json:"result"`
+	}
+	if json.Unmarshal(out.Bytes(), &report) != nil || !bytes.Equal(report.Result, bytes.TrimSuffix(relaxed, []byte{'\n'})) {
+		t.Fatal("the import did not carry the relaxed result unchanged")
+	}
+	// A relaxation the recorded class does not explain is still refused.
+	unexplained := bytes.Replace(captured, []byte(`"ci_disposition":"blocked"`), []byte(`"ci_disposition":"inconclusive"`), 1)
+	if err := os.WriteFile(file, unexplained, 0600); err != nil {
+		t.Fatal(err)
+	}
+	args[3] = localModelDigest(unexplained)
+	out.Reset()
+	stderr.Reset()
+	if code := runEvaluateModelResult(args, &out, &stderr); code != 1 || out.Len() != 0 {
+		t.Fatalf("an unexplained relaxation was imported: exit=%d", code)
+	}
+}
+
 func TestCompletedImportRejectsV7NoncompletedOutcome(t *testing.T) {
 	f, captured := modelResultCorpusCapture(t, false, false)
 	parsed, err := localreview.ParseCompletedResult(captured)

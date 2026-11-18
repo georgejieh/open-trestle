@@ -3,6 +3,7 @@ package localreview
 import (
 	"bytes"
 	"context"
+	"path"
 	"time"
 
 	"github.com/georgejieh/open-trestle/audit"
@@ -10,11 +11,13 @@ import (
 	sourcehandler "github.com/georgejieh/open-trestle/handlers/source"
 	"github.com/georgejieh/open-trestle/internal/evidence"
 	"github.com/georgejieh/open-trestle/internal/review"
+	"github.com/georgejieh/open-trestle/semanticimpact"
 )
 
 // Change-line accounting: which head lines the reviewed change touched, per
 // path, from a fresh bounded diff of the base and head files the source tasks
-// already recorded. It decides the pre-existing class and the walkthrough's
+// already recorded. With the run's semantic-impact profile it decides the
+// origin class (introduced, unproven or pre-existing) and the walkthrough's
 // line counts. No Git object is read again and no model is called.
 
 const (
@@ -45,11 +48,32 @@ type pathChange struct {
 // changeLines is the accounting of every path in the recorded change model,
 // with the generation context's change evidence: the source IDs of its
 // changed hunks and removed lines. Without that evidence (evidence nil) no
-// finding is pre-existing.
+// finding is on unchanged lines. isolated records that the run's
+// semantic-impact profile proves nothing outside the changed declarations
+// reaches them (see isolatedChange); without that proof no finding on
+// unchanged lines is pre-existing.
 type changeLines struct {
 	paths    map[string]*pathChange
 	evidence map[string]bool
+	isolated bool
 }
+
+// findingOrigin is the deterministic origin class of a verified finding.
+type findingOrigin int
+
+const (
+	// originIntroduced: on lines the change touched, citing change evidence,
+	// or where the lines or the change evidence are unknown.
+	originIntroduced findingOrigin = iota
+	// originUnproven: on unchanged lines and citing no change evidence, but
+	// the change may still cause it, for example a caller of a changed
+	// function. It blocks like an introduced finding.
+	originUnproven
+	// originPreExisting: on unchanged lines of an unchanged Go file, citing no
+	// change evidence, in a run whose profile proves that nothing outside the
+	// changed declarations reaches them. It never blocks.
+	originPreExisting
+)
 
 // touches reports whether the head lines start..end overlap a changed range or
 // the window around a deletion point.
@@ -72,33 +96,93 @@ func (p *pathChange) touches(start, end uint32) bool {
 	return false
 }
 
-// preExisting reports a verified finding that is anchored only on unchanged
-// context lines and that cites no evidence of the change, so the verifier
-// confirmed it from unchanged code alone. Both of these hold:
+// origin classifies a verified finding. It is on unchanged lines when both
+// of these hold:
 //
 //   - it is on head lines, in an unchanged file (such as a direct reference:
 //     a caller of a changed declaration) or in a modified file whose lines are
 //     known, and it overlaps no changed line and no deletion window;
 //   - none of its evidence is a changed hunk or removed lines.
 //
-// A finding on removed base lines, in an added file, in a path whose lines
-// are unknown, or in a run whose change evidence is unknown is never
-// pre-existing, so an uncertain finding keeps blocking.
-func (c changeLines) preExisting(finding ReportFinding) bool {
+// Unchanged lines do not prove that the defect predates the change: a
+// changed function can break an unchanged caller, and unchanged lines of a
+// modified file can depend on its changed imports or declarations. So such a
+// finding is pre-existing only when it is in an unchanged Go file and the
+// run's semantic-impact profile proves that nothing outside the changed
+// declarations reaches them (isolated); otherwise its origin is unproven. A
+// finding on removed base lines, in an added file, in a path whose lines are
+// unknown, or in a run whose change evidence is unknown is introduced, so an
+// uncertain finding keeps blocking.
+func (c changeLines) origin(finding ReportFinding) findingOrigin {
 	start, end := finding.StartLine, finding.EndLine
 	if c.evidence == nil || finding.Side != diagnostics.LineSideHead || start == 0 || end < start {
-		return false
+		return originIntroduced
 	}
 	for _, id := range finding.EvidenceIDs {
 		if c.evidence[id] {
-			return false
+			return originIntroduced
 		}
 	}
 	lines, changed := c.paths[finding.Path]
-	if !changed {
-		return true
+	switch {
+	case changed && !(lines.known && lines.kind == string(evidence.RepositoryFileDeltaModified) && !lines.touches(start, end)):
+		return originIntroduced
+	case changed || !c.isolated || path.Ext(finding.Path) != ".go":
+		return originUnproven
 	}
-	return lines.known && lines.kind == string(evidence.RepositoryFileDeltaModified) && !lines.touches(start, end)
+	return originPreExisting
+}
+
+// preExisting reports a finding whose origin is established as pre-existing.
+func (c changeLines) preExisting(finding ReportFinding) bool {
+	return c.origin(finding) == originPreExisting
+}
+
+// withImpact records whether the run's semantic-impact profile proves the
+// change isolated (see isolatedChange).
+func (c changeLines) withImpact(profile semanticimpact.Profile) changeLines {
+	c.isolated = isolatedChange(profile)
+	return c
+}
+
+// isolatedChange reports a profile that proves nothing outside the changed
+// declarations can reach them. All of these hold:
+//
+//   - it records no coverage gap: every changed path was analysed as Go and
+//     every head Go file was read;
+//   - no changed declaration is a method or an init function, which code can
+//     reach without naming them (an interface call from another package, a
+//     method set that satisfies an interface, package initialization);
+//   - it records no reference to a changed declaration outside the lines of
+//     an added or modified declaration on the same path.
+//
+// References are matched by name in every head Go file, so code that calls,
+// uses or passes on a changed declaration, directly or through other
+// unchanged code, leaves a reference to one outside the changed
+// declarations.
+func isolatedChange(profile semanticimpact.Profile) bool {
+	if profile.Identity() == "" || len(profile.Gaps()) != 0 {
+		return false
+	}
+	declarations := profile.Declarations()
+	for _, declaration := range declarations {
+		if declaration.Kind() == "method" || declaration.Kind() == "function" && declaration.Name() == "init" {
+			return false
+		}
+	}
+	for _, reference := range profile.References() {
+		inside := false
+		for _, declaration := range declarations {
+			if declaration.Change() != semanticimpact.ChangeRemoved && declaration.Path() == reference.Path() && declaration.StartLine() <= reference.Line() && reference.Line() <= declaration.EndLine() {
+				inside = true
+				break
+			}
+		}
+		if !inside {
+			return false
+		}
+	}
+	return true
 }
 
 // changeLineAccounting builds the accounting from a recorded change model and

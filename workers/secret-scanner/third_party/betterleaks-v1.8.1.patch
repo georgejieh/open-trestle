@@ -1,0 +1,369 @@
+--- a/detect/detect.go
++++ b/detect/detect.go
+@@ -349,7 +349,7 @@
+ // May be nil if the tokenizer failed to initialize.
+ func (d *Detector) Tokenizer() *tiktoken.Tiktoken {
+ 	d.tokenizerOnce.Do(func() {
+-		tiktoken.SetBpeLoader(&TiktokenLoader{})
++		tiktoken.SetBpeLoader(BpeLoader)
+ 		tke, err := tiktoken.GetEncoding("cl100k_base")
+ 		if err != nil {
+ 			logging.Warn().Err(err).Msg("Could not initialize cl100k_base tiktokenizer")
+@@ -846,6 +846,7 @@
+ 	var (
+ 		findings []report.Finding
+ 		logger   = fragment.Logger().With().Str("rule_id", r.RuleID).Logger()
++		prior    *suppressionIndex
+ 	)
+ 
+ 	if r.SkipReport && !fragment.InheritedFromFinding {
+@@ -1004,8 +1005,13 @@
+ 			}
+ 		}
+ 
+-		if len(priorFindings) > 0 && isSuppressedByHigherSpecificityFinding(finding, priorFindings) {
+-			continue
++		if len(priorFindings) > 0 {
++			if prior == nil {
++				prior = newSuppressionIndex(priorFindings)
++			}
++			if prior.suppresses(finding) {
++				continue
++			}
+ 		}
+ 
+ 		// Entropy is always computed — needed for report output regardless of filter path.
+--- a/detect/tiktokenloader.go
++++ b/detect/tiktokenloader.go
+@@ -8,11 +8,17 @@
+ 	"encoding/base64"
+ 	"strconv"
+ 	"strings"
++
++	"github.com/pkoukk/tiktoken-go"
+ )
+ 
+ //go:embed assets/cl100k_base.tiktoken.gz
+ var bpeData []byte
+ 
++// BpeLoader is the loader the tokenizer uses for its BPE ranks. A caller may
++// replace it before the first scan with a loader that returns the same ranks.
++var BpeLoader tiktoken.BpeLoader = &TiktokenLoader{}
++
+ // TikTokenLoader implements the tiktoken.BpeLoader interface
+ type TiktokenLoader struct{}
+ 
+--- a/detect/utils.go
++++ b/detect/utils.go
+@@ -155,6 +155,7 @@
+ 	}
+ 
+ 	var retFindings []report.Finding
++	suppression := newSuppressionIndex(findings)
+ 	for _, f := range findings {
+ 		include := true
+ 
+@@ -165,7 +166,7 @@
+ 			redactedMatch := strings.ReplaceAll(f.Match, f.Secret, "REDACTED")
+ 			logging.Trace().Msgf("skipping %s finding (%s), already a component of another finding", f.RuleID, redactedMatch)
+ 			include = false
+-		} else if isSuppressedByHigherSpecificityFinding(f, findings) {
++		} else if suppression.suppresses(f) {
+ 			include = false
+ 		}
+ 
+@@ -176,6 +177,47 @@
+ 	return retFindings
+ }
+ 
++// suppressionIndex holds, in their original order, the only findings that
++// can suppress a finding f in isSuppressedByHigherSpecificityFinding: those
++// that start on f's line and those that carry component sets. Checking just
++// them, in order, gives the same result as checking every finding, without
++// comparing every pair of findings in a fragment.
++type suppressionIndex struct {
++	findings   []report.Finding
++	byLine     map[int][]int
++	composites []int
++}
++
++func newSuppressionIndex(findings []report.Finding) *suppressionIndex {
++	index := &suppressionIndex{findings: findings, byLine: make(map[int][]int)}
++	for position, f := range findings {
++		index.byLine[f.StartLine] = append(index.byLine[f.StartLine], position)
++		if len(f.ComponentSets) > 0 {
++			index.composites = append(index.composites, position)
++		}
++	}
++	return index
++}
++
++func (index *suppressionIndex) suppresses(f report.Finding) bool {
++	sameLine, composites := index.byLine[f.StartLine], index.composites
++	for len(sameLine) > 0 || len(composites) > 0 {
++		var next int
++		switch {
++		case len(composites) == 0 || len(sameLine) > 0 && sameLine[0] < composites[0]:
++			next, sameLine = sameLine[0], sameLine[1:]
++		case len(sameLine) == 0 || composites[0] < sameLine[0]:
++			next, composites = composites[0], composites[1:]
++		default:
++			next, sameLine, composites = sameLine[0], sameLine[1:], composites[1:]
++		}
++		if isSuppressedByHigherSpecificityFinding(f, index.findings[next:next+1]) {
++			return true
++		}
++	}
++	return false
++}
++
+ func isSuppressedByHigherSpecificityFinding(f report.Finding, findings []report.Finding) bool {
+ 	for _, fPrime := range findings {
+ 		if f.StartLine == fPrime.StartLine &&
+--- a/internal/exprruntime/bindings_filter.go
++++ b/internal/exprruntime/bindings_filter.go
+@@ -3,9 +3,11 @@
+ import (
+ 	"fmt"
+ 	"math"
++	"slices"
+ 	"sort"
+ 	"strings"
+ 	"sync"
++	"unsafe"
+ 
+ 	"github.com/betterleaks/betterleaks/internal/confidence"
+ 	"github.com/betterleaks/betterleaks/internal/words"
+@@ -98,10 +100,90 @@
+ }
+ 
+ func containsAny(s string, terms any) bool {
+-	trie := getOrBuildTrie(toStringSlice(terms))
++	trie := termListTrie(terms)
+ 	return trie != nil && len(trie.FindAllString(strings.ToLower(s))) > 0
+ }
+ 
++// termLists remembers, for each term list a filter passed, the trie that
++// getOrBuildTrie returned for it. A filter passes the same constant list for
++// every finding, and getOrBuildTrie copies, lowercases, sorts and joins the
++// list on every call. A remembered list is recognised first by the address
++// and length of each string, which strings that share their bytes with it
++// have, and then by content, so only an identical list reuses a trie: the
++// one getOrBuildTrie returns for it. Strings are immutable, so equal
++// addresses and lengths mean equal terms.
++var termLists struct {
++	sync.Mutex
++	byCount map[int][]termListEntry
++}
++
++type termListEntry struct {
++	terms []string
++	trie  *ahocorasick.Matcher
++}
++
++// termListTrie returns getOrBuildTrie(toStringSlice(terms)), from termLists
++// when the same list was seen before.
++func termListTrie(terms any) *ahocorasick.Matcher {
++	var strs []string
++	var items []any
++	switch typed := terms.(type) {
++	case []string:
++		strs = typed
++	case []any:
++		items = typed
++	default:
++		return nil
++	}
++	count := len(strs) + len(items)
++	if count == 0 {
++		return nil
++	}
++	term := func(index int) (string, bool) {
++		if strs != nil {
++			return strs[index], true
++		}
++		s, ok := items[index].(string)
++		return s, ok
++	}
++	termLists.Lock()
++	defer termLists.Unlock()
++	known := termLists.byCount[count]
++	for _, equal := range []func(a, b string) bool{sameString, equalString} {
++		for _, entry := range known {
++			if entry.matches(term, equal) {
++				return entry.trie
++			}
++		}
++	}
++	list := toStringSlice(terms)
++	if list == nil {
++		return nil
++	}
++	list = slices.Clone(list)
++	trie := getOrBuildTrie(list)
++	if termLists.byCount == nil {
++		termLists.byCount = make(map[int][]termListEntry)
++	}
++	termLists.byCount[count] = append(known, termListEntry{terms: list, trie: trie})
++	return trie
++}
++
++func (entry termListEntry) matches(term func(int) (string, bool), equal func(a, b string) bool) bool {
++	for index, known := range entry.terms {
++		if s, ok := term(index); !ok || !equal(s, known) {
++			return false
++		}
++	}
++	return true
++}
++
++func sameString(a, b string) bool {
++	return len(a) == len(b) && unsafe.StringData(a) == unsafe.StringData(b)
++}
++
++func equalString(a, b string) bool { return a == b }
++
+ func toStringSlice(v any) []string {
+ 	switch ss := v.(type) {
+ 	case []string:
+--- a/regexp/filterpatterns/filterpatterns.go
++++ b/regexp/filterpatterns/filterpatterns.go
+@@ -0,0 +1,109 @@
++// Package filterpatterns lists, without running anything, the regular
++// expressions that filter expressions compile lazily through matchesAny and
++// findMatch. Together with the patterns that Compile sees while a ruleset
++// loads, they are every pattern a scan of that ruleset can compile.
++package filterpatterns
++
++import (
++	"fmt"
++	"strings"
++
++	"github.com/betterleaks/betterleaks/config"
++	"github.com/betterleaks/betterleaks/internal/exprruntime"
++	"github.com/expr-lang/expr/ast"
++	"github.com/expr-lang/expr/parser"
++)
++
++// Collect returns the joined pattern of every matchesAny and findMatch call in
++// the global prefilter and filter and in every rule filter of cfg, in the form
++// the expression runtime compiles it. A pattern argument that is not a string
++// literal or a list of string literals is an error, so the result is complete
++// or there is no result.
++func Collect(cfg *config.Config) ([]string, error) {
++	expressions := []string{cfg.Prefilter, cfg.Filter}
++	for _, rule := range cfg.Rules {
++		expressions = append(expressions, rule.Filter)
++	}
++	visitor := &collector{}
++	for _, expression := range expressions {
++		if expression == "" {
++			continue
++		}
++		text := expression
++		if exprruntime.NeedsCELCompat(expression) {
++			rewritten, err := exprruntime.RewriteCELCompat(expression)
++			if err != nil {
++				return nil, err
++			}
++			text = rewritten
++		}
++		tree, err := parser.Parse(text)
++		if err != nil {
++			return nil, err
++		}
++		ast.Walk(&tree.Node, visitor)
++		if visitor.err != nil {
++			return nil, visitor.err
++		}
++	}
++	return visitor.patterns, nil
++}
++
++type collector struct {
++	patterns []string
++	err      error
++}
++
++func (c *collector) Visit(node *ast.Node) {
++	call, ok := (*node).(*ast.CallNode)
++	if !ok || c.err != nil {
++		return
++	}
++	name := calleeName(call.Callee)
++	if name != "matchesAny" && name != "findMatch" {
++		return
++	}
++	if len(call.Arguments) != 2 {
++		c.err = fmt.Errorf("%s: %d arguments, want 2", name, len(call.Arguments))
++		return
++	}
++	var literals []string
++	switch argument := call.Arguments[1].(type) {
++	case *ast.StringNode:
++		literals = []string{argument.Value}
++	case *ast.ArrayNode:
++		for _, element := range argument.Nodes {
++			literal, ok := element.(*ast.StringNode)
++			if !ok {
++				c.err = fmt.Errorf("%s: pattern list holds a value that is not a string literal", name)
++				return
++			}
++			literals = append(literals, literal.Value)
++		}
++	default:
++		c.err = fmt.Errorf("%s: pattern argument is not a string literal", name)
++		return
++	}
++	if len(literals) == 0 {
++		return
++	}
++	// The expression runtime joins the patterns of one call this way before
++	// it compiles them (getOrCompileJoinedRegex).
++	parts := make([]string, len(literals))
++	for index, literal := range literals {
++		parts[index] = "(?:" + literal + ")"
++	}
++	c.patterns = append(c.patterns, strings.Join(parts, "|"))
++}
++
++func calleeName(node ast.Node) string {
++	switch callee := node.(type) {
++	case *ast.IdentifierNode:
++		return callee.Value
++	case *ast.MemberNode:
++		if property, ok := callee.Property.(*ast.StringNode); ok {
++			return property.Value
++		}
++	}
++	return ""
++}
+--- a/regexp/regexp.go
++++ b/regexp/regexp.go
+@@ -12,6 +12,16 @@
+ 	Version() string
+ }
+ 
++// CompiledRegexp is the compiled form an Engine returns. It is exported so
++// that an Engine can be implemented outside this module.
++type CompiledRegexp = internal.CompiledRegexp
++
++// PatternRecorder is implemented by an Engine that wants to see the text of
++// every pattern Compile accepts, at the time Compile creates its Regexp.
++type PatternRecorder interface {
++	RecordPattern(str string)
++}
++
+ // Regexp wraps a regular expression. Compilation is deferred until first match.
+ type Regexp struct {
+ 	pattern   string
+@@ -92,6 +102,9 @@
+ 	if err != nil {
+ 		return nil, err
+ 	}
++	if recorder, ok := currentEngine.(PatternRecorder); ok {
++		recorder.RecordPattern(str)
++	}
+ 	return &Regexp{
+ 		pattern:   str,
+ 		engine:    currentEngine,

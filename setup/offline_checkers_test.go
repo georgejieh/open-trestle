@@ -64,7 +64,7 @@ func TestLocalAdministratorCheckerBindsApprovalAndProcessIdentity(t *testing.T) 
 func TestBackupSnapshotCheckerRequiresExactSeparateProtectedCopy(t *testing.T) {
 	statePath, plan := initializedSetupState(t)
 	backupRoot := t.TempDir()
-	if err := os.Chmod(backupRoot, 0o700); err != nil {
+	if err := setTestMode(t, backupRoot, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	backupPath := filepath.Join(backupRoot, "plan.snapshot.json")
@@ -93,17 +93,17 @@ func TestBackupSnapshotCheckerRequiresExactSeparateProtectedCopy(t *testing.T) {
 	if _, err = CreateBackupSnapshot(context.Background(), statePath, filepath.Join(t.TempDir(), "wrong.json"), setupDigest("wrong")); !errors.Is(err, ErrStateConflict) {
 		t.Fatalf("fence=%v", err)
 	}
-	if err = os.Chmod(backupPath, 0o644); err != nil {
+	if err = setTestMode(t, backupPath, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if result := checker.Check(context.Background(), plan); result.State() != CheckBlocked || result.RecoveryAction() != RecoveryProvideBackup {
 		t.Fatalf("mode=%s/%s", result.State(), result.RecoveryAction())
 	}
-	if err = os.Chmod(backupPath, 0o600); err != nil {
+	if err = setTestMode(t, backupPath, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	linkRoot := t.TempDir()
-	_ = os.Chmod(linkRoot, 0o700)
+	_ = setTestMode(t, linkRoot, 0o700)
 	link := filepath.Join(linkRoot, "snapshot-link")
 	if err = os.Symlink(backupPath, link); err != nil {
 		t.Fatal(err)
@@ -146,7 +146,7 @@ func TestBackupSnapshotRejectsCrossWiringAndUnsafeLocation(t *testing.T) {
 		t.Fatalf("checker=%#v err=%v", checker, err)
 	}
 	backupRoot := t.TempDir()
-	if err := os.Chmod(backupRoot, 0o700); err != nil {
+	if err := setTestMode(t, backupRoot, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	backupPath := filepath.Join(backupRoot, "backup.json")
@@ -181,13 +181,13 @@ func TestRestoreBackupSnapshotRebuildsVerifiedReceiptLedger(t *testing.T) {
 	}
 	_ = state.Close()
 	backupRoot := t.TempDir()
-	_ = os.Chmod(backupRoot, 0o700)
+	_ = setTestMode(t, backupRoot, 0o700)
 	snapshot := filepath.Join(backupRoot, "plan.snapshot.json")
 	if _, err = CreateBackupSnapshot(context.Background(), statePath, snapshot, current.Identity()); err != nil {
 		t.Fatal(err)
 	}
 	restoreRoot := t.TempDir()
-	_ = os.Chmod(restoreRoot, 0o700)
+	_ = setTestMode(t, restoreRoot, 0o700)
 	destination := filepath.Join(restoreRoot, "restored.json")
 	restored, err := RestoreBackupSnapshot(context.Background(), snapshot, destination, current.RootIdentity(), current.Identity())
 	if err != nil || restored.Identity() != current.Identity() {
@@ -198,7 +198,7 @@ func TestRestoreBackupSnapshotRebuildsVerifiedReceiptLedger(t *testing.T) {
 		t.Fatalf("inspect=%v receipts=%d", err, len(inspected.Receipts()))
 	}
 	partialRoot := t.TempDir()
-	_ = os.Chmod(partialRoot, 0o700)
+	_ = setTestMode(t, partialRoot, 0o700)
 	partialPath := filepath.Join(partialRoot, "partial.json")
 	partial, err := OpenStateFile(partialPath)
 	if err != nil {
@@ -217,7 +217,7 @@ func TestRestoreBackupSnapshotRebuildsVerifiedReceiptLedger(t *testing.T) {
 		t.Fatalf("overwrite=%v", err)
 	}
 	missingRoot := t.TempDir()
-	_ = os.Chmod(missingRoot, 0o700)
+	_ = setTestMode(t, missingRoot, 0o700)
 	missing := filepath.Join(missingRoot, "missing.json")
 	if _, err = RestoreBackupSnapshot(context.Background(), snapshot, missing, setupDigest("wrong"), current.Identity()); !errors.Is(err, ErrStateConflict) {
 		t.Fatalf("root fence=%v", err)
@@ -232,7 +232,7 @@ func TestRestoreBackupSnapshotRebuildsVerifiedReceiptLedger(t *testing.T) {
 func TestBackupSnapshotCreationIsExclusiveAndCancellationHasNoArtifacts(t *testing.T) {
 	statePath, plan := initializedSetupState(t)
 	root := t.TempDir()
-	_ = os.Chmod(root, 0o700)
+	_ = setTestMode(t, root, 0o700)
 	path := filepath.Join(root, "backup.json")
 	var wait sync.WaitGroup
 	results := make(chan error, 8)

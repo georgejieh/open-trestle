@@ -4,14 +4,18 @@
 //
 // Threat model. Each key is a plaintext file protected only by file
 // permissions, like other command-line credential files: the folder is 0700,
-// each file 0600, and both must be owned by this account. That keeps the key
-// from other local accounts, but not from anything that runs as this account,
-// from the administrator, or from a backup or disk image that copies the
-// folder. The store refuses a folder or file with broader permissions, another
-// owner, or a symbolic link instead of using it, and replaces a key through a
-// protected temporary file and a rename, so a reader sees the old key or the
-// new one, never part of either. An operating-system keyring is a possible
-// later backend; it is not used.
+// each file 0600, and both must be owned by this account. On Windows the owner
+// and access-control list say the same: only this account and the system's
+// own accounts (SYSTEM, Administrators and TrustedInstaller) may have
+// access, and the folder and files are created that way rather than
+// tightened afterwards. That keeps the key from other local accounts, but
+// not from anything that runs as this account, from the administrator, or
+// from a backup or disk image that copies the folder. The store refuses a
+// folder or file with broader permissions, another owner, or a symbolic link
+// instead of using it, and replaces a key through a protected temporary file
+// and a rename, so a reader sees the old key or the new one, never part of
+// either. An operating-system keyring is a possible later backend; it is not
+// used.
 //
 // Only the variable name (OPEN_TRESTLE_PROVIDER_...) names a key. The value is
 // never part of an error, a file name, or anything the package prints.
@@ -99,7 +103,7 @@ func (s *Store) Directory() string { return s.dir }
 // the folder does not exist and create is not set.
 func (s *Store) prepare(create bool) (*fileauthority.DirectoryPin, bool, error) {
 	if create {
-		if err := os.MkdirAll(s.dir, 0o700); err != nil {
+		if err := fileauthority.MkdirAllPrivate(s.dir); err != nil {
 			return nil, false, fmt.Errorf("%w: cannot create %s", ErrUnavailable, s.dir)
 		}
 	}
@@ -110,8 +114,8 @@ func (s *Store) prepare(create bool) (*fileauthority.DirectoryPin, bool, error) 
 	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
 		return nil, false, fmt.Errorf("%w: %s is not a folder", ErrUnavailable, s.dir)
 	}
-	if info.Mode().Perm() != 0o700 {
-		return nil, false, fmt.Errorf("%w: %s must be private (mode 0700, not %04o)", ErrUnavailable, s.dir, info.Mode().Perm())
+	if !fileauthority.PrivateDirectory(s.dir, info) {
+		return nil, false, fmt.Errorf("%w: %s must be private (%s)", ErrUnavailable, s.dir, fileauthority.PrivateDirectoryRequirement(info))
 	}
 	pin, err := fileauthority.PinDirectory(s.dir)
 	if err != nil {
@@ -133,8 +137,8 @@ func checkTarget(path, name string) (bool, error) {
 	if info.Mode()&os.ModeSymlink != 0 {
 		return false, fmt.Errorf("%w: %s is a symbolic link", ErrUnavailable, name)
 	}
-	if !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 || !fileauthority.TrustedOwner(info) {
-		return false, fmt.Errorf("%w: %s must be a regular file of mode 0600 owned by this account", ErrUnavailable, name)
+	if !fileauthority.PrivateFile(path, info) {
+		return false, fmt.Errorf("%w: %s must be %s", ErrUnavailable, name, fileauthority.PrivateFileRequirement())
 	}
 	return true, nil
 }
@@ -158,7 +162,7 @@ func (s *Store) Get(name string) (string, bool, error) {
 	}
 	defer file.Close()
 	before, err := file.Stat()
-	if err != nil || !before.Mode().IsRegular() || before.Mode().Perm() != 0o600 || before.Size() > MaxKeyBytes {
+	if err != nil || !fileauthority.PrivateOpenFile(file, before) || before.Size() > MaxKeyBytes {
 		return "", false, fmt.Errorf("%w: %s is not a protected file within its size bound", ErrUnavailable, name)
 	}
 	data, err := io.ReadAll(io.LimitReader(file, MaxKeyBytes+1))
@@ -255,13 +259,7 @@ func (s *Store) Names() ([]string, error) {
 }
 
 func syncDirectory(dir string) error {
-	directory, err := os.Open(dir)
-	if err != nil {
-		return ErrUnavailable
-	}
-	syncErr := directory.Sync()
-	closeErr := directory.Close()
-	if syncErr != nil || closeErr != nil {
+	if err := fileauthority.SyncDirectory(dir); err != nil {
 		return fmt.Errorf("%w: cannot sync %s", ErrUnavailable, dir)
 	}
 	return nil
