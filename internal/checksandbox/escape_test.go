@@ -167,15 +167,18 @@ func TestEscapeWriteOutsideScratch(t *testing.T) {
 func TestEscapeForkBombIsBounded(t *testing.T) {
 	spec := probeSpec(t, "spawn", "500")
 	result := runProbe(t, spec)
-	started, ok := strings.CutPrefix(strings.TrimSpace(string(result.Stdout)), "started ")
-	count, err := strconv.Atoi(started)
+	alive, ok := strings.CutPrefix(strings.TrimSpace(string(result.Stdout)), "alive ")
+	count, err := strconv.Atoi(alive)
 	if !ok || err != nil {
 		t.Fatalf("stdout %q stderr %q", result.Stdout, result.Stderr)
 	}
-	if count >= spec.Limits.Processes {
-		t.Fatalf("%d processes started, limit %d", count, spec.Limits.Processes)
+	if count == 0 {
+		t.Fatalf("no process stayed alive, so the limit was not exercised; stderr %q", result.Stderr)
 	}
-	t.Logf("%d of 500 processes started under a limit of %d", count, spec.Limits.Processes)
+	if count >= spec.Limits.Processes {
+		t.Fatalf("%d processes alive, limit %d", count, spec.Limits.Processes)
+	}
+	t.Logf("%d of 500 processes alive under a limit of %d", count, spec.Limits.Processes)
 }
 
 func TestEscapeDiskFillIsBounded(t *testing.T) {

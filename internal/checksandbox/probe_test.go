@@ -53,8 +53,9 @@ func probe(args []string) int {
 	case "fill":
 		return fillDisk()
 	case "hang":
-		child := exec.Command(os.Args[0], "__probe", "sleep", args[0])
-		if child.Start() != nil {
+		child := sleeper(args[0])
+		if err := child.Start(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
 			return 1
 		}
 		fmt.Printf("pid %d\npid %d\n", os.Getpid(), child.Process.Pid)
@@ -79,19 +80,36 @@ func probe(args []string) int {
 	return probeBlocked
 }
 
+// sleeper is a sleeping copy of the probe. It inherits the probe's
+// standard handles, since a Windows sandbox may not open the NUL device
+// that os/exec would otherwise give it.
+func sleeper(tag string) *exec.Cmd {
+	child := exec.Command(os.Args[0], "__probe", "sleep", tag)
+	child.Stdin, child.Stdout, child.Stderr = os.Stdin, os.Stderr, os.Stderr
+	return child
+}
+
 // spawnMany starts sleeping copies of itself until starting fails or count
-// are running, prints how many started, and exits 0.
+// have started, waits a moment, and prints how many are still alive: a
+// Windows job may let a start succeed and then kill the process.
 func spawnMany(count string) int {
 	limit, _ := strconv.Atoi(count)
-	started := 0
-	for started < limit {
-		child := exec.Command(os.Args[0], "__probe", "sleep", "spawned")
+	var children []*os.Process
+	for len(children) < limit {
+		child := sleeper("spawned")
 		if child.Start() != nil {
 			break
 		}
-		started++
+		children = append(children, child.Process)
 	}
-	fmt.Printf("started %d\n", started)
+	time.Sleep(2 * time.Second)
+	alive := 0
+	for _, child := range children {
+		if processAlive(child.Pid) {
+			alive++
+		}
+	}
+	fmt.Printf("alive %d\n", alive)
 	return 0
 }
 

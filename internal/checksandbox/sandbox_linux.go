@@ -63,12 +63,13 @@ func run(ctx context.Context, spec Spec) (Result, error) {
 	}
 	defer os.RemoveAll(scratch)
 
+	paths := sandboxPaths{home: sandboxHome, temporary: sandboxTemp, work: sandboxWork}
 	env := append([]string{
 		"PATH=" + strings.Join(spec.Path, ":"),
 		"HOME=" + sandboxHome, "TMPDIR=" + sandboxTemp, "USER=sandbox", "LANG=C.UTF-8", "TZ=UTC",
-	}, expandEnv(spec.Env, sandboxHome, sandboxTemp, sandboxWork)...)
+	}, paths.env(spec.Env)...)
 	config := childConfig{
-		Root: scratch, Tree: spec.Tree, Dir: spec.Dir, Args: spec.Args, Path: spec.Path,
+		Root: scratch, Tree: spec.Tree, Dir: spec.Dir, Args: paths.args(spec.Args), Path: spec.Path,
 		ReadOnly: spec.ReadOnly, Env: env, Report: spec.Report, Limits: spec.Limits,
 	}
 

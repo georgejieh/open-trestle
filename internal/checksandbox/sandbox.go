@@ -62,8 +62,9 @@ type Spec struct {
 	// ReadOnly lists host directories made readable, at the same paths, for
 	// toolchains and their dependency caches.
 	ReadOnly []string
-	// Env holds extra KEY=VALUE entries. In values, $HOME, $TMPDIR and $WORK
-	// expand to the sandbox's private home, temporary folder and tree copy.
+	// Env holds extra KEY=VALUE entries. In values, and in Args after the
+	// program, $HOME, $TMPDIR and $WORK expand to the sandbox's private
+	// home, temporary folder and tree copy.
 	Env []string
 	// Report, when set, is a file path relative to the scratch's temporary
 	// folder that the runner writes its structured results to. Its content
@@ -182,18 +183,37 @@ func localPath(path string) bool {
 	return path == "" || filepath.IsLocal(path)
 }
 
-// expandEnv expands $HOME, $TMPDIR and $WORK in the values of entries.
-func expandEnv(entries []string, home, temporary, work string) []string {
-	values := map[string]string{"HOME": home, "TMPDIR": temporary, "WORK": work}
+// sandboxPaths are the sandbox's own folders, as the command sees them.
+type sandboxPaths struct {
+	home, temporary, work string
+}
+
+// expand replaces $HOME, $TMPDIR and $WORK in text.
+func (paths sandboxPaths) expand(text string) string {
+	values := map[string]string{"HOME": paths.home, "TMPDIR": paths.temporary, "WORK": paths.work}
+	return os.Expand(text, func(name string) string {
+		if value, ok := values[name]; ok {
+			return value
+		}
+		return "$" + name
+	})
+}
+
+// env expands the values of entries.
+func (paths sandboxPaths) env(entries []string) []string {
 	expanded := make([]string, 0, len(entries))
 	for _, entry := range entries {
 		key, value, _ := strings.Cut(entry, "=")
-		expanded = append(expanded, key+"="+os.Expand(value, func(name string) string {
-			if v, ok := values[name]; ok {
-				return v
-			}
-			return "$" + name
-		}))
+		expanded = append(expanded, key+"="+paths.expand(value))
+	}
+	return expanded
+}
+
+// args expands every argument after the program.
+func (paths sandboxPaths) args(args []string) []string {
+	expanded := append([]string{}, args...)
+	for index := 1; index < len(expanded); index++ {
+		expanded[index] = paths.expand(expanded[index])
 	}
 	return expanded
 }

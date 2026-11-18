@@ -59,6 +59,13 @@ func platformProbe(mode string, _ []string) int {
 	return probeBlocked
 }
 
+// processAlive reports whether a child of this process has not exited; a
+// child that died is a zombie until reaped, so its state is read.
+func processAlive(pid int) bool {
+	data, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+	return err == nil && !bytes.Contains(data, []byte(") Z "))
+}
+
 // environmentLeaks reports whether value appears in any environment that
 // /proc shows.
 func environmentLeaks(value string) bool {
