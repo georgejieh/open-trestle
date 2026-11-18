@@ -1,6 +1,6 @@
 # Prompt-injection boundary
 
-Open Trestle sends repository text to language models, and that text can try to give the models orders. This page explains which material has authority, how Open Trestle tells its own instructions apart from the repository's text, what the host enforces and what it cannot enforce. It is written for contributors and for anyone judging how far the review can be trusted.
+Open Trestle sends repository text to language models, and that text can try to give the models orders. This page explains which material has authority, how Open Trestle tells its own instructions apart from the repository's text, what the host enforces and what it cannot enforce.
 
 Open Trestle ships its own AI material: host contracts, the embedded specialist skills in `agentprofile/skills/*.md`, and the output schemas. The repositories it reviews contain AI material too: `AGENTS.md`, `CLAUDE.md`, `SKILL.md` files, prompt templates, agent configuration, tool definitions and text written to look like a system prompt. Open Trestle's own repository is one of them.
 
@@ -11,10 +11,10 @@ Open Trestle ships its own AI material: host contracts, the embedded specialist 
 | Host contract for each request version (generation v9, verification v8, investigation v6) | Open Trestle, compiled into the binary | Instructions |
 | Specialist skill text (`agentprofile/skills/*.md`) | Open Trestle, compiled with `go:embed` | Review guidance inside the host contract's limits |
 | Output schemas (`schemas/review/*.json`) | Open Trestle, compiled with `go:embed` | Output shape |
-| Changed source, base-tree instruction files, memory, tool results | The reviewed repository and its contributors | None. Untrusted data |
-| Commit messages (`stated_intent`) | The change's author | None. Untrusted, author-stated data |
+| Changed source, base-tree instruction files, memory, tool results | The reviewed repository and its contributors | None. Data |
+| Commit messages (`stated_intent`) | The change's author | None. Author-stated data |
 | Pattern-hygiene observations (`pattern_hygiene`) | Open Trestle, deterministic host rules | None. Attention markers |
-| Candidate claims, titles and fix text | A model | None. Untrusted model output |
+| Candidate claims, titles and fix text | A model | None. Model output |
 
 An attacker controls the head tree of a pull request and possibly the base tree. They can put any bytes in source, for example:
 
@@ -69,7 +69,7 @@ The generation (v7, v8, v9) and verification (v6, v7, v8) contracts open with th
 
 ## Risk flags
 
-Each source carries `risk_flags`. They mark material for attention only. They never suppress review, change source selection or grant authority.
+Each source carries `risk_flags`. They mark material for attention only. They do not suppress review, change source selection or grant authority.
 
 - `hidden_unicode` marks a Unicode format character (category Cf).
 - `instruction_like_text` marks content that looks like instructions to a model. The legacy markers are `ignore previous`, `system prompt`, `developer message`, `tool_call` and `call a tool`. From generation v7, verification v6 and investigation v5, the host also matches `<|im_start|>`, `<|im_end|>`, `<|system|>`, `<|start_header_id|>`, `<start_of_turn>`, `[inst]`, `<system>`, `</system>`, `ignore all previous`, `ignore prior`, `ignore all prior`, `instruction_authority` and `you are now`. Matching is a case-insensitive literal substring search with no regular expressions, so it cannot backtrack.
@@ -84,13 +84,13 @@ Recorded contexts from before v7 and v6 derive their flags again with the legacy
 
 Removed base lines are repository text too. From generation v8, verification v7 and investigation v6, the base lines that a deletion-only change removed reach the model as `removed_lines` sources. They have `repository_controlled` taint and get `risk_flags` from the same rules as every other source. An injection payload in deleted code is therefore flagged, stays inside a JSON string value and leaves the system channel unchanged.
 
-Each contract says in one sentence that these sources are deleted base lines with base line numbers. They are evidence of what was removed, not code that remains. An issue in the removed code itself is located on that source with its base line numbers. Base and head line numbers never cover each other. Publication content scans keep the legacy rules. The base-tree instruction files that the [context-assembly handler](context-assembly-handler.md#repository-instruction-files) supplies as `repository_context` all match `agent_configuration`.
+Each contract says in one sentence that these sources are deleted base lines with base line numbers. They show what was removed, not code that remains. An issue in the removed code itself is located on that source with its base line numbers. Base and head line numbers never cover each other. Publication content scans keep the legacy rules. The base-tree instruction files that the [context-assembly handler](context-assembly-handler.md#repository-instruction-files) supplies as `repository_context` all match `agent_configuration`.
 
-`trestle local-git model-review` reports `agent_configuration_sources` and `instruction_like_sources` in the JSON result (absent when zero). It prints a text line: `ai material in review context: agent_configuration=N instruction_like=M (reviewed as code, never followed)`. SARIF carries the counts as `trestleAgentConfigurationSourceCount` and `trestleInstructionLikeSourceCount`. The counts never change `status`, `ci_disposition` or coverage.
+`trestle local-git model-review` reports `agent_configuration_sources` and `instruction_like_sources` in the JSON result (absent when zero). It prints a text line: `ai material in review context: agent_configuration=N instruction_like=M (reviewed as code, never followed)`. SARIF carries the counts as `trestleAgentConfigurationSourceCount` and `trestleInstructionLikeSourceCount`. The counts do not change `status`, `ci_disposition` or coverage.
 
 ## Stated intent
 
-From generation context version 9 and verification context version 8, the packet of a direct review carries the commit messages of its range as the `stated_intent` object, labelled `author_stated_unverified` (see [commit messages as stated intent](local-model-review.md#commit-messages-as-stated-intent)). The author of a pull request writes every byte of them, so they are treated exactly like repository text:
+From generation context version 9 and verification context version 8, the packet of a direct review carries the commit messages of its range as the `stated_intent` object, labelled `author_stated_unverified` (see [commit messages as stated intent](local-model-review.md#commit-messages-as-stated-intent)). The author of a pull request writes every byte of them, so they are treated like repository text:
 
 - They are JSON string values in the user message. They never appear in the system channel, and they never change the run plan, policy, routing or source selection.
 - Each message carries `risk_flags` from the current content rules. "Ignore previous instructions", chat-template tokens and fake `<system>` tags are flagged `instruction_like_text`. The `agent_configuration` rule is a path rule and does not apply to a message.
@@ -120,8 +120,8 @@ The host enforces the following, and offline tests cover it (`internal/review/pr
 
 The host does not guarantee the following:
 
-- **Model obedience.** Structural separation tells the model which text has authority, but it cannot make a model comply. A model may still follow injected text, miss a finding or return a wrong verdict. Independent verification, evidence binding and human review of findings limit the effect. They do not remove it.
+- **Model obedience.** Structural separation tells the model which text has authority, but it cannot make a model comply. A model may still follow injected text, miss a finding or return a wrong verdict. Verification of findings and human review limit the effect.
 - **Detection completeness.** The markers and the path list are short and high-signal. Paraphrased, encoded or novel injection text is not flagged. An unflagged source is not a safe source.
-- **Model output.** Candidate titles, claims and fix text are shown to people, written to SARIF or posted by pull-request tools such as reviewdog. They are untrusted model output and can carry text copied from the repository, including injection text and Markdown. Consumers must treat them as untrusted and must never execute fix text. Open Trestle never applies a fix.
+- **Model output.** Candidate titles, claims and fix text are shown to people, written to SARIF or posted by pull-request tools such as reviewdog. They can carry text copied from the repository, including injection text and Markdown. Consumers must not execute fix text. Open Trestle does not apply a fix.
 
 Pending prompt-injection cases for future live model runs are in `evaluation/testdata/prompt-injection-v1/cases.json`. Every label there is `needs_human_label`, and no case records an expected model verdict.

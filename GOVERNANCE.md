@@ -8,7 +8,7 @@ Maintainers decide on releases, roadmap changes, security response, compatibilit
 
 ## Contributions
 
-Contributions are evaluated on correctness, evidence, maintainability, security, scope, tests, documentation, and license compatibility. Acceptance of a contribution does not grant repository administration or release authority.
+Contributions are evaluated on correctness, maintainability, security, scope, tests, documentation, and license compatibility. Acceptance of a contribution does not grant repository administration or release authority.
 
 ## Changes to governance
 

@@ -1,6 +1,6 @@
 # MCP stdio server
 
-`trestle mcp` is a Model Context Protocol server that lets coding assistants and other MCP hosts read and submit Open Trestle review runs. It is deliberately narrow. It talks to the daemon through the same authenticated client and the same canonical review-run contracts as the CLI.
+`trestle mcp` is a Model Context Protocol server that lets coding assistants and other MCP hosts read and submit Open Trestle review runs. It talks to the daemon through the same authenticated client and review-run contracts as the CLI.
 
 ```sh
 export OPEN_TRESTLE_API_URL=http://127.0.0.1:8741
@@ -16,23 +16,23 @@ Text that is not JSON receives `-32700` with a null id. Valid JSON that is not a
 
 ## Protocol version
 
-The server implements the stateless MCP `2026-07-28` request model. Each request must declare `io.modelcontextprotocol/protocolVersion` and `io.modelcontextprotocol/clientCapabilities` in `_meta`. `server/discover` reports the exact supported version and the tool capability. An unsupported version gets the standard `-32022` error with the list of supported versions.
+The server implements the stateless MCP `2026-07-28` request model. Each request must declare `io.modelcontextprotocol/protocolVersion` and `io.modelcontextprotocol/clientCapabilities` in `_meta`. `server/discover` reports the supported version and the tool capability. An unsupported version gets the standard `-32022` error with the list of supported versions.
 
 Only the modern stateless protocol is supported. The server does not guess at the behavior of the older initialize-session protocol.
 
 ## Tools
 
-The server offers two tools. Both are deterministic and described by JSON Schema. Both return the canonical run receipt as structured content, and their output schemas accept receipt versions 1, 2 and 3.
+The server offers two tools. Both are described by JSON Schema. Both return the canonical run receipt as structured content, and their output schemas accept receipt versions 1, 2 and 3.
 
 `open_trestle.run_status` reads one run receipt, which contains no secrets. It is read-only, idempotent and closed-world. If the daemon answers that the run was not found because intake refused the scope's webhook delivery, the tool returns an error result. That result names the fixed reason and its explanation and includes the `open-trestle/webhook-delivery-refusal` record, which has no content, instead of a bare read failure. Any other read failure returns `The review run could not be read.`
 
-`open_trestle.submit_run` submits canonical plan JSON that an authorized planner has already produced. Submitting the exact same plan again is idempotent. Submission cannot weaken policy or authorize publication directly.
+`open_trestle.submit_run` submits canonical plan JSON that an authorized planner has already produced. Submitting the same plan again is idempotent. Submission cannot weaken policy or authorize publication directly.
 
-The server does not expose credentials, raw lease capabilities, source files, arbitrary filesystem reads, shell execution, policy changes, provider selection overrides or publication. Repository strings and the receipt text it returns are untrusted data. Tool annotations are hints that help a host ask for confirmation, and they never replace the daemon's own authorization.
+The server does not expose credentials, raw lease capabilities, source files, arbitrary filesystem reads, shell execution, policy changes, provider selection overrides or publication. Repository strings and the receipt text it returns are treated as data; see the [prompt-injection boundary](prompt-injection-boundary.md). Tool annotations are hints that help a host ask for confirmation. They do not replace the daemon's own authorization.
 
 ## Sources
 
-The implementation follows the MCP `2026-07-28` specification and TypeScript schema, which were inspected from these primary sources:
+The implementation follows the MCP `2026-07-28` specification and TypeScript schema:
 
 - https://modelcontextprotocol.io/specification/2026-07-28
 - https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/stdio

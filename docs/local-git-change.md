@@ -1,4 +1,4 @@
-# Local Git change evidence
+# Local Git change
 
 `trestle local-git change` compares two loose Git commits that you name and prints a compact JSON record of what changed between them. Use it to see which files a review of the same two commits would cover. It reads loose objects only.
 
@@ -15,11 +15,11 @@ trestle local-git change \
 
 You must pass all seven flags, each exactly once. `PATH` is the loose-object directory itself, normally `.git/objects`. The base and head revisions are the two commits you choose, in that order. The command does not infer a merge base, resolve refs or `HEAD`, read the index or working tree, look for `.git`, add path components, run Git, read Git configuration, use credentials, or use the network. It does not support packs or alternates.
 
-The repository authority, namespace and name are labels that you supply to describe the scope. They do not establish where the object directory came from, who owns it, or whether anyone is authorized to use it.
+The repository authority, namespace and name are labels that you supply to describe the scope. They are not checked against the directory.
 
 ## Output
 
-The command builds one `open-trestle/local-git-change-result` version 2 JSON object in memory. After it has closed the object root successfully, it writes the object followed by one newline. The strict public shape is `schemas/review/local-git-change-result-v2.schema.json`. Version 1 stays published for the earlier behavior, which supported modified files only.
+The command builds one `open-trestle/local-git-change-result` version 2 JSON object in memory. After it has closed the object root successfully, it writes the object followed by one newline. The schema is `schemas/review/local-git-change-result-v2.schema.json`. Version 1 stays published for the earlier behavior, which supported modified files only.
 
 The object contains only:
 
@@ -37,10 +37,10 @@ A supported entry carries authenticated `FileChange` and `LineMap` identities. T
 
 The status is one of:
 
-- `complete`: every changed path produced supported text-file evidence.
+- `complete`: every changed path is a supported text file.
 - `no_change`: the two accepted manifests are equal.
 - `partial`: at least one path is supported and at least one is unsupported.
-- `unsupported`: paths changed, but none produced supported evidence.
+- `unsupported`: paths changed, but none is a supported text file.
 
 Repository-relative paths can be sensitive. The command prints them on purpose, so that a local caller can see which changes it accounted for. Decide where the JSON record may be stored and sent.
 
@@ -53,8 +53,8 @@ Repository-relative paths can be sensitive. The command prints them on purpose, 
 
 Operational and usage failures print no success JSON. The command prepares the output in memory and writes it once, but a low-level output failure can still truncate the stream.
 
-## What the command proves
+## What the command checks
 
 The command reads only inside the one directory handle it opens. It reads each distinct requested revision once through the same local adapter, so two equal requests cause one read. Each accepted object graph produces a structural binding and a profile. The command processes at most 64 changed paths. Every accepted delta entry produces one opaque supported or unsupported execution, and the source maps are discarded before the command returns.
 
-It does not prove that the directory belongs to the repository named by your labels. It also does not prove ownership, authorization, ref reachability, ancestry, merge-base correctness, temporal order, atomic snapshot stability, the state of the working tree or index, adapter provenance, tenant isolation or sandboxing. It does not infer renames or copies, report mode-only changes, keep source, produce Go impact analysis, review anything, or publish findings.
+It does not check that the directory belongs to the repository named by your labels, or ref reachability, ancestry or the state of the working tree. It does not infer renames or copies, report mode-only changes, keep source, review anything, or publish findings.

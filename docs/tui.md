@@ -2,12 +2,7 @@
 
 `trestle tui` is a terminal screen for watching one review run through the
 authenticated daemon API. It is for operators who run the daemon and want to see
-a run's progress, its task state and its review diagnostics. It shows the
-canonical run receipt, bounded task state, and canonical review diagnostics.
-Diagnostic versions 1 through 5 contain independently verified findings, and
-version 6 contains unverified deterministic observations. The interface does not
-schedule work, read repository files, execute commands, claim work leases, change
-policy, invoke models, or publish results.
+a run's progress, its task state and its review diagnostics. It shows the run receipt, task state, and review diagnostics. Diagnostic versions 1 through 5 contain verified findings, and version 6 contains unverified deterministic observations. The interface does not schedule work, read repository files, execute commands, claim work leases, change policy, invoke models, or publish results.
 
 ## Start
 
@@ -23,8 +18,7 @@ go run ./cmd/trestle tui \
 ```
 
 The interface accepts plain HTTP only for a server at an IP-literal loopback
-address. Any other server must use HTTPS. The interface rejects redirects, so a
-credential cannot be forwarded to another origin.
+address. Any other server must use HTTPS. The interface rejects redirects, so a credential is not forwarded to another origin.
 
 The display width depends on where the output goes:
 
@@ -48,11 +42,10 @@ Commands are line based and limited to 256 bytes:
 
 - `r` refreshes immediately.
 - `c` starts cancellation confirmation.
-- `cancel RUN_ID` confirms cancellation, but only after `c` and only for the
-  displayed run.
+- `cancel RUN_ID` confirms cancellation, but only after `c` and only for the displayed run.
 - `q` exits without changing the run.
 
-Cancellation is the only operation that changes anything. It uses the same scoped
+Cancellation is the only operation that changes state. It uses the same scoped
 daemon endpoint as `trestle runs cancel`.
 
 ## What the screen shows
@@ -63,8 +56,7 @@ labels it as stale.
 When the daemon answers that the run was not found, and intake refused its webhook
 delivery instead of opening it, the interface reads the recorded refusal
 (`GET .../refusal`). It shows the scope, `Run not opened`, the reason token with a
-fixed explanation, the refusal time, and the delivery and planner identities, and
-then exits. It never shows delivery content. Any other failure to load the run is
+fixed explanation, the refusal time, and the delivery and planner identities, and then exits. It does not show delivery content. Any other failure to load the run is
 reported as an error, even when a refusal is recorded.
 
 A task that failed with a recorded reason prints a `Reason` line after the
@@ -99,29 +91,26 @@ the run state.
 
 The diagnostics depend on the diagnostic-set version:
 
-- Version 2 prints exact candidate, verified, rejected and inconclusive counts.
-- Version 3 also prints bounded analyzed, selected and omitted source counts.
-- Version 4 prints each content-free aggregate omission reason on one bounded
-  line, and it leaves out the reason section when no source was omitted.
+- Version 2 prints candidate, verified, rejected and inconclusive counts.
+- Version 3 also prints analyzed, selected and omitted source counts.
+- Version 4 prints each content-free aggregate omission reason on one line, and it leaves out the reason section when no source was omitted.
 - Version 5 prints the static-debug check as a `Cleared gate`, `Failed check`,
   `Incomplete check` or `Abstention`, followed by checked and applicable
-  changed-Go-range counts and the exact matches.
-- Version 6 prints the deterministic check and its exact observations. It labels
-  them as not independently verified and never counts them as verified findings.
+  changed-Go-range counts and the matches.
+- Version 6 prints the deterministic check and its observations. It labels them as not verified and does not count them as verified findings.
 
-Only `passed` is called cleared, and only for that exact rule. A not-applicable
+Only `passed` is called cleared, and only for that rule. A not-applicable
 result is shown as an abstention: no changed Go range was applicable, and the rule
 is not cleared. Nonzero inconclusive or omitted counts, and incomplete checks,
 stay explicit.
 
 ## Trust boundary
 
-Diagnostic titles and paths are verified result fields, but they are still
-untrusted display text. The renderer removes control characters, collapses line
-breaks, limits visible lengths, and labels the section explicitly. It never
-renders model text as terminal control sequences. Only the API client holds the
-bearer credential, and the credential never appears in the screen model or in an
-error message.
+Diagnostic titles and paths are display text. The renderer removes control
+characters, collapses line breaks, limits visible lengths, and labels the
+section. It does not render model text as terminal control sequences. Only the
+API client holds the bearer credential, and the credential does not appear in
+the screen model or in an error message.
 
 ## Setup terminal interface
 
@@ -144,8 +133,7 @@ limited to 256 bytes:
 - `j` selects the next requirement.
 - `k` selects the previous requirement.
 - `x` starts confirmation for the selected requirement.
-- `run REQUIREMENT_KEY` writes the requirement's check receipt, but only when the
-  key exactly matches the pending confirmation and its checker configuration was
+- `run REQUIREMENT_KEY` writes the requirement's check receipt, but only when the key matches the pending confirmation and its checker configuration was
   supplied at startup.
 - `r` reloads the protected plan.
 - `q` exits.
@@ -154,8 +142,7 @@ Navigation, refresh and one-shot rendering only read. Every check receipt needs
 the two-step confirmation: `x`, then `run REQUIREMENT_KEY`. The following checks
 use the same approved checkers, runner, receipt ledger and stale-state fences as
 the non-interactive setup commands: local-administrator approval, protected backup
-snapshot, local and PostgreSQL storage, observer credential posture, exact runtime
-policy, explicit local inference, and non-publishing dry-run checks. The
+snapshot, local and PostgreSQL storage, observer credential posture, runtime policy, local inference, and non-publishing dry-run checks. The
 administrator and backup options contain no secret, and paths and operating-system
 identity details never enter the screen or a receipt.
 
@@ -165,25 +152,20 @@ Each check needs its own flags and reads its credentials only after you confirm:
   `--postgres-approved-by`. It reads the runtime DSN only after confirmation.
 - KMS secret-backend validation requires `--approve-kms-authority-identity`,
   `--kms-region`, `--kms-key-arn` and `--kms-approved-by`; `--kms-endpoint` is
-  optional. It reads AWS credentials only after confirmation and runs the bounded
-  generate-and-unwrap check without an S3 request.
+  optional. It reads AWS credentials only after confirmation and runs the generate-and-unwrap check without an S3 request.
 - Envelope-storage validation additionally requires
   `--approve-envelope-storage-authority-identity`, the four `--s3-*` values and
   `--envelope-approved-by`. After confirmation it uses separately named S3 and KMS
   credential environments. It writes one fixed public encrypted object, reads it
-  through the envelope path, deletes its exact version, and verifies that the
-  object is gone, all under a 90-second bound.
+  through the envelope path, deletes its version, and verifies that the
+  object is gone, all within 90 seconds.
 - Remote-provider authorization, policy, local-inference and dry-run checks
-  require the same protected paths, three exact approval identities, and named
+  require the same protected paths, three approval identities, and named
   approver flags documented in [Setup planning](setup.md). Remote-provider
-  authorization needs no credential and makes no network request. It approves
-  only the exact remote connection and routing snapshot.
-- GitHub integration-permission validation requires the exact permission
-  authority, endpoint, API version, installation ID, repository full name, and
+  authorization needs no credential and makes no network request. It approves only the remote connection and routing snapshot.
+- GitHub integration-permission validation requires the permission authority, endpoint, API version, installation ID, repository full name, and
   approver flags. Only after terminal confirmation does it read the dedicated
-  setup token for the installation permission map and the separate runtime token
-  for the exact repository scope, and then it performs the bounded read-only
-  inspection.
+  setup token for the installation permission map and the separate runtime token for the repository scope, and then it performs the read-only inspection.
 - GitHub webhook conformance additionally requires
   `--approve-webhook-authority-identity`, `--github-webhook-key-id` and
   `--webhook-approved-by`. It stays disabled until the integration receipt
@@ -195,18 +177,16 @@ Each check needs its own flags and reads its credentials only after you confirm:
   `--approve-shared-rate-limit-authority-identity`,
   `--postgres-database-authority-identity` and `--shared-rate-limit-approved-by`,
   after the PostgreSQL receipt. It reads the database URL only after terminal
-  confirmation, and it proves shared quota, key cardinality, database-time expiry,
-  concurrent final-permit serialization, and exact cleanup of its disposable rows.
+  confirmation, and it checks shared quota, key cardinality, database-time expiry, concurrent final-permit serialization, and cleanup of its disposable rows.
 - Local inference is the only terminal setup check that contacts model endpoints.
-  It requires a prior exact policy receipt, an additional confirmation, and
+  It requires a prior policy receipt, an additional confirmation, and
   canonical numeric-loopback routes. It sends two fixed contract probes with no
   retry or fallback, and it keeps response content out of setup state.
 
 Observer values are read from `OPEN_TRESTLE_API_TOKEN` and
 `OPEN_TRESTLE_OBSERVER_TOKEN` only when that check runs, and they never enter the
 screen or the plan. A requirement without a configured local checker stays pending
-and states that no checker is available. The interface never turns skipped work
-into a pass.
+and states that no checker is available. Skipped work is not shown as a pass.
 
 The ownership-dependent checks are currently available on Unix platforms and
 Windows: the administrator, backup, storage and protected runtime-file checks.

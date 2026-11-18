@@ -35,7 +35,7 @@ How to read the cells:
 Remote providers are refused off the packaged Linux install. Every request to a
 remote route passes two scans in a sandboxed secret scanner before it leaves the
 machine. The scanner exists only for Linux amd64, and a plain `go build` has no
-scanner digests, so the check fails closed. The message is
+scanner digests. The message is
 `sandboxed secret scanner is available only on Linux` or names the missing
 install. See
 [remote model review](remote-model-review.md#prerequisite-1-a-scanner-bound-binary-and-installed-scanner).
@@ -66,5 +66,5 @@ access and does not change it. See
 
 The release has one goal: the same review loop on all three systems. That needs
 a secret scanner that runs on each system, native packages or installers for
-macOS and Windows, and `trestle update` on each. Until those exist, treat this
-page as the whole truth for macOS and Windows.
+macOS and Windows, and `trestle update` on each. Until those exist, this page
+lists what works on macOS and Windows.

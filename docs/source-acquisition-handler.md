@@ -6,15 +6,15 @@ The source acquisition handler, `handlers/source`, fetches the source code that 
 
 A caller creates a canonical `source-acquisition-input` that contains:
 
-- one exact repository identity;
+- one repository identity;
 - one full Git commit identity;
-- one exact source-adapter descriptor with manifest and content capabilities;
+- one source-adapter descriptor with manifest and content capabilities;
 - the fixed `manifest_and_content` artifact request; and
 - the fixed `read_only` effect.
 
 `NewInputArtifact` stores this authority as a scoped `task_input` artifact with host origin. The input identity in the task definition must be the identity of that artifact. Before it touches any source, the handler rejects inputs that are missing, expired, repository-originated, noncanonical, from another scope or for another adapter.
 
-Webhook, API, CI and local planners all use the same input contract. A planner must persist the input artifact before it makes its task available. The handler is given authority through the input artifact, not through forge text or conversational state. Plans that the webhook path prepares create separate `source-base` and `source-head` root inputs, so the same handler acquires both immutable sides without reading a moving branch.
+Webhook, API, CI and local planners all use the same input contract. A planner must persist the input artifact before it makes its task available. Plans that the webhook path prepares create separate `source-base` and `source-head` root inputs, so the same handler acquires both sides at fixed commits and never reads a moving branch.
 
 ## Merge-base inputs
 
@@ -35,28 +35,28 @@ The handler does not fall back to the requested base. The resulting snapshot is 
 
 A successful acquisition creates two kinds of artifact:
 
-1. One protected `source_file` artifact for every manifest entry. Its payload records the path, SHA-256 digest, byte count, exact bytes and acquisition execution identity. Empty files are supported. A file is limited to 10 MiB.
+1. One protected `source_file` artifact for every manifest entry. Its payload records the path, SHA-256 digest, byte count, bytes and acquisition execution identity. Empty files are supported. A file is limited to 10 MiB.
 2. One protected `source_snapshot` index. It binds the request, receipt, acquisition execution, repository, revision, adapter, manifest and the ordered references to the file artifacts.
 
-All output artifacts keep the scope, classification, protection mode and expiry of the input. Their provenance includes both the exact task input and the acquisition execution. The handler writes the snapshot index only after all file artifacts are durable. If an attempt is interrupted, the immutable file artifacts it leaves behind are safe orphans, and they stay subject to the normal retention policy.
+All output artifacts keep the scope, classification, protection mode and expiry of the input. Their provenance includes both the task input and the acquisition execution. The handler writes the snapshot index only after all file artifacts are durable. If an attempt is interrupted, the file artifacts it leaves behind stay subject to the normal retention policy.
 
-`ParseSnapshotArtifact` verifies the scoped index. `ParseFileArtifact` then requires that verified snapshot and one exact listed reference. It checks scope, classification, protection, identity, canonical encoding, repository origin, provenance, content digest, byte count and acquisition lineage before it returns a defensive copy of the content. Downstream change-building handlers should resolve only the file identities that the verified snapshot index lists.
+`ParseSnapshotArtifact` verifies the scoped index. `ParseFileArtifact` then requires that verified snapshot and one listed reference. It checks scope, classification, protection, identity, canonical encoding, repository origin, provenance, content digest, byte count and acquisition lineage before it returns a copy of the content. Downstream change-building handlers should resolve only the file identities that the verified snapshot index lists.
 
 You can wrap the handler in `artifactvalidation.ValidatedTaskHandler`, with `task_input` as its input kind and `source_snapshot` as its output kind, for an additional catalog boundary.
 
 ## Terminal behavior
 
-Source-adapter outcomes map to closed run failures:
+Source-adapter outcomes map to these run failures:
 
 | Acquisition reason | Run failure |
 |---|---|
 | authorization, policy, or capability blocked | `policy` |
 | adapter unavailable | `transient` |
-| bounded resource exceeded | `resource_limit` |
-| malformed or inconsistent source evidence | `internal` |
+| resource limit exceeded | `resource_limit` |
+| malformed or inconsistent source data | `internal` |
 | canceled execution | `canceled` |
 
-Provider error strings and repository content never enter task completions. After dispatch, the remote worker's execution context remains the signal for cancellation and for a renewed lease. The handler does not treat the original lease expiry as final once execution has started.
+Provider error strings and repository content do not enter task completions. After dispatch, the remote worker's execution context signals cancellation and a renewed lease. The handler does not treat the original lease expiry as final once execution has started.
 
 The schemas are published as:
 

@@ -1,12 +1,12 @@
 # OpenRouter zero data retention
 
-OpenRouter can require zero data retention (ZDR) on a single request. With `"provider": {"zdr": true}` in the request, it routes the request only to endpoints on its ZDR list. Open Trestle uses that per-request switch. `trestle init` recommends it and selects it by default, but it is not a gate that you must pass before setup continues.
+OpenRouter can require zero data retention (ZDR) on a single request. With `"provider": {"zdr": true}` in the request, it routes the request only to endpoints on its ZDR list. Open Trestle uses that per-request switch. `trestle init` recommends it and selects it by default; setup can continue without it.
 
 This page describes what setup reads from OpenRouter, what it records, what each request sends, and how a route without ZDR is labelled. The setup steps are in [getting started](getting-started.md) and [remote model review](remote-model-review.md#openrouter).
 
 ## What setup reads
 
-Setup makes two bounded GET requests to OpenRouter's public API without credentials. They go through the same client as the wizard's evidence fetch, which uses public addresses only, sends no key, cookie, query or repository content, and allows at most 8 MiB and 20 seconds for each request. The two addresses are:
+Setup makes two GET requests to OpenRouter's public API without credentials. They go through the same client as the wizard's evidence fetch, which uses public addresses only, sends no key, cookie, query or repository content, and allows at most 8 MiB and 20 seconds for each request. The two addresses are:
 
 - `https://openrouter.ai/api/v1/endpoints/zdr`: the endpoints OpenRouter routes to when a request requires ZDR, with each endpoint's routing slug (`tag`), prices, context length, maximum output and supported parameters.
 - `https://openrouter.ai/api/v1/models`: the model list.
@@ -21,9 +21,9 @@ Endpoints that report Safety Retention, or do not say, are left out and listed a
 
 Setup then chooses the review output allowance, which is the most a model may write in one request (the runtime policy's `max_output_tokens`). It pins only the usable endpoints that allow at least that much output.
 
-The allowance it aims for is 16384 tokens, so a reasoning model has room to finish its answer after it reasons. `--max-output-tokens N` sets the allowance to `N` instead, and `--output-tokens N` caps it at `N`. As a result, one endpoint with a small output limit no longer sets the limit for every pinned endpoint of both models. For example, take a model with 25 ZDR endpoints, of which one allows 4096 output tokens and one allows 8192. Setup pins the other 23 and says "2 endpoints that allow less than 16384 output tokens are left out".
+The allowance it aims for is 16384 tokens, so a reasoning model has room to finish its answer after it reasons. `--max-output-tokens N` sets the allowance to `N` instead, and `--output-tokens N` caps it at `N`. One endpoint with a small output limit therefore does not set the limit for every pinned endpoint of both models. For example, take a model with 25 ZDR endpoints, of which one allows 4096 output tokens and one allows 8192. Setup pins the other 23 and says "2 endpoints that allow less than 16384 output tokens are left out".
 
-If no usable endpoint of a model allows the target, setup keeps all of that model's usable endpoints, as before. The allowance then becomes the smallest output they allow, and never less than 4096. The wizard says so in one line. Both models are pinned with that one floor, so the allowance fits every pinned endpoint. An allowance you set with `--max-output-tokens` is never lowered. If no usable endpoint of a model allows it, setup stops and names the most that model's endpoints allow.
+If no usable endpoint of a model allows the target, setup keeps all of that model's usable endpoints. The allowance then becomes the smallest output they allow, and never less than 4096. The wizard says so in one line. Both models are pinned with that one floor, so the allowance fits every pinned endpoint. An allowance you set with `--max-output-tokens` is not lowered. If no usable endpoint of a model allows it, setup stops and names the most that model's endpoints allow.
 
 ### Facts setup fills in
 
@@ -38,7 +38,7 @@ Any flag you pass overrides the detected value. With `--*-provider-slug`, the fa
 
 ### What setup cannot know
 
-The API cannot tell Open Trestle whether your OpenRouter account or key enforces ZDR, so setup does not claim either way. If a model you chose has no ZDR endpoint, the wizard warns that an account or key with ZDR enforced will refuse its requests, and it offers to pick a model that has one.
+The API does not say whether your OpenRouter account or key enforces ZDR. If a model you chose has no ZDR endpoint, the wizard warns that an account or key with ZDR enforced will refuse its requests, and it offers to pick a model that has one.
 
 If setup cannot read the API, it says why and asks you for the limits and prices instead. It can still require ZDR on every request. In that case it pins no endpoints, and OpenRouter chooses among its own ZDR endpoints, which may include Safety Retention endpoints depending on your account settings.
 
@@ -57,15 +57,15 @@ Every request sets the same provider controls:
 {"provider":{"zdr":true,"only":["<slug>","..."],"allow_fallbacks":true,"require_parameters":true}}
 ```
 
-`only` holds the recorded slugs, so OpenRouter may use only those endpoints. Open Trestle sends no `order`, so OpenRouter balances requests across the pinned endpoints. When the recorded order (cheapest first) was sent, every live request went to the first endpoint, and that endpoint's serving faults, such as chat-template tokens around the answer or malformed JSON, decided every result. A route with no recorded slugs sends no list. When more than 32 endpoints qualify, setup still records the cheapest ones first. The cost limit uses the highest price among the recorded endpoints, so balancing never exceeds it.
+`only` holds the recorded slugs, so OpenRouter may use only those endpoints. Open Trestle sends no `order`, so OpenRouter balances requests across the pinned endpoints. A route with no recorded slugs sends no list. When more than 32 endpoints qualify, setup records the cheapest 32. The cost limit uses the highest price among the recorded endpoints, so balancing stays within it.
 
-Because the request itself requires ZDR, OpenRouter refuses it instead of sending it to an endpoint outside its ZDR list. No review window can expire. The request still carries the exact model selector, the output bound, the host instructions and the sanitized context, and the reply still goes through the strict response parser, usage reconciliation and bounded transport. There is no request overlay, no tool execution and no model array.
+Because the request requires ZDR, OpenRouter refuses it instead of sending it to an endpoint outside its ZDR list. The request carries the model selector, the output bound, the host instructions and the sanitized context. There is no request overlay, no tool execution and no model array.
 
-`allow_fallbacks` is true so that OpenRouter may retry a request on another pinned endpoint when the one it picked fails. Without it, OpenRouter serves a request only from its top-ranked endpoint, and one failing endpoint would fail the review. Fallback never leaves `only`. If no endpoint in `only` serves the model, OpenRouter refuses the request with HTTP 404 even with `allow_fallbacks` true. Every endpoint in `only` is a pinned ZDR endpoint whose price the cost limit already covers.
+`allow_fallbacks` is true so that OpenRouter may retry a request on another pinned endpoint when the one it picked fails. Without it, OpenRouter serves a request only from its top-ranked endpoint, and one failing endpoint would fail the review. Fallback never leaves `only`. If no endpoint in `only` serves the model, OpenRouter refuses the request with HTTP 404 even with `allow_fallbacks` true.
 
 Each request has a deadline of two minutes per 4096 tokens of its output allowance, with a minimum of two minutes and a maximum of five. The 16384-token allowance that setup aims for therefore gets the full five minutes, and a smaller allowance gets less. A caller's earlier deadline still wins. See [the request deadline](openai-provider.md#sanitized-egress-boundary).
 
-The setup summary, `bootstrap check` (`data_retention: required_per_request`) and the wizard all say that ZDR is required on every request. That is a fact about the request, not a promise about what any provider retains. OpenRouter documents legal exceptions to ZDR, such as CSAM handling.
+The setup summary, `bootstrap check` (`data_retention: required_per_request`) and the wizard all say that ZDR is required on every request. This describes the request, not what a provider retains. OpenRouter documents legal exceptions to ZDR, such as CSAM handling.
 
 ### ZDR not required
 
@@ -79,11 +79,9 @@ Every place that shows the route labels it:
 - `bootstrap check` reports `data_retention: not_required_by_open_trestle` and the limitation `zero_data_retention_not_required_by_open_trestle`.
 - Every review result carries `openrouter_zero_data_retention_not_required`.
 
-None of these labels claims that a provider retains or deletes anything.
-
 ## What is recorded
 
-Each ZDR route record carries a privacy witness, schema version 3, in its evidence manifest. The witness is a record of what setup saw and chose, and it binds these values:
+Each ZDR route record carries a privacy witness, schema version 3, in its evidence manifest. The witness records what setup saw and chose:
 
 - the route and its effective selector
 - the fixed endpoint, profile, protocol and bearer mode
@@ -100,7 +98,7 @@ The witness's `observation` holds what the API reported, or `null` when the API 
 - `safety_retention_endpoints_excluded`: the ZDR endpoints left out because they report Safety Retention or do not say
 - `output_limit_endpoints_excluded`: the usable ZDR endpoints left out because they allow fewer output tokens than the review output allowance, each with its `tag` and reported `max_completion_tokens` (empty when the slugs came from flags, or when no endpoint was left out)
 
-The witness records what the API reported at one moment. It is not evidence that an endpoint retains nothing, and the operator does not review or vouch for it. A route without ZDR records the same observation, without endpoint facts, in an informational `openrouter_route` member labelled `not_required_by_open_trestle`.
+The witness records what the API reported at one moment. A route without ZDR records the same observation, without endpoint facts, in an informational `openrouter_route` member labelled `not_required_by_open_trestle`.
 
 ### Synthetic format example
 
@@ -158,19 +156,17 @@ Every member is required and closed. Only `observation` may be `null`. The slug 
 
 An endpoint left out for its output limit allows at least 4096 output tokens and fewer than every pinned endpoint. It is listed once, is not also left out for Safety Retention, and appears only with `openrouter_api`. At most 64 are listed. Each source time is no earlier than `retrieved_at`, and the label names that time.
 
-The output-limit member was added in place: witness version 3 and runtime policy version 8 are not in any release.
-
 ### Runtime policy version 8
 
 Version 8 accepts generic connections and the `openrouter_zdr_chat_v2` profile. Its `brokered_route_authority` has exactly these members: `route_record_identity`, `evidence_manifest_digest`, `tenant_id`, `repository_id` and `provider_slugs`. The route record must carry a valid version 3 witness whose route, credential reference, scope and slugs match the connection exactly. There is no account identity, single slug or validity window. No v8 JSON Schema is published. The adapter configuration identity binds the slug list under adapter preimage version 3.
 
 ## How a reply is read
 
-Open Trestle decodes the answer part of a reply strictly: the identity, the one choice, its message and the usage. It refuses an unknown member there. It also refuses a choice that reports an error, returns images, or whose reasoning ran a server tool.
+Open Trestle decodes the answer part of a reply: the identity, the one choice, its message and the usage. It refuses an unknown member there. It also refuses a choice that reports an error, returns images, or whose reasoning ran a server tool.
 
-- The message's `reasoning` text and `reasoning_details` summaries are bounded and dropped. They never become output.
+- The message's `reasoning` text and `reasoning_details` summaries are dropped. They never become output.
 - An answer wrapped in exactly one outer Markdown fence (with no language, or `json`) is unwrapped before the same strict validation, because some endpoints that list structured output support still fence their JSON. Any other wrapping is refused.
-- `native_finish_reason` is bounded and ignored.
+- `native_finish_reason` is ignored.
 - The usage must report prompt, completion and total tokens, no BYOK charge, no tool use and no deferred tool turns. Cached prompt tokens may not exceed prompt tokens.
 - The completion breakdown (reasoning, audio, image and prediction counts) is checked as unsigned integers and then dropped. It is not compared with the completion count, because upstream providers report it inconsistently and settlement does not use it.
 
@@ -178,7 +174,7 @@ OpenRouter's routing metadata around the answer is not decoded strictly. OpenRou
 
 ## When OpenRouter refuses a request
 
-The review classifies a refusal by its HTTP status alone and never reads the error body.
+The review classifies a refusal by its HTTP status alone and does not read the error body.
 
 For an OpenRouter route, HTTP 404 means that OpenRouter served no endpoint for the request. Either the model ID is not served, or no endpoint that the request may use can take it. For example, ZDR may be required, by the request or by your account or key, and the model has no ZDR endpoint. OpenRouter refuses a ZDR-required request for a model with no ZDR endpoint with HTTP 404 at its data-policy routing step, before any model runs. If OpenRouter changes that status, the generic detail for the new status applies.
 
@@ -191,5 +187,3 @@ OpenRouter answers an unknown model ID with HTTP 400 instead. That is a rejected
 Setups made with the earlier form of this route use the `openrouter_zdr_chat_v1` profile in runtime policy version 3, 4 or 5. They carry a version 2 witness that you reviewed and declared by hand, with one slug per model, four evidence objects, an account review and a validity window. Their bytes, identities and dispatch are unchanged. They keep working until their review window ends, and `bootstrap check` then reports `privacy_declaration_current` as refused.
 
 To continue, run `trestle init --directory NEW_FOLDER`, which writes the version 3 form described above. `setup bootstrap init --provider openrouter-zdr` no longer accepts the slug evidence, account declaration or review-window flags. It refuses each one with a message that the flag is no longer used.
-
-Offline synthetic transports establish development behavior only. They do not qualify an actual OpenRouter account, endpoint, model quality, retention practice or live usage. Live inference, credentials, private source egress and charges require separate explicit authorization.

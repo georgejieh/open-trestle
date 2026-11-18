@@ -3,7 +3,7 @@
 This page lists the messages Open Trestle prints and what to do about each.
 Find the line you saw, then follow its fix. For a failed review, the `failure:`
 line names a [failure detail](failure-details.md). For an exit code, see
-[exit codes](exit-codes.md). Nothing here changes a setup unless a step says so.
+[exit codes](exit-codes.md).
 
 ## Setup and first run
 
@@ -66,7 +66,7 @@ partial-clone packs. Make a separate full copy with
 
 ### A shallow clone or a partial clone
 
-The review never fetches. In a shallow clone, fetch the missing base:
+The review does not fetch. In a shallow clone, fetch the missing base:
 `git fetch --no-tags --depth=N origin SHA`. In GitHub Actions use
 `actions/checkout` with `fetch-depth: 0`. In a partial clone, check out again
 without a filter. See

@@ -4,8 +4,8 @@ Open Trestle aims to be the best open-source code-review agent, one that runs
 wherever you work: the command line, a terminal UI, your editor, a GitHub
 Action and a desktop app. The goal is a review that steers its models with
 specialist skills and system prompts, and that finds, verifies and ranks
-findings with memory of past reviews and a map of the codebase. Security and
-evidence come first: every finding must point to the source that supports it.
+findings with memory of past reviews and a map of the codebase. Every finding
+points to the source it concerns.
 
 ## Status language
 
@@ -36,8 +36,10 @@ model that finds problems and a different model that double-checks them. It
 fills in everything else it can, shows one settings panel, writes a protected
 configuration and runs the setup checks. It runs the first review only after
 you agree. It recommends a checker from a different model family than the
-finder, because different families have different blind spots, and asks once
-when both come from the same family; it does not enforce the choice.
+finder (see
+[the rationale](rationale.md#the-checker-should-come-from-a-different-model-family))
+and asks once when both come from the same family; it does not enforce the
+choice.
 
 If the provider's key is not set, `trestle init` asks for it with hidden input
 and checks it with a free call where the provider offers one. It can save the
@@ -59,8 +61,8 @@ action takes at most two steps.
 ### Direct model review
 
 `trestle local-git model-review` runs the review inside the `trestle` process.
-A finder model proposes candidate problems, and an independent verifier on a
-different model checks them. The review uses the same nine-task graph as the
+A finder model proposes candidate problems, and a verifier on a different model
+checks them. The review uses the same nine-task graph as the
 daemon. Output is JSON, text or SARIF, with opt-in CI exit-code policies.
 
 Opt-in investigation tools (list, read and search the snapshot) are local
@@ -136,14 +138,14 @@ The TUI, `trestle lsp` with the VS Code extension, the web console and ACP
 each observe one daemon run. MCP reads run status and submits a pre-built
 plan. None of them starts a review.
 
-### Security and evidence
+### Security
 
-Only the system channel carries instructions. Repository text, including the
-base tree's instruction files, is treated as data. Every request to a remote
-route passes two sandboxed Betterleaks scans, which have a reviewed recall of
-11 of 14 expected occurrences. Each finding is bound to the exact source
-lines that support it, and publication is guarded by a fresh-head check and
-idempotency. See the [prompt-injection boundary](prompt-injection-boundary.md).
+Repository text, including the base tree's instruction files, is treated as
+data. Every request to a remote route passes two sandboxed Betterleaks scans,
+which have a reviewed recall of 11 of 14 expected occurrences. Each finding is
+tied to the source lines it concerns, and publication is guarded by a fresh-head
+check and idempotency. See the
+[prompt-injection boundary](prompt-injection-boundary.md).
 
 ### Updates
 
@@ -200,11 +202,10 @@ The release brings the whole loop to Windows and macOS:
   definition for each changed hunk, ranks symbol tags within a token budget,
   looks up callers and usages, and lists module boundaries and a feature map.
   The analysis works on syntax trees for Java, JavaScript, TypeScript, Python,
-  HTML, C, C++, C#, Swift, Go, Rust, PHP and Ruby. Every one of these languages
-  gets the same depth of analysis; none is treated as a special case.
+  HTML, C, C++, C#, Swift, Go, Rust, PHP and Ruby, all at the same depth.
 - A repository profile read from the existing tests and CI configuration,
   which records the project's conventions and the maintainers' priorities.
-  Open Trestle parses this configuration and never runs it.
+  Open Trestle parses this configuration and does not run it.
 
 ### Generated verification
 
@@ -296,7 +297,7 @@ The release brings the whole loop to Windows and macOS:
 
 - **Policy and analysis:** repository-scoped policy packs, deterministic CI
   planning and more user-visible deterministic rules.
-- **Semantic evidence:** type-aware language adapters whose compiler or
+- **Semantic analysis:** type-aware language adapters whose compiler or
   language-server facts could support verification, and heuristics such as
   historical co-change that may only point at review targets. Only the
   `structural` and `syntactic_candidate` grades exist today.
@@ -316,14 +317,14 @@ The release brings the whole loop to Windows and macOS:
 
 A release candidate must demonstrate all of the following:
 
-- Exact evidence for every published finding.
+- Source lines cited for every published finding.
 - Negative tests for authorization and tenant isolation.
 - No unapproved provider route, egress, command or source change.
-- Exact packaged scanner identities, fail-closed behavior at 256 fields, 2 MiB,
-  residual-scan and timeout limits, and the reviewed 11 of 14 coverage and
-  known-near-miss baseline.
+- Packaged scanner identities, refusal at 256 fields, 2 MiB, residual-scan and
+  timeout limits, and the reviewed 11 of 14 coverage and known-near-miss
+  baseline.
 - No blocking finding that rests only on model output, heuristic impact
-  evidence, or undeclared or incomplete semantic coverage.
+  analysis, or undeclared or incomplete semantic coverage.
 - Visible human-review outcome, coverage and abstention semantics for every
   supported surface.
 - Deployment, upgrade, backup, restore and recovery verification for its

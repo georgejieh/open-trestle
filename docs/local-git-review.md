@@ -2,7 +2,7 @@
 
 `trestle local-git review` compares two commits that you name and checks the change for leftover debug output with the built-in `static-debug-output` rule. It prints the findings, plus a record of which files it was able to check.
 
-The command is deterministic: it runs no model and sends nothing anywhere. Like `local-git inspect` and `local-git change`, it reads loose objects only and does not support packed objects or alternates. To have models review your latest commit, run `trestle review` in the repository after `trestle init` (see [getting started](getting-started.md#running-it-again) and [local model review](local-model-review.md#reviewing-the-latest-change-with-trestle-review)).
+The command runs no model and sends nothing anywhere. Like `local-git inspect` and `local-git change`, it reads loose objects only and does not support packed objects or alternates. To have models review your latest commit, run `trestle review` in the repository after `trestle init` (see [getting started](getting-started.md#running-it-again) and [local model review](local-model-review.md#reviewing-the-latest-change-with-trestle-review)).
 
 ```text
 trestle local-git review \
@@ -20,11 +20,11 @@ You must pass all seven repository and revision flags, each exactly once. You ca
 
 The command does not infer a merge base, resolve refs or `HEAD`, read the index or working tree, look for `.git`, run Git, use credentials, or use the network. It does not support packs or alternates.
 
-The repository authority, namespace and name are labels that you supply to describe the scope. They do not establish where the repository came from, who owns it, or whether anyone is authorized to use it.
+The repository authority, namespace and name are labels that you supply to describe the scope. They are not checked against the repository.
 
 ## Review scope and limits
 
-The command applies the `static-debug-output` rule and nothing else. It does not run a model or add other static rules. The fixed local limits are:
+The command applies the `static-debug-output` rule only. The fixed local limits are:
 
 - at most 64 changed entries;
 - at most 1 MiB of authenticated head content per supported file;
@@ -37,7 +37,7 @@ An added file counts as supported when its text is not empty, is valid, and is w
 
 ## Output
 
-When the review succeeds or is inconclusive, the command writes one `open-trestle/local-git-review-result` version 2 JSON object followed by one newline. Its strict public shape is `schemas/review/local-git-review-result-v2.schema.json`. Version 1 stays published for the earlier nested change contract, which supported modified files only. The object contains:
+When the review succeeds or is inconclusive, the command writes one `open-trestle/local-git-review-result` version 2 JSON object followed by one newline. Its schema is `schemas/review/local-git-review-result-v2.schema.json`. Version 1 stays published for the earlier nested change contract, which supported modified files only. The object contains:
 
 - the complete nested `open-trestle/local-git-change-result` record;
 - the identities of the debug-output review execution and its result, each bound to its inputs;
@@ -45,7 +45,7 @@ When the review succeeds or is inconclusive, the command writes one `open-trestl
 - finding IDs, titles, severities, repository-relative ranges and evidence IDs;
 - evidence IDs, kinds, digests of the exact selected bytes, and repository-relative ranges.
 
-It does not contain source content, excerpts, unified patches, the object-root path, repository label text, raw commit digests, environment data, credentials or parser token text.
+It does not contain source content, excerpts, patches, the object-root path, repository label text, raw commit digests, environment data or credentials.
 
 The command does print repository-relative paths, whole-file digests of the head content, and digests of the selected evidence bytes, and these can be sensitive. A digest can let someone test a guess about what a file contains. Decide where the output may be stored and sent.
 
@@ -63,8 +63,7 @@ The status is one of:
 
 The run status is verified only when the result is `findings`. Reports with the `partial`, `inconclusive`, `no_change` or `unsupported` status stay inconclusive, with that status as the reason.
 
-The tests show only that the SARIF output is deterministic for the inputs they
-cover. It does not show that a hosted code-scanning service accepts the log, that baselines and fingerprints stay stable across future schema versions, or how uploads and policy enforcement behave. The command uploads nothing.
+The command uploads nothing.
 
 ## Exit codes
 
@@ -75,9 +74,9 @@ cover. It does not show that a hosted code-scanning service accepts the log, tha
 
 Operational and usage failures print no success JSON. The command buffers its output and writes it once, after the object root has closed, but a low-level write failure can still truncate the stream.
 
-## What the command proves
+## What the command checks
 
-The command proves only what its own records state: the identities and the bounded behavior of the rule, as shown in the acquisition, change, entry, coverage, finding and evidence records. It does not prove repository origin, ownership, authorization, ref reachability, ancestry, merge-base correctness, atomic snapshot stability, the state of the working tree, that the review is semantically complete, model quality, policy approval, tenant isolation, or readiness to publish. It does not fix anything automatically, and it keeps no source bytes once the synchronous review finishes.
+The records state the identities and the behavior of the rule: the acquisition, change, entry, coverage, finding and evidence records. The command does not check repository origin, ref reachability, ancestry or the state of the working tree. It does not fix anything, and it keeps no source bytes once the synchronous review finishes.
 
 ## Durable local daemon mode
 
@@ -96,11 +95,11 @@ trestle local-git review \
   --server http://127.0.0.1:8741
 ```
 
-Daemon mode requires an HTTP server at a canonical numeric loopback address. The command first reads and verifies both requested revisions in the local object root that you supply. It then sends only the scope, the repository labels, the full revisions, and a request time in milliseconds. It never sends the object-root path, credentials, source content, route authority or publication authority. The daemon reads its own object root, which it was bound to at startup.
+Daemon mode requires an HTTP server at a canonical numeric loopback address. The command first reads and verifies both requested revisions in the local object root that you supply. It then sends only the scope, the repository labels, the full revisions, and a request time in milliseconds. It does not send the object-root path, credentials, source content, route authority or publication authority. The daemon reads its own object root, which it was bound to at startup.
 
 A successful submission prints the canonical run receipt. The receipt does not claim that the rule passed.
 
-The local plan for the run has exactly four tasks: two source-acquisition tasks, one change task and one deterministic-analysis task. A run that succeeded means that those handlers finished and the daemon wrote the durable state. The diagnostic check state reports the outcome separately, as `passed`, `failed`, `incomplete` or `not_applicable`. Version 6 diagnostic observations are exact deterministic rule matches. They are not independently verified findings.
+The local plan for the run has exactly four tasks: two source-acquisition tasks, one change task and one deterministic-analysis task. A run that succeeded means that those handlers finished and the daemon wrote the durable state. The diagnostic check state reports the outcome separately, as `passed`, `failed`, `incomplete` or `not_applicable`. Version 6 diagnostic observations are rule matches.
 
 To read the same stored result without running the source analysis again:
 

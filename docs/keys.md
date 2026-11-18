@@ -44,9 +44,9 @@ The prompt behaves as follows.
   appears only once echo is off. If echo cannot be turned off, no key is read.
   Only Linux has been tested; the macOS and Windows code is untested (see
   [platforms](platforms.md)).
-- Without a terminal, the wizard never asks. With `--no-input`, or when standard
-  input is a pipe or a file, it does not prompt for a key. The setup check says how to add
-  one, as before.
+- Without a terminal, the wizard does not ask. With `--no-input`, or when
+  standard input is a pipe or a file, it does not prompt for a key. The setup
+  check says how to add one.
 - The key is checked where the provider allows it. For OpenRouter, the wizard
   checks the key with one
   `GET https://openrouter.ai/api/v1/key`, the same free read that
@@ -142,8 +142,3 @@ Open Trestle never shows the key, never writes it to scrollback, never passes it
 as a command argument, and never writes it to the setup folder, `NEXT-STEPS.txt`,
 the usage ledger, a review result, or any log. It sends the key to the provider
 only as the `Authorization` bearer credential, and never in a model request body.
-
-A test saves a canary key, runs a full review in JSON, text and SARIF output
-through the production session, and checks that the key is absent from every
-request body, the review's output, the setup folder and the usage ledger. The
-secret scanner and the prompt-injection boundary are unchanged.

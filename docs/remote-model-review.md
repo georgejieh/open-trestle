@@ -3,10 +3,9 @@
 This guide shows how to run `trestle local-git model-review` against remote
 models from a provider such as OpenRouter, Ollama Cloud or OpenCode Go. It takes
 a few commands. `trestle setup bootstrap init --provider ...` writes the
-protected route inventory, the runtime policy and the privacy witnesses for you.
-It also derives every identity that those files need, such as the identities of
-records, evidence, accounts, credential references, the inventory and the
-policy. You never write `routes.json` by hand or compute a hash.
+protected route inventory, the runtime policy and the privacy witnesses, and
+derives every identity that those files need. You do not write `routes.json` by
+hand or compute a hash.
 
 The review itself is the existing foreground direct path,
 `local-git model-review --egress policy-approved`. It sends selected source
@@ -14,9 +13,9 @@ code to the provider you configure, after Open Trestle has sanitized and
 scanned it. Bootstrap makes no model call. It makes only these network
 requests:
 
-- For `ollama-signin`, one bounded `GET /api/tags` to your local Ollama daemon.
-- For OpenRouter, one bounded `GET` each of OpenRouter's public model list and
-  its zero-data-retention endpoint list, both without a credential.
+- For `ollama-signin`, one `GET /api/tags` to your local Ollama daemon.
+- For OpenRouter, one `GET` each of OpenRouter's public model list and its
+  zero-data-retention endpoint list, both without a credential.
 
 This journey has no daemon, no resume and no publication.
 
@@ -31,17 +30,14 @@ Supported providers:
 | `ollama-signin` | `http://127.0.0.1:11434/v1` (your local Ollama, relaying to Ollama Cloud) | `private_remote` | `ollama_signin_chat_v1`, no credential |
 
 Both roles (generation and verification) use the same provider with two
-different models. The verification mode is `distinct_model`, which means only
-that the two models differ. It does not claim that they come from different
-training families. Offline tests exercise the configuration and the dispatch
-path with synthetic transports only. They do not qualify any live account,
-model or service.
+different models. The verification mode is `distinct_model`, which means that
+the two models differ.
 
 ## Prerequisite 1: a scanner-bound binary and installed scanner
 
 Open Trestle refuses to send source to a remote provider unless every request
 passes two Betterleaks scans in the sandboxed scanner. A plain `go build` has no
-injected scanner digests, so it fails closed. The scanner and the packaged
+injected scanner digests, so it refuses to send. The scanner and the packaged
 install exist only for Linux amd64 today. Remote review is refused on other
 systems and on a development build. macOS and Windows are planned for the next
 release (see [platforms](platforms.md) and the [roadmap](roadmap.md#next-release)).
@@ -85,7 +81,7 @@ export OPEN_TRESTLE_PROVIDER_OPENROUTER="$(your-secret-tool read openrouter-key)
 `check` reports `credential_environment_present` as pending until it finds a key
 for each named variable. It looks in the environment first, and then in the
 credential store that `trestle init` and `trestle keys set` write (see
-[API keys](keys.md)). It never prints or stores the value. Use
+[API keys](keys.md)). It does not print or store the value. Use
 `--verification-credential-environment` only if the verifier uses a different
 key.
 
@@ -117,7 +113,7 @@ Other providers also need `--context-tokens N --output-tokens N
 --input-micro-usd-per-million-tokens N --output-micro-usd-per-million-tokens N`
 and their own declarations below.
 
-When `check` returns `ready` (exit 0), run its `review_command` array exactly as
+When `check` returns `ready` (exit 0), run its `review_command` array as
 printed. The command has this form:
 
 `trestle local-git model-review --checkout ... --egress policy-approved --timeout 10m --format text --specialists auto`
@@ -126,8 +122,7 @@ It carries the base and head commit digests from the moment of setup, and this
 directory's `routes.json` and `policy.json`. `--specialists auto` is present
 unless you passed `--specialists none` to `init`.
 
-Those commits describe only the change that existed at setup. `check` no longer
-needs them to exist. Inside the repository, `trestle review` reviews the latest
+Those commits describe the change that existed at setup. Inside the repository, `trestle review` reviews the latest
 change with the same configuration and fresh commits (see
 [getting started](getting-started.md#running-it-again)).
 
@@ -144,9 +139,7 @@ The exit codes of `check` are 0 for `ready`, 3 for `pending` and 4 for
 `refused`. Usage errors exit 2. Every refusal prints a reason on stderr and in
 `messages`. An input that fails validation writes nothing. If you repeat `init`
 with identical inputs, it accepts the existing files, which are byte-identical.
-If the inputs differ, it refuses, so use a new directory. `check` reports a
-prerequisite that is pending or refused up front, so you never discover it in
-the middle of a review.
+If the inputs differ, it refuses, so use a new directory.
 
 `check` reports these checks:
 
@@ -167,10 +160,10 @@ the middle of a review.
 
 For OpenRouter, the result also carries `data_retention`, which is
 `required_per_request` or `not_required_by_open_trestle`. It states what each
-request requires, never what a provider retains.
+request requires, not what a provider retains.
 
-`ready` means that these local prerequisites hold. It is not a qualification of
-the provider, not clearance of the review and not proof of any declared fact.
+`ready` means that these local prerequisites hold. It does not check the provider
+or your declarations.
 
 ## Common declarations
 
@@ -183,10 +176,9 @@ both models:
 - Cost no more than the stated per-million-token prices.
 - Are currently available.
 
-Without the flag, `init` refuses instead of inventing those facts. For
-OpenRouter, those facts come from its API, so the flag is your consent that each
-review sends the selected source to OpenRouter, and your statement that prompt
-logging is off for the key.
+Without the flag, `init` refuses. For OpenRouter, those facts come from its API,
+so the flag is your consent that each review sends the selected source to
+OpenRouter, and your statement that prompt logging is off for the key.
 
 Each review reserves the output allowance plus the actual size of the request
 against `--max-cost-micro-usd`. The output allowance is 4096 tokens unless
@@ -208,26 +200,24 @@ profiles are fixed, so `--endpoint` is refused for them.
 
 Bootstrap reads `https://openrouter.ai/api/v1/endpoints/zdr` and
 `https://openrouter.ai/api/v1/models` once each, without a key. It records the
-exact SHA-256 and the time of each response.
+SHA-256 and the time of each response.
 
 For each model, bootstrap pins the zero-data-retention (ZDR) endpoints that
-allow the review output allowance. That allowance is 16384 tokens unless
-`--max-output-tokens` sets it or `--output-tokens` caps it. Bootstrap leaves out
-the endpoints that allow less, and it records them. If no endpoint of a model
-allows the allowance, that model keeps all its usable endpoints, and the
-allowance becomes the smallest output that they allow.
+allow the review output allowance, which is 16384 tokens unless
+`--max-output-tokens` sets it or `--output-tokens` caps it. It records the
+endpoints it leaves out. The pinning rules are in
+[OpenRouter zero data retention](openrouter-zdr-profile.md#what-setup-reads).
 
-From the pinned endpoints alone, bootstrap fills in their routing slugs, the
+From the pinned endpoints, bootstrap fills in their routing slugs, the
 smallest context and output limit, the highest input and output price, and the
 policy's `max_output_tokens`. Any of these flags overrides the detected value:
 `--context-tokens`, `--output-tokens`, `--max-output-tokens`,
 `--input-micro-usd-per-million-tokens`, `--output-micro-usd-per-million-tokens`
 and `--*-provider-slug SLUG[,SLUG]`. Bootstrap records these facts as OpenRouter's
-API reports them. It does not verify them.
+API reports them.
 
 Without ZDR (`--provider openrouter`), bootstrap pins nothing. The allowance is
-16384 tokens, within the smaller output that the two models list. See
-[what setup reads](openrouter-zdr-profile.md#what-setup-reads).
+16384 tokens, within the smaller output that the two models list.
 
 The two OpenRouter providers differ as follows:
 
@@ -236,20 +226,16 @@ The two OpenRouter providers differ as follows:
   and says so. If it cannot read the API, pass the four flags for capacity and
   price. The route then requires ZDR without pinning endpoints.
 - `--provider openrouter` does not require ZDR. It is a generic `private_remote`
-  route that sends no provider controls, so a model provider may keep prompts
-  under its own terms. Your account or key settings may still enforce ZDR.
-  `bootstrap check` and every review result say this.
+  route that sends no provider controls. `bootstrap check` and every review
+  result say so.
 
-The API does not report whether your account or key enforces ZDR, and setup does
-not claim either way. If OpenRouter refuses a request with HTTP 404, Open
-Trestle records `provider_no_allowed_endpoint` with a hint that names the ZDR
-setting.
+If OpenRouter refuses a request with HTTP 404, Open Trestle records
+`provider_no_allowed_endpoint` with a hint that names the ZDR setting.
 
-These flags from the earlier reviewed setup are refused because they are no
-longer used: `--*-upstream-evidence`, `--*-slug-evidence`, `--broker-evidence`,
-`--account-evidence`, the four times and `--declare-openrouter-zdr-account`.
-For details, including what the witness records, see
-[OpenRouter zero data retention](openrouter-zdr-profile.md).
+`--*-upstream-evidence`, `--*-slug-evidence`, `--broker-evidence`,
+`--account-evidence`, the four times and `--declare-openrouter-zdr-account` are
+no longer used, and `init` refuses them. For how requests are pinned and what
+the witness records, see [OpenRouter zero data retention](openrouter-zdr-profile.md).
 
 ## OpenCode Go
 
@@ -260,19 +246,18 @@ that both models document zero-day retention without training. Supply
 `--broker-evidence` and `--account-evidence`, plus the same four times. See
 [the OpenCode Go profile](opencode-go-profile.md).
 
-This bootstrap uses the brokered Go route for both roles on the direct path. The
-profile document describes how the setup checker supports a separate private
-direct verifier. This bootstrap does not run that setup checker and does not
-configure a daemon.
+This bootstrap uses the brokered Go route for both roles on the direct path. It
+does not configure a daemon. The profile document describes a separate private
+direct verifier, which this bootstrap does not set up.
 
 ## Ollama Cloud
 
 Ollama Cloud uses the generic `private_remote` zone with
 `openai_chat_completions` at `https://ollama.com/v1`, and it authenticates with a
 bearer token. There is no named Ollama request profile and no privacy witness.
-The route evidence manifest records only your own declaration, so Open Trestle
-makes no claim about retention or zero data retention. Review Ollama's current
-privacy terms and your plan before you send private source.
+The route evidence manifest records only your own declaration. Open Trestle
+makes no claim about Ollama's retention, so review its current privacy terms
+and your plan before you send private source.
 
 ```sh
 export OPEN_TRESTLE_PROVIDER_OLLAMA_CLOUD="$(your-secret-tool read ollama-key)"
@@ -302,7 +287,7 @@ answers HTTP 402. For a retired model it answers HTTP 410. The review then fails
 as `policy (task candidates): provider_payment_required` or
 `provider_model_retired`, with a fixed hint (see
 [provider refusals](local-model-review.md#provider-refusals)). Open Trestle
-never shows or stores Ollama's own message.
+does not show or store Ollama's own message.
 
 `--endpoint` may replace the base with another remote HTTPS Ollama Cloud base.
 Open Trestle refuses loopback and private endpoints. For models that run on
@@ -317,38 +302,37 @@ forwarding each request to `https://ollama.com` under your Ollama account. These
 are models whose tag is `cloud` or ends in `-cloud`, such as
 `gpt-oss:120b-cloud`. Open Trestle talks only to the loopback daemon, and it
 stores and sends no API key. But **your repository source leaves this machine**:
-the daemon sends it to Ollama Cloud. This is remote egress, and Open Trestle
-treats it exactly like the other remote routes:
+the daemon sends it to Ollama Cloud. Open Trestle treats this like the other
+remote routes:
 
-- The route's zone is `private_remote`, never `local`. The sanitizer and both
+- The route's zone is `private_remote`, not `local`. The sanitizer and both
   secret scans run before every request, the scanner prerequisite applies, and
   `--egress local-only` refuses the route.
 - The connection uses the closed request profile `ollama_signin_chat_v1` in
   runtime policy schema version 7. It is the only profile under which a
   loopback endpoint may serve a zone that is not local. It requires all of these:
-  Chat Completions, `credential_mode` `none`, an endpoint of exactly
+  Chat Completions, `credential_mode` `none`, an endpoint of
   `http://127.0.0.1:PORT/v1`, the provider ID `ollama-signin`, and model IDs
   with the Ollama cloud suffix. Every other profile, and a policy with no
   profile, still refuses a loopback endpoint in a remote zone.
 - `init` reads the daemon's model list once (`GET /api/tags`, no source, no
   key). It refuses unless both models are listed with `remote_host`
   `https://ollama.com`. `check` repeats that read and sends no model request, so
-  it cannot see a missing credit or a retired model. A model that is listed can
-  still be retired.
+  it cannot see a missing credit or a retired model.
 - Budget, usage and timeout handling are the same as for `ollama-cloud`. The
   daemon relays Ollama Cloud's refusals. HTTP 402 (no usage credit) and 410
   (retired model) fail a review as `provider_payment_required` and
   `provider_model_retired`. HTTP 401 (not signed in) fails it as
   `provider_authentication_failed`. Each comes with a fixed hint, and Open
-  Trestle never shows Ollama's own message (see
+  Trestle does not show Ollama's own message (see
   [provider refusals](local-model-review.md#provider-refusals)).
 
 `--declare-ollama-cloud-signin` is your explicit consent. It says that the daemon
 is signed in to an Ollama account you control, and that each review sends the
 selected source from that daemon to Ollama Cloud under that account, after secret
-scanning. Without it, `init` refuses. Open Trestle records no claim about
-retention or zero data retention for Ollama Cloud. Read Ollama's current terms
-(https://docs.ollama.com/cloud). Setup does not prove that the daemon is signed
+scanning. Without it, `init` refuses. Open Trestle makes no claim about
+Ollama Cloud retention; read Ollama's current terms
+(https://docs.ollama.com/cloud). Setup does not check that the daemon is signed
 in; see the wizard's optional sign-in check below.
 
 ```sh
@@ -404,19 +388,15 @@ The wizard reacts to the daemon's answer as follows:
   choose a model the provider lists as available and re-run setup") and stops
   before it writes anything.
 
-The wizard never reads or shows the body of the answer.
+The wizard does not read or show the body of the answer.
 
 ## Limits
 
 - Bootstrap records your declarations and, for OpenRouter, what OpenRouter's API
-  reported at setup time. It does not verify account settings, provider conduct,
-  model capability, price or availability.
+  reported at setup time. It does not verify them.
 - The direct review runs in the foreground and leaves nothing behind. It has no
-  resume, no daemon state and no publication. Investigation and retained memory
-  stay local.
-- The checkout source uses the existing bounded Git reader with the
-  `loose-and-pack-index-v1` profile. Open Trestle does not review content that
-  is only in the dirty worktree or the index.
-- Live inference, credentials, sending private source to a provider and the
-  resulting charges are your decision. Nothing here provisions credentials or
-  signs you in to Ollama.
+  resume, no daemon state and no publication.
+- The checkout source uses the Git reader with the `loose-and-pack-index-v1`
+  profile. Open Trestle does not review content that is only in the dirty
+  worktree or the index.
+- Nothing here provisions credentials or signs you in to Ollama.
