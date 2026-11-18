@@ -1,4 +1,4 @@
-//go:build unix && !darwin
+//go:build unix
 
 package scanhelper
 
@@ -12,10 +12,10 @@ import (
 var errCacheDirectory = errors.New("working directory is not a private cache directory")
 
 // PrivateCacheDirectory returns the working directory after checking that it
-// is a directory, not a symbolic link, owned by the effective user and
-// without any group or other permission bit. wazero loads native code from
-// the cache, so a directory anyone else can write would let them run code
-// in the helper.
+// is a directory, not a symbolic link, owned by the effective user, without
+// any group or other permission bit and, on macOS, without an ACL entry.
+// wazero loads native code from the cache, so a directory anyone else can
+// write would let them run code in the helper.
 func PrivateCacheDirectory() (string, error) {
 	directory, err := os.Getwd()
 	if err != nil || !filepath.IsAbs(directory) {
@@ -27,6 +27,9 @@ func PrivateCacheDirectory() (string, error) {
 	}
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	if !ok || uint64(stat.Uid) != uint64(os.Geteuid()) {
+		return "", errCacheDirectory
+	}
+	if listed, err := accessControlListed(directory); err != nil || listed {
 		return "", errCacheDirectory
 	}
 	return directory, nil
