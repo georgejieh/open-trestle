@@ -100,13 +100,15 @@ type resultWire struct {
 	// reviewed as code and the flags never suppress review. Omitted when zero.
 	AgentConfigurationSources int `json:"agent_configuration_sources,omitempty"`
 	InstructionLikeSources    int `json:"instruction_like_sources,omitempty"`
-	// Rank and PreExisting are the deterministic judgement of a completed
-	// version 6 run (see judgement.go): every distinct verified finding in
-	// rank order with the duplicates merged into it, and the diagnostic
-	// findings located only on lines the change did not touch. Both are
-	// omitted when there are no verified findings.
-	Rank        []rankWire `json:"rank,omitempty"`
-	PreExisting []string   `json:"pre_existing,omitempty"`
+	// Rank, PreExisting and UnprovenOrigin are the deterministic judgement of
+	// a completed version 6 run (see judgement.go): every distinct verified
+	// finding in rank order with the duplicates merged into it, the
+	// diagnostic findings on unchanged lines whose pre-existing origin the
+	// run proved, and those on unchanged lines whose origin it could not
+	// prove. All are omitted when empty.
+	Rank           []rankWire `json:"rank,omitempty"`
+	PreExisting    []string   `json:"pre_existing,omitempty"`
+	UnprovenOrigin []string   `json:"unproven_origin,omitempty"`
 	// Anchors places verified findings inside the changed declarations of the
 	// run's semantic-impact profile, in diagnostic order; the merge rule reads
 	// them (see anchorWire). Omitted when no finding is anchored.
@@ -798,11 +800,13 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 		}
 		w.Status, w.CI = localReadinessDisposition(uint32(set.VerifiedCount()), set.SourceOmittedCount(), uint32(set.InconclusiveCount()), uint32(set.CandidateCount()))
 		// A direct run anchors findings to the changed declarations of its
-		// semantic-impact profile; an investigation run has no walkthrough
-		// and anchors none.
+		// semantic-impact profile, and the profile decides whether a finding
+		// on unchanged lines can be pre-existing; an investigation run has no
+		// walkthrough and anchors none.
 		var declarations []semanticimpact.Declaration
 		if s.investigation == nil && walk.analysis != nil {
 			declarations = walk.analysis.SemanticImpact().Declarations()
+			lines = lines.withImpact(walk.analysis.SemanticImpact())
 		}
 		if result, err = judgeResult(result, lines, declarations); err != nil {
 			return Result{}, err

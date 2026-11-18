@@ -37,6 +37,9 @@ type FindingContributor struct {
 	EndLine     uint32
 	Side        diagnostics.LineSide
 	PreExisting bool
+	// UnprovenOrigin marks a contributor on unchanged lines that the change
+	// may still have caused (ReportFinding.UnprovenOrigin).
+	UnprovenOrigin bool
 	// Title and Claim are the contributor's own verified statement, so a
 	// merged paraphrase stays readable ("also reported as").
 	Title, Claim string
@@ -144,9 +147,9 @@ func (m MergedFinding) OriginLabels() []string {
 	return out
 }
 
-// PreExisting reports a defect every contributor located only on unchanged
-// lines that the change did not touch. One contributor on a changed line makes
-// the defect part of the change.
+// PreExisting reports a defect whose every contributor is pre-existing. One
+// contributor on a changed line, or of unproven origin, makes the defect
+// count as part of the change.
 func (m MergedFinding) PreExisting() bool {
 	for _, contributor := range m.Contributors {
 		if !contributor.PreExisting {
@@ -154,6 +157,21 @@ func (m MergedFinding) PreExisting() bool {
 		}
 	}
 	return len(m.Contributors) > 0
+}
+
+// UnprovenOrigin reports a defect located only on unchanged lines, at least
+// one contributor of which the change may have caused: no contributor is on
+// lines the change touched, and not every contributor is pre-existing. It
+// blocks like an introduced defect.
+func (m MergedFinding) UnprovenOrigin() bool {
+	unproven := false
+	for _, contributor := range m.Contributors {
+		if !contributor.PreExisting && !contributor.UnprovenOrigin {
+			return false
+		}
+		unproven = unproven || contributor.UnprovenOrigin
+	}
+	return unproven
 }
 
 // ShownByDefault reports a confirmed high, critical or medium finding: text
@@ -225,7 +243,7 @@ func deduplicateFindings(origins []FindingOrigin, locationOnly bool) []MergedFin
 		sort.SliceStable(ordered, func(i, j int) bool { return locationLess(ordered[i], ordered[j]) })
 		for _, finding := range ordered {
 			tokens := defectStatementTokens(finding.Title, finding.Claim)
-			contributor := FindingContributor{Origin: origin.Label, Identity: finding.Identity, Severity: finding.Severity, StartLine: finding.StartLine, EndLine: finding.EndLine, Side: finding.Side, PreExisting: finding.PreExisting, Title: finding.Title, Claim: finding.Claim, order: order}
+			contributor := FindingContributor{Origin: origin.Label, Identity: finding.Identity, Severity: finding.Severity, StartLine: finding.StartLine, EndLine: finding.EndLine, Side: finding.Side, PreExisting: finding.PreExisting, UnprovenOrigin: finding.UnprovenOrigin, Title: finding.Title, Claim: finding.Claim, order: order}
 			order++
 			var group *MergedFinding
 			for _, candidate := range groups {

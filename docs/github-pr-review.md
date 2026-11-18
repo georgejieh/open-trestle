@@ -45,7 +45,7 @@ The step-by-step workflow, with its placeholders and caveats, is [`examples/gith
 `--exit-code-policy findings` exits 0 when the review ran to completion and no verified high or critical finding exists. Under this policy, the following do not fail the job:
 
 - Medium and low findings.
-- Findings on unchanged lines (marked `trestlePreExisting` in the SARIF).
+- Pre-existing findings: on unchanged lines the change provably cannot reach (marked `trestlePreExisting` in the SARIF). A high or critical finding on unchanged lines that the change may affect (marked `trestleUnprovenOrigin`) still fails the job.
 - Coverage gaps.
 
 They still appear in the SARIF and in the summary, listed in rank order.

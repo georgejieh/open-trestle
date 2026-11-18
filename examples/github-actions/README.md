@@ -63,11 +63,12 @@ Make these five changes before you use the workflow.
   (`refs/pull/<number>/head`), because `upload-sarif` otherwise uses `github.sha`,
   the temporary merge commit. Those inputs come from the `upload-sarif`
   documentation and are unverified live.
-- It lists findings in rank order. A finding on lines that the change did not
-  touch carries `trestlePreExisting` in the SARIF properties. Under
-  `--exit-code-policy findings`, that finding and any medium or low finding do not
-  fail the job. The job summary counts every result and does not mark
-  pre-existing ones.
+- It lists findings in rank order. A finding on unchanged lines that the change
+  provably cannot reach carries `trestlePreExisting` in the SARIF properties.
+  Under `--exit-code-policy findings`, that finding and any medium or low finding
+  do not fail the job. A finding on unchanged lines that the change may affect
+  carries `trestleUnprovenOrigin` and fails the job like a new one. The job
+  summary counts every result and does not mark either class.
 - It posts inline comments and the job summary from whatever SARIF was produced,
   and then fails the job from the recorded status. The job exits 0 only when the
   review completed with no verified high or critical finding. Refusals,

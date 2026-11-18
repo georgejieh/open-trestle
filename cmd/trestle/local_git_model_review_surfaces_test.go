@@ -131,13 +131,23 @@ func TestModelReviewListsLowSeverityWhenNothingOutranksIt(t *testing.T) {
 	}
 }
 
-// A pre-existing finding gets its own text section after the confirmed ones.
-func TestModelReviewTextListsPreExistingSection(t *testing.T) {
+// A finding on an unchanged caller of the change is listed with the confirmed
+// findings and says that its origin is unproven, in text, Markdown and SARIF.
+func TestModelReviewOutputMarksUnprovenOrigin(t *testing.T) {
 	f := oldFunctionFixture(t, "pre_existing")
-	text := runModelReviewOutput(t, f, []string{"--format", "text"}, 3)
-	requireInOrder(t, text, "status: findings\n", "ci: inconclusive\n", "walkthrough:\n", "pre-existing findings (on unchanged lines; they never block CI): 1\n", "finding: error Consume always passes a literal zero\nrank: 1\nsource: caller.go:2-2\n")
-	if strings.Contains(text, "confirmed findings (ranked)") {
-		t.Fatalf("a pre-existing finding was listed as introduced:\n%s", text)
+	text := runModelReviewOutput(t, f, []string{"--format", "text"}, 4)
+	requireInOrder(t, text, "status: findings\n", "ci: blocked\n", "walkthrough:\n", "confirmed findings (ranked): 1\n", "finding: error Consume always passes a literal zero\nrank: 1\nsource: caller.go:2-2\n", "origin: unproven (on unchanged lines that the change may affect, so it blocks like a new finding)\n")
+	if strings.Contains(text, "pre-existing findings") {
+		t.Fatalf("a finding of unproven origin was listed as pre-existing:\n%s", text)
+	}
+	markdown := runModelReviewOutput(t, f, []string{"--format", "markdown"}, 4)
+	requireInOrder(t, markdown, "### Confirmed findings\n\n1. **High or critical: Consume always passes a literal zero**", "   Origin: unproven (on unchanged lines that the change may affect, so it blocks like a new finding)\n")
+	if strings.Contains(markdown, "### Pre-existing findings") {
+		t.Fatalf("a finding of unproven origin was listed as pre-existing:\n%s", markdown)
+	}
+	sarif := runModelReviewOutput(t, f, []string{"--format", "sarif"}, 4)
+	if !strings.Contains(sarif, `"trestleUnprovenOrigin":true`) || strings.Contains(sarif, `"trestlePreExisting"`) {
+		t.Fatalf("SARIF origin properties:\n%s", sarif)
 	}
 }
 

@@ -152,7 +152,7 @@ For a run that the daemon accepted separately, `runs status --format json|sarif`
 | `locations[0].physicalLocation` | repository-relative path and start/end line |
 | `fingerprints` | `openTrestleVerifiedFindingId/v1`, the run-specific finding identity |
 | `partialFingerprints` | `openTrestleFindingFingerprint/v1` (bound to the reviewed snapshot) and `openTrestleContentHash/v1` (path, category, title and claim only) |
-| `properties` | `trestleCategory`, `trestleSeverity` (`error`, `warning` or `information`; the diagnostic severity, so high and critical are not distinguished), `trestleVerificationIndependence`, evidence IDs, `trestleRank` (the finding's rank) and `trestlePreExisting` (present and true for a [pre-existing](#pre-existing-findings) finding) |
+| `properties` | `trestleCategory`, `trestleSeverity` (`error`, `warning` or `information`; the diagnostic severity, so high and critical are not distinguished), `trestleVerificationIndependence`, evidence IDs, `trestleRank` (the finding's rank), `trestlePreExisting` (present and true for a [pre-existing](#pre-existing-findings) finding) and `trestleUnprovenOrigin` (present and true for a finding of [unproven origin](#pre-existing-findings)) |
 | `properties.trestleFixGuidance` | the generator's fix text, with `trestleFixAuthority: unverified_model_guidance` |
 | run `properties` | `trestleModelReviewStatus`, `trestleCiDisposition`, `trestleRunStatus`, `trestleFailure`, sorted `trestleLimitations`, candidate/verified/rejected/inconclusive counts, source coverage and omissions, and `trestleComprehensiveClearance: false` |
 | run `properties.trestleStyleAdvice` | the [style advice](#style-recommendations): `recommendations` (`language`, `changedFiles`, `recommendation`), `withheld`, `configurationUnread` and `unavailable`, absent when there is none; each advice line is also a `note` in `invocations[0].toolExecutionNotifications`, never a result |
@@ -410,7 +410,7 @@ The output is the `open-trestle/local-git-model-review-set` schema version 1 (JS
 - `selection`: the mode, the status, a features summary, the plan identities, the selected and dropped profiles with reasons, and the inactive profiles. The features summary has the identity, the changed file count, the languages, the file classes, the security signals, the semantic gap count, the public API changes and the reference fan-out. It also has `style_configuration_unread` when the style configuration files of the base could not be used for routing.
 - `members`: one entry per member (`general`, then the profile IDs). Each entry has the status, the CI disposition, the run status, and the failure. When the run did not succeed, it also has `failure_task` and `failure_detail`. It has `context_shortfall` only with `failure_detail` `route_context_insufficient`. It has the run, scope, plan and context identities, the route record identities, the independence, the diagnostic set identity, the usage and cost, the verification counts and the limitations. It also has the [`token_usage`](#token-usage) of the member's result, which is absent when the result reports none, as for a member that never ran.
 - `walkthrough`: the [walkthrough](#walkthrough) of the general member, once for the whole set.
-- `findings`: the merged verified findings in [rank order](#rank). They are merged with the shared [duplicate rule](#duplicates), where the members are the origins. Each finding has its `rank`, `pre_existing` (when every contributor is pre-existing), the location of the representative, and every contributor with its own finding identity, severity and range. Only members whose run succeeded contribute. The comparison of wording can still keep apart findings that a person would merge (`deduplication_is_heuristic`).
+- `findings`: the merged verified findings in [rank order](#rank). They are merged with the shared [duplicate rule](#duplicates), where the members are the origins. Each finding has its `rank`, `pre_existing` (when every contributor is pre-existing), `unproven_origin` (when every contributor is on unchanged lines and at least one is of [unproven origin](#pre-existing-findings)), the location of the representative, and every contributor with its own finding identity, severity and range. Only members whose run succeeded contribute. The comparison of wording can still keep apart findings that a person would merge (`deduplication_is_heuristic`).
 - `summary`, `bounds`, `limitations` and `comprehensive_clearance: false`.
 - `style_recommendations`, `style_withheld`, `style_configuration_unread` and `style_advice_unavailable`: the [style advice](#style-recommendations) of the general review. They appear once for the set, not for each member. The fields are absent when the general review has no advice. Text output adds the same `style:` lines before the clearance line, and the SARIF of the set adds the same run property and notes as a single review. The advice does not change the status, the CI disposition or the exit code of the set.
 
@@ -588,14 +588,15 @@ Investigation mode reviews such a change the same way. Its first turn holds the 
 
 ## Ranked findings and the walkthrough
 
-The command decides which findings survive, after verification. No model ranks, merges or classifies findings. The result of a completed direct run (schema version 6, in place) adds four members:
+The command decides which findings survive, after verification. No model ranks, merges or classifies findings. The result of a completed direct run (schema version 6, in place) adds five members:
 
 - `rank`: every distinct verified finding in rank order, as `{"rank": N, "finding_identity": ID, "merged_finding_identities": [ID, ...]}`. The identities are diagnostic finding identities, and the merged list (absent when empty) names the duplicates that were merged into the finding. Every diagnostic finding appears exactly once. The JSON result still carries every finding in `diagnostics`.
 - `pre_existing`: the diagnostic finding identities that the command classified as [pre-existing](#pre-existing-findings), in diagnostic order. It is absent when there are none.
+- `unproven_origin`: the diagnostic finding identities on unchanged lines whose origin the command could not prove (see [pre-existing findings](#pre-existing-findings)), in diagnostic order. It is absent when there are none. No finding is in both lists.
 - `declaration_anchors`: an entry for each finding that is held by a changed Go declaration of the semantic-impact profile of the run, in diagnostic order, as `{"finding_identity": ID, "start_line": N, "end_line": M}`. The lines are those of the declaration on the finding's side (see [duplicates](#duplicates)). The member is absent when no finding is anchored.
 - `walkthrough`: the [walkthrough](#walkthrough), present once the change model was recorded.
 
-Results without verified findings carry no `rank`, `pre_existing` or `declaration_anchors`.
+Results without verified findings carry no `rank`, `pre_existing`, `unproven_origin` or `declaration_anchors`.
 
 ### Duplicates
 
@@ -637,16 +638,25 @@ Text and Markdown list the confirmed high, critical and medium findings, and the
 
 ### Pre-existing findings
 
-A verified finding is pre-existing when it is anchored only on unchanged context lines and cites no evidence of the change. Both of these must hold:
+A verified finding is on unchanged lines when both of these hold:
 
 - The finding is on head lines, either in an unchanged file (for example a direct reference, or a caller of a changed function) or in a modified file whose lines are known. It overlaps no changed line and no deletion window. A deletion window is the 8 unchanged head lines on each side of a block of removed lines, taken from a fresh bounded diff of the recorded base and head files.
 - None of its cited evidence is a changed hunk (including the context around a deletion) or removed lines.
 
-A finding on removed base lines, in an added file, or in a file that the diff cannot represent is not pre-existing, so an uncertain finding keeps blocking. A file that the diff cannot represent has binary or non-UTF-8 content, or goes past the bounds of the diff. Only a direct run classifies findings, and an investigation run classifies none.
+Unchanged lines do not prove that the change did not cause the defect: a changed function can break an unchanged caller. So a finding on unchanged lines is pre-existing only when all of these also hold:
+
+- It is in an unchanged Go file.
+- The semantic-impact profile of the run has no coverage gap: every changed file was analysed as Go and every head Go file was read.
+- No changed declaration is a method or an `init` function, which code can reach without naming them.
+- No code outside the changed declarations names a changed declaration. References are matched by name, so this also rules out callers that reach the change through unchanged code.
+
+Any other finding on unchanged lines has an unproven origin. It is listed in `unproven_origin`, it stays with the confirmed findings with an `origin: unproven` line in text and Markdown (`trestleUnprovenOrigin` in SARIF), and it blocks CI like an introduced finding. A caller of a changed function, the usual finding on unchanged lines, is of unproven origin.
+
+A finding on removed base lines, in an added file, or in a file that the diff cannot represent is introduced, so an uncertain finding keeps blocking. A file that the diff cannot represent has binary or non-UTF-8 content, or goes past the bounds of the diff. Only a direct run classifies findings, and an investigation run classifies none.
 
 Pre-existing findings get their own section in the text and Markdown output, and they never block CI (see [advisory results](#advisory-results)).
 
-The command derives the class from the change model and the context of the run itself, which a result does not carry. `localreview.ParseCompletedResult` therefore treats a recorded `pre_existing` list as advisory. It checks that the list names distinct diagnostic findings in order, and it recomputes `rank` from the findings of the result. The list cannot relax the `ci_disposition`, and it refuses a result whose disposition the class relaxed. No exit policy applies the list of a parsed result.
+The command derives the class from the change model, the context and the semantic-impact profile of the run itself, which a result does not carry. `localreview.ParseCompletedResult` therefore treats a recorded `pre_existing` list as advisory. It checks that the list names distinct diagnostic findings in order, and it recomputes `rank` from the findings of the result. The list cannot relax the `ci_disposition`, and it refuses a result whose disposition the class relaxed. No exit policy applies the list of a parsed result. The recorded `unproven_origin` list is checked the same way and is shown as recorded, since it never relaxes anything.
 
 The model-result evaluation import reads a result with `localreview.ObserveCompletedResult` instead. It accepts the same results, and also a version 6 result whose disposition its recorded `pre_existing` list relaxed: `status` `findings`, `ci_disposition` `inconclusive`, and every medium, high or critical finding listed as pre-existing. It returns only the metadata that evaluation records, so the relaxation is observed and never trusted for a gate.
 
@@ -665,7 +675,7 @@ SARIF keeps the level of each result (`note` for low), and `trestleCiDisposition
 
 `strict` still fails the step on every finding of any severity. It exits 0 only when there were no candidates at all.
 
-A review set follows the same rule over its merged findings. A merged finding is pre-existing only when every contributor is, and it has the severity of its representative. A set whose merged findings are all low severity or pre-existing has the status `findings` and the disposition `inconclusive`. An incomplete set never demotes an introduced high or critical finding.
+A review set follows the same rule over its merged findings. A merged finding is pre-existing only when every contributor is, and it has the severity of its representative. It is of unproven origin when every contributor is on unchanged lines and at least one is of unproven origin. A set whose merged findings are all low severity or pre-existing has the status `findings` and the disposition `inconclusive`. An incomplete set never demotes an introduced high or critical finding.
 
 `localreview.ParseCompletedResult` derives the disposition again from the severities that a result records, and it refuses any other disposition. A version 6 result whose verified findings are all low severity must be `inconclusive`. A version 6 result with a medium, high or critical finding must be `blocked`, whatever its `pre_existing` list says, because that class cannot be derived again. Results of versions 1, 4 and 5 must carry the readiness disposition (`blocked` when a finding was verified). A relaxation that a result asserts about itself is not trusted: only `localreview.ObserveCompletedResult` reads one, as described under [pre-existing findings](#pre-existing-findings).
 

@@ -314,6 +314,10 @@ func FindingSections(ranked []MergedFinding, options RenderOptions) (confirmed, 
 	return confirmed, preExisting, hidden
 }
 
+// unprovenOriginNote explains a finding of unproven origin in text and
+// Markdown output.
+const unprovenOriginNote = "unproven (on unchanged lines that the change may affect, so it blocks like a new finding)"
+
 // FindingText renders one ranked finding as its text block. contributors,
 // when not nil, adds the review set's "confirmed by" line: the members whose
 // verifier confirmed the defect.
@@ -327,6 +331,9 @@ func FindingText(group MergedFinding, contributors []string) string {
 	if finding.Fix != "" {
 		// Fix text is unverified model guidance; it is printed, never applied.
 		fmt.Fprintf(&buffer, "fix: %s\n", finding.Fix)
+	}
+	if group.UnprovenOrigin() {
+		buffer.WriteString("origin: " + unprovenOriginNote + "\n")
 	}
 	if contributors != nil {
 		fmt.Fprintf(&buffer, "confirmed by: %s\n", strings.Join(contributors, ", "))
@@ -532,6 +539,9 @@ func findingMarkdown(group MergedFinding, contributors []string) string {
 	fmt.Fprintf(&buffer, "   %s\n", MarkdownText(finding.Claim))
 	if finding.Fix != "" {
 		fmt.Fprintf(&buffer, "   Fix (unverified model guidance): %s\n", MarkdownText(finding.Fix))
+	}
+	if group.UnprovenOrigin() {
+		buffer.WriteString("   Origin: " + unprovenOriginNote + "\n")
 	}
 	if len(contributors) > 0 {
 		escaped := make([]string, 0, len(contributors))
