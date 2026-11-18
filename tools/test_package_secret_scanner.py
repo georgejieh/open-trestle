@@ -380,7 +380,7 @@ class DevelopmentBuildTest(unittest.TestCase):
                 package_secret_scanner.build_development(root, output, ("windows", "amd64"))
             self.assertEqual(len(moves), 3)
             for source in moves:
-                self.assertTrue(source.relative_to(root).parts[0].startswith(".open-trestle-development-"))
+                self.assertTrue(source.relative_to(root.resolve()).parts[0].startswith(".open-trestle-development-"))
             self.assertFalse([path for path in root.iterdir() if path.name.startswith(".open-trestle-development-")])
             helper = output / "libexec/open-trestle/open-trestle-scan-helper.exe"
             digest = hashlib.sha256(helper.read_bytes()).hexdigest()
