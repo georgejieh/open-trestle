@@ -75,12 +75,13 @@ func TestGoSyntaxAnalyzerRecords(t *testing.T) {
 		definitions = append(definitions, entry)
 	}
 	want := []string{
+		"module shapes parent=-1 exported=true",
 		"constant Pi parent=-1 exported=true",
 		"variable registry parent=-1 exported=false",
 		"interface Shape parent=-1 exported=true",
-		"method Shape.Area parent=2 exported=true",
+		"method Shape.Area parent=3 exported=true",
 		"struct Circle parent=-1 exported=true",
-		"field Circle.Radius parent=4 exported=true",
+		"field Circle.Radius parent=5 exported=true",
 		"method Area parent=-1 exported=true container=Circle",
 		"method String parent=-1 exported=true container=Circle",
 		"function New parent=-1 exported=true",
@@ -132,7 +133,7 @@ func TestGoSyntaxAnalyzerReportsParseErrorsAndKeepsTheRest(t *testing.T) {
 			t.Fatalf("gap = %+v", g)
 		}
 	}
-	if len(a.Definitions) == 0 || a.Definitions[0].Name.Untrusted() != "Good" {
+	if len(a.Definitions) < 2 || a.Definitions[0].Kind != syntaxanalysis.KindModule || a.Definitions[1].Name.Untrusted() != "Good" {
 		t.Fatalf("definitions = %+v", a.Definitions)
 	}
 }

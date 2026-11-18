@@ -192,7 +192,7 @@ func TestRealWorkerAnalysesGoAndWebAssemblyLanguages(t *testing.T) {
 	pool := newTestPool(t, "real", 1)
 	pool.config.CompileAllowance = time.Minute
 	goFile := analyzeFile(t, pool, "a/main.go", "package a\n\nfunc Run() { helper() }\n")
-	if goFile.Analyzer == Identity || len(goFile.Definitions) != 1 || goFile.Definitions[0].Name.Untrusted() != "Run" {
+	if goFile.Analyzer == Identity || len(goFile.Definitions) != 2 || goFile.Definitions[1].Name.Untrusted() != "Run" {
 		t.Fatalf("go analysis = %s %v", goFile.Analyzer, goFile.Gaps)
 	}
 	py := analyzeFile(t, pool, "a/tool.py", "def run():\n    helper()\n")
