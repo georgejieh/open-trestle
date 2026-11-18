@@ -1,0 +1,76 @@
+# files
+README.md role=docs status=not_analysed language=
+assets/blob.js role=source status=binary language=javascript
+calc/calc.go role=source status=indexed language=go
+calc/calc_test.go role=test status=indexed language=go
+cmd/app/main.go role=source status=indexed language=go
+gen/api.pb.go role=generated status=indexed language=go
+gen/zz.go role=generated status=indexed language=go
+go.mod role=config status=not_analysed language=
+native/kv.c role=source status=indexed language=c
+native/kv.h role=source status=indexed language=c
+native/main.c role=source status=indexed language=c
+other/other.go role=source status=indexed language=go
+pkg/app.py role=source status=indexed language=python
+pkg/util.py role=source status=indexed language=python
+src/main/java/com/ex/Box.java role=source status=indexed language=java
+src/main/java/com/ex/app/App.java role=source status=indexed language=java
+src/test/java/com/ex/BoxTest.java role=test status=indexed language=java
+tests/test_util.py role=test status=indexed language=python
+vendor/dep/dep.go role=vendored status=not_analysed language=go
+web/lib.test.ts role=test status=indexed language=typescript
+web/lib.ts role=source status=indexed language=typescript
+web/main.ts role=source status=indexed language=typescript
+# definitions "Add"
+calc/calc.go:4 function "Add" exported=true
+  ref calc/calc.go:8:39 call scope=file in="Push"
+  ref calc/calc.go:10:32 call scope=file in="unexported"
+  ref calc/calc_test.go:6:5 call scope=package in="TestAdd"
+  ref cmd/app/main.go:10:14 call scope=import in="run"
+  test calc/calc_test.go:6
+cmd/app/main.go:13 function "Add" exported=true
+other/other.go:5 function "Add" exported=true
+  ref other/other.go:3:25 call scope=file in="use"
+# definitions "Push"
+calc/calc.go:8 method "Push" exported=true
+  ref calc/calc_test.go:10:4 call scope=package in="TestAdd"
+  test calc/calc_test.go:10
+# definitions "helper"
+pkg/util.py:1 function "helper" exported=true
+  ref pkg/app.py:5:12 call scope=import in="main"
+  ref pkg/util.py:6:12 call scope=file in="_private"
+  ref tests/test_util.py:5:17 call scope=import in="test_helper"
+  test tests/test_util.py:5
+# definitions "format"
+web/lib.ts:1 function "format" exported=true
+  ref web/lib.test.ts:4:10 call scope=import in=""
+  ref web/main.ts:4:10 call scope=import in="show"
+  test web/lib.test.ts:4
+# definitions "kv_get"
+native/kv.c:3 function "kv_get" exported=true
+  ref native/main.c:4:10 call scope=name in="main"
+native/kv.h:3 function "kv_get" exported=true
+  ref native/main.c:4:10 call scope=import in="main"
+# definitions "size"
+src/main/java/com/ex/Box.java:4 method "Box.size" exported=true
+  ref src/main/java/com/ex/app/App.java:7:22 call scope=import in="App.run"
+  ref src/test/java/com/ex/BoxTest.java:5:15 call scope=package in="BoxTest.sizeIsOne"
+  test src/test/java/com/ex/BoxTest.java:5
+# definitions "Generated"
+gen/zz.go:5 function "Generated" exported=true
+# imports
+calc/calc.go -> [] unresolved=0 <- [cmd/app/main.go]
+calc/calc_test.go -> [] unresolved=1 <- [cmd/app/main.go]
+cmd/app/main.go -> [calc/calc.go] unresolved=0 <- []
+native/kv.c -> [native/kv.h] unresolved=0 <- []
+native/kv.h -> [] unresolved=0 <- [native/kv.c native/main.c]
+native/main.c -> [native/kv.h] unresolved=0 <- []
+pkg/app.py -> [pkg/util.py] unresolved=0 <- []
+pkg/util.py -> [] unresolved=0 <- [pkg/app.py tests/test_util.py]
+src/main/java/com/ex/Box.java -> [] unresolved=0 <- [src/main/java/com/ex/app/App.java]
+src/main/java/com/ex/app/App.java -> [src/main/java/com/ex/Box.java] unresolved=0 <- []
+src/test/java/com/ex/BoxTest.java -> [] unresolved=0 <- [src/main/java/com/ex/app/App.java]
+tests/test_util.py -> [pkg/util.py] unresolved=0 <- []
+web/lib.test.ts -> [web/lib.ts] unresolved=0 <- []
+web/lib.ts -> [] unresolved=0 <- [web/lib.test.ts web/main.ts]
+web/main.ts -> [web/lib.ts] unresolved=0 <- []
