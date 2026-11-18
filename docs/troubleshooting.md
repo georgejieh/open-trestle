@@ -83,9 +83,18 @@ symbolic links, and no parent may be writable by others. Fix the mode with
 On Windows the folders and files must give no account other than yours and the
 system's own accounts access, and no parent may let another account remove,
 rename or replace its entries. `icacls FOLDER` lists the folder's access
-entries. Remove an entry for another account with
-`icacls FOLDER /remove:g ACCOUNT`, or delete the folder so that Open Trestle
-creates it again. See [platforms](platforms.md#protected-files-on-windows).
+entries; those marked `(I)` are inherited from the folder above. In Command
+Prompt, this makes the folder and the files that inherit from it yours alone:
+
+```text
+icacls FOLDER /inheritance:r /grant:r "%USERNAME%:(OI)(CI)F"
+```
+
+It stops inheriting entries from the folder above and gives your account full
+access. An entry the folder holds for another account without `(I)` stays;
+remove it with `icacls FOLDER /remove:g ACCOUNT`. You can also delete the
+folder so that Open Trestle creates it again. See
+[platforms](platforms.md#protected-files-on-windows).
 
 ## A review failed
 
