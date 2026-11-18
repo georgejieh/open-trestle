@@ -125,25 +125,44 @@ func readRange(r *varcodec.Reader) Range {
 	return out
 }
 
+// maxAnalyzerNameBytes bounds the analyzer identity of a decoded analysis.
+const maxAnalyzerNameBytes = 256
+
 // DecodeBinary decodes an EncodeBinary result and gives it the path. It
 // checks every code, index and name, so a malformed or hostile encoding is
-// an error and never a partial analysis. Records that share a name share
-// one Text value.
-func DecodeBinary(data []byte, filePath string) (FileAnalysis, error) {
+// an error and never a partial analysis. It also refuses more records,
+// gaps, names or name bytes than an analyzer with these limits produces,
+// before it allocates them. Records that share a name share one Text value.
+func DecodeBinary(data []byte, filePath string, limits Limits) (FileAnalysis, error) {
 	r := varcodec.NewReader(data)
-	if r.Uvarint() != binaryVersion || !validPath(filePath) {
+	if r.Uvarint() != binaryVersion || !validPath(filePath) || !limits.Valid() {
 		return FileAnalysis{}, ErrInvalidInput
 	}
-	a := FileAnalysis{Path: filePath, Language: Language(r.String()), Analyzer: r.String()}
+	records := limits.MaxRecords
+	// count reads an element count and charges it to a budget.
+	count := func(minBytes int, budget *int) int {
+		n := r.Count(minBytes)
+		if n > *budget {
+			r.Fail()
+			return 0
+		}
+		*budget -= n
+		return n
+	}
+	a := FileAnalysis{Path: filePath, Language: Language(r.String())}
+	if analyzer := r.Bytes(); len(analyzer) <= maxAnalyzerNameBytes {
+		a.Analyzer = string(analyzer)
+	}
 	digest := r.Fixed(32)
 	a.ContentSHA256 = hex.EncodeToString(digest)
-	texts := make([]Text, r.Count(2)+1)
+	names := 3 * limits.MaxRecords
+	texts := make([]Text, count(2, &names)+1)
 	for i := 1; i < len(texts); i++ {
-		v := r.String()
-		if v == "" || !utf8.ValidString(v) {
+		v := r.Bytes()
+		if len(v) == 0 || len(v) > limits.MaxNameBytes || !utf8.Valid(v) {
 			return FileAnalysis{}, ErrInvalidInput
 		}
-		texts[i] = newText(v)
+		texts[i] = newText(string(v))
 	}
 	text := func(required bool) Text {
 		i := r.Int(len(texts) - 1)
@@ -160,7 +179,7 @@ func DecodeBinary(data []byte, filePath string) (FileAnalysis, error) {
 		}
 		return c
 	}
-	a.Definitions = make([]Definition, r.Count(16))
+	a.Definitions = make([]Definition, count(16, &records))
 	for i := range a.Definitions {
 		d := &a.Definitions[i]
 		d.Kind = definitionKindCodes[code(len(definitionKindCodes))]
@@ -169,7 +188,7 @@ func DecodeBinary(data []byte, filePath string) (FileAnalysis, error) {
 		d.Parent = r.Int(i) - 1
 		d.Exported = r.Bool()
 	}
-	a.References = make([]Reference, r.Count(10))
+	a.References = make([]Reference, count(10, &records))
 	for i := range a.References {
 		ref := &a.References[i]
 		ref.Kind = referenceKindCodes[code(len(referenceKindCodes))]
@@ -177,14 +196,16 @@ func DecodeBinary(data []byte, filePath string) (FileAnalysis, error) {
 		ref.Range = readRange(r)
 		ref.Enclosing = r.Int(len(a.Definitions)) - 1
 	}
-	a.Imports = make([]Import, r.Count(10))
+	a.Imports = make([]Import, count(10, &records))
 	for i := range a.Imports {
 		imp := &a.Imports[i]
 		imp.Source, imp.Name, imp.Alias = text(true), text(false), text(false)
 		imp.Range = readRange(r)
 		imp.Enclosing = r.Int(len(a.Definitions)) - 1
 	}
-	a.Gaps = make([]Gap, r.Count(3))
+	// Every dropped name and every error region can make a gap.
+	gaps := 2*limits.MaxRecords + limits.MaxErrorRegions + 16
+	a.Gaps = make([]Gap, count(3, &gaps))
 	for i := range a.Gaps {
 		g := &a.Gaps[i]
 		g.Reason = gapReasonCodes[code(len(gapReasonCodes))]

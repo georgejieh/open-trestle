@@ -69,7 +69,7 @@ func decodeBlobRecord(data []byte) (blobRecord, error) {
 
 // decode decodes the analysis of the record for a path.
 func (r blobRecord) decode(filePath string) (syntaxanalysis.FileAnalysis, error) {
-	analysis, err := syntaxanalysis.DecodeBinary(r.analysis, filePath)
+	analysis, err := syntaxanalysis.DecodeBinary(r.analysis, filePath, syntaxanalysis.DefaultLimits())
 	if err != nil {
 		return syntaxanalysis.FileAnalysis{}, errCorrupt
 	}

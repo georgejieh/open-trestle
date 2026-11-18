@@ -4,7 +4,10 @@ import (
 	"errors"
 	"math/rand"
 	"reflect"
+	"slices"
 	"testing"
+
+	"github.com/georgejieh/open-trestle/internal/varcodec"
 )
 
 func codecSample(t *testing.T) FileAnalysis {
@@ -37,7 +40,7 @@ func TestBinaryEncodingRoundTrips(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	decoded, err := DecodeBinary(encoded, "other/path.py")
+	decoded, err := DecodeBinary(encoded, "other/path.py", DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +56,7 @@ func TestBinaryEncodingRoundTrips(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decoded, err := DecodeBinary(encoded, empty.Path); err != nil || !reflect.DeepEqual(decoded, empty) {
+	if decoded, err := DecodeBinary(encoded, empty.Path, DefaultLimits()); err != nil || !reflect.DeepEqual(decoded, empty) {
 		t.Fatalf("whole-file gap = %v, %v", decoded, err)
 	}
 }
@@ -78,20 +81,51 @@ func TestBinaryEncodingRefusesInvalidAnalyses(t *testing.T) {
 	}
 }
 
+func TestBinaryDecodingRefusesMoreThanTheLimitsAllow(t *testing.T) {
+	a := codecSample(t)
+	encoded, err := EncodeBinary(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tight := DefaultLimits()
+	tight.MaxRecords = len(a.Definitions) + len(a.References) + len(a.Imports) - 1
+	if _, err := DecodeBinary(encoded, a.Path, tight); err == nil {
+		t.Fatal("more records than the limit decoded")
+	}
+	short := DefaultLimits()
+	short.MaxNameBytes = 2
+	if _, err := DecodeBinary(encoded, a.Path, short); err == nil {
+		t.Fatal("a name longer than the limit decoded")
+	}
+	// More rangeless gaps than any analysis has are refused before any of
+	// them is allocated.
+	header, err := EncodeBinary(WholeFileGap(mustSource(t, ""), "test", GapParseError, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	flood := varcodec.AppendUvarint(append([]byte(nil), header[:len(header)-4]...), 200_000)
+	for range 200_000 {
+		flood = append(flood, byte(slices.Index(gapReasonCodes, GapParseError)), 0, 0)
+	}
+	if _, err := DecodeBinary(flood, a.Path, DefaultLimits()); err == nil {
+		t.Fatal("a gap flood decoded")
+	}
+}
+
 func TestBinaryDecodingRejectsMalformedInput(t *testing.T) {
 	encoded, err := EncodeBinary(codecSample(t))
 	if err != nil {
 		t.Fatal(err)
 	}
 	for n := 0; n < len(encoded); n++ {
-		if _, err := DecodeBinary(encoded[:n], "a.py"); err == nil {
+		if _, err := DecodeBinary(encoded[:n], "a.py", DefaultLimits()); err == nil {
 			t.Fatalf("truncation at %d decoded", n)
 		}
 	}
-	if _, err := DecodeBinary(append(append([]byte(nil), encoded...), 0), "a.py"); err == nil {
+	if _, err := DecodeBinary(append(append([]byte(nil), encoded...), 0), "a.py", DefaultLimits()); err == nil {
 		t.Fatal("trailing byte decoded")
 	}
-	if _, err := DecodeBinary(encoded, "../a.py"); err == nil {
+	if _, err := DecodeBinary(encoded, "../a.py", DefaultLimits()); err == nil {
 		t.Fatal("unsafe path accepted")
 	}
 	random := rand.New(rand.NewSource(1))
@@ -100,7 +134,7 @@ func TestBinaryDecodingRejectsMalformedInput(t *testing.T) {
 		for j := 0; j < 1+random.Intn(4); j++ {
 			mutated[random.Intn(len(mutated))] = byte(random.Intn(256))
 		}
-		decoded, err := DecodeBinary(mutated, "a.py")
+		decoded, err := DecodeBinary(mutated, "a.py", DefaultLimits())
 		if err != nil {
 			continue
 		}
