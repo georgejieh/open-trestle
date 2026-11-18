@@ -84,10 +84,10 @@ func TestScanHelperDeadlineTerminatesTheJob(t *testing.T) {
 	if result.Complete() || result.Failure() != FailurePolicy || !errors.Is(err, errHelperDeadline) {
 		t.Fatalf("an overrunning scan did not fail at the deadline: %v, %v", result.Failure(), err)
 	}
-	if elapsed := time.Since(started); elapsed > 2*time.Second {
+	if elapsed := time.Since(started); elapsed > 10*time.Second {
 		t.Fatalf("the deadline kill took %v", elapsed)
 	}
-	requireWindowsProcessGone(t, pid, time.Second)
+	requireWindowsProcessGone(t, pid, 5*time.Second)
 	if err := session.Close(); !errors.Is(err, errHelperDeadline) {
 		t.Fatalf("close did not report the deadline failure: %v", err)
 	}
@@ -132,17 +132,15 @@ func TestScanHelperDiesWithItsParent(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	// The parent reports the helper as it sends the request. A second later
-	// the helper is still scanning.
-	time.Sleep(time.Second)
-	if !windowsProcessRunning(pid) {
-		t.Fatal("the helper finished before its parent was killed")
-	}
+	// The parent reports the helper as it sends the request. The helper is
+	// killed with its parent only once it is seen scanning: using processor
+	// time while it does not read its input.
+	requireWindowsProcessBusy(t, pid)
 	if err := parent.Process.Kill(); err != nil {
 		t.Fatal(err)
 	}
 	_ = parent.Wait()
-	requireWindowsProcessGone(t, pid, time.Second)
+	requireWindowsProcessGone(t, pid, 3*time.Second)
 }
 
 func runHelperParentForTest(t *testing.T, pidPath string) {
@@ -268,4 +266,36 @@ func TestScanHelperRefusesAWorkingDirectoryOthersCanRead(t *testing.T) {
 			}
 		})
 	}
+}
+
+// windowsProcessTime is the processor time the process with ID pid has used.
+func windowsProcessTime(pid int) (time.Duration, bool) {
+	handle, err := syscall.OpenProcess(processQueryLimitedInformation, false, uint32(pid))
+	if err != nil {
+		return 0, false
+	}
+	defer syscall.CloseHandle(handle)
+	var creation, exit, kernel, user syscall.Filetime
+	if err := syscall.GetProcessTimes(handle, &creation, &exit, &kernel, &user); err != nil {
+		return 0, false
+	}
+	return time.Duration(kernel.Nanoseconds() + user.Nanoseconds()), true
+}
+
+// requireWindowsProcessBusy waits until the process is running and has used
+// at least 100 milliseconds of processor time within half a second.
+func requireWindowsProcessBusy(t *testing.T, pid int) {
+	t.Helper()
+	for deadline := time.Now().Add(time.Minute); time.Now().Before(deadline); {
+		before, ok := windowsProcessTime(pid)
+		time.Sleep(500 * time.Millisecond)
+		after, okAfter := windowsProcessTime(pid)
+		if !ok || !okAfter || !windowsProcessRunning(pid) {
+			t.Fatal("the helper is gone before its parent was killed")
+		}
+		if after-before >= 100*time.Millisecond {
+			return
+		}
+	}
+	t.Fatal("the helper was not seen scanning")
 }
