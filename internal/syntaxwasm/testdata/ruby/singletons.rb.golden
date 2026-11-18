@@ -1,0 +1,10 @@
+# definitions
+2:1-13:4 class "Registry" exported
+  3:3-3:21 constant "Registry.OTHER" exported
+  4:3-7:6 class "Registry.OTHER" exported
+    5:5-6:8 method "Registry.OTHER.ping" exported
+  10:5-11:8 method "Registry.create" exported
+# references
+3:11 construct "Object" in "Registry.OTHER"
+# imports
+# gaps

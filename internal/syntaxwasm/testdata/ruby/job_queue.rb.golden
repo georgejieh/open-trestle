@@ -1,0 +1,222 @@
+# definitions
+11:1-11:29 variable "$job_queue_booted" exported
+13:1-302:4 module "JobQueue" exported
+  14:3-14:20 constant "JobQueue.VERSION" exported
+  15:3-15:22 constant "JobQueue.DEFAULT_WORKERS" exported
+  16:3-16:18 constant "JobQueue.RETRY_LIMIT" exported
+  18:3-18:35 class "JobQueue.Error" exported
+  19:3-19:34 class "JobQueue.TimeoutError" exported
+  20:3-27:6 class "JobQueue.Rejected" exported
+    21:5-24:8 constructor "JobQueue.Rejected.initialize" exported
+    26:5-26:21 method "JobQueue.Rejected.job" exported
+  29:3-39:6 class "JobQueue.Priority" exported
+    32:5-34:8 method "JobQueue.Priority.<=>" exported
+    36:5-38:8 method "JobQueue.Priority.to_s" exported
+  41:3-41:45 class "JobQueue.Settings" exported
+  42:3-42:30 class "JobQueue.Handler" exported
+  43:3-43:23 module "JobQueue.Plugins" exported
+  45:3-66:6 module "JobQueue.Loggable" exported
+    46:5-48:8 function "JobQueue.Loggable.included" exported
+    50:5-55:8 module "JobQueue.Loggable.ClassMethods" exported
+      51:7-54:10 function "JobQueue.Loggable.ClassMethods.log_prefix" exported
+    57:5-59:8 function "JobQueue.Loggable.log" exported
+    63:5-65:8 function "JobQueue.Loggable.timestamp" exported
+  68:3-79:6 module "JobQueue.Retryable" exported
+    69:5-78:8 function "JobQueue.Retryable.with_retries" exported
+  81:3-184:6 class "JobQueue.Job" exported
+    87:5-87:38 method "JobQueue.Job.payload" exported
+    87:5-87:38 method "JobQueue.Job.attempts" exported
+    88:5-88:31 method "JobQueue.Job.id" exported
+    88:5-88:31 method "JobQueue.Job.priority" exported
+    90:5-90:18 field "JobQueue.Job.@@created"
+    91:5-91:18 constant "JobQueue.Job.REGISTRY" exported
+    94:7-96:10 method "JobQueue.Job.create" exported
+    98:7-100:10 method "JobQueue.Job.created" exported
+    104:7-106:10 method "JobQueue.Job.reset_counter"
+    109:5-112:8 method "JobQueue.Job.parse" exported
+    114:5-116:8 method "JobQueue.Job.build_all"
+    120:5-126:8 constructor "JobQueue.Job.initialize" exported
+    128:5-130:8 method "JobQueue.Job.<=>" exported
+    132:5-137:8 method "JobQueue.Job.run" exported
+    139:5-141:8 method "JobQueue.Job.done?" exported
+    143:5-145:8 method "JobQueue.Job.result=" exported
+    147:5-149:8 method "JobQueue.Job.to_h" exported
+    151:5-151:23 method "JobQueue.Job.to_hash" exported
+    152:5-152:33 method "JobQueue.Job.to_s" exported
+    156:5-158:8 method "JobQueue.Job.merge_attempts"
+    162:5-164:8 method "JobQueue.Job.cleanup"
+    166:5-168:8 method "JobQueue.Job.audit"
+    172:5-174:8 method "JobQueue.Job.summary" exported
+    176:13-178:8 method "JobQueue.Job.internal_flag"
+    180:5-180:29 method "JobQueue.Job.exposed_flag"
+    183:5-183:43 method "JobQueue.Job.registry_size" exported
+  186:3-260:6 class "JobQueue.Queue" exported
+    190:5-190:22 method "JobQueue.Queue.jobs" exported
+    192:5-197:8 constructor "JobQueue.Queue.initialize" exported
+    199:5-207:8 method "JobQueue.Queue.push" exported
+    208:5-208:18 method "JobQueue.Queue.<<" exported
+    210:5-212:8 method "JobQueue.Queue.pop" exported
+    214:5-219:8 method "JobQueue.Queue.each" exported
+    221:5-230:8 method "JobQueue.Queue.drain" exported
+    232:5-234:8 method "JobQueue.Queue.empty?" exported
+    236:5-238:8 method "JobQueue.Queue.closed?" exported
+    240:5-242:8 method "JobQueue.Queue.close" exported
+    244:5-246:8 method "JobQueue.Queue.stats" exported
+    248:5-259:8 class "JobQueue.Queue.Stats" exported
+      249:7-249:34 method "JobQueue.Queue.Stats.size" exported
+      249:7-249:34 method "JobQueue.Queue.Stats.workers" exported
+      251:7-254:10 constructor "JobQueue.Queue.Stats.initialize" exported
+      256:7-258:10 method "JobQueue.Queue.Stats.busy?" exported
+  262:3-279:6 class "JobQueue.Worker" exported
+    263:5-265:8 method "JobQueue.Worker.start" exported
+    267:5-271:8 constructor "JobQueue.Worker.initialize" exported
+    273:5-278:8 method "JobQueue.Worker.work" exported
+  281:3-301:6 class "JobQueue.Scheduler" exported
+    282:5-282:64 constant "JobQueue.Scheduler.DEFAULTS" exported
+    284:5-288:8 constructor "JobQueue.Scheduler.initialize" exported
+    290:5-295:8 method "JobQueue.Scheduler.run" exported
+    297:5-300:8 method "JobQueue.Scheduler.stop" exported
+304:1-310:4 module "Testing" exported container="JobQueue"
+  305:3-305:38 class "Testing.FakeJob" exported
+  307:3-309:6 function "Testing.fake" exported
+312:1-316:4 class "Runner" exported container="JobQueue"
+  313:3-315:6 method "Runner.run" exported
+318:1-323:4 function "run_queue" exported
+# references
+3:1 call "require"
+4:1 call "require"
+5:1 call "require"
+6:1 call "require_relative"
+7:1 call "require_relative"
+8:1 call "load"
+9:1 call "autoload"
+11:26 call "now" qualifier="Time" in "$job_queue_booted"
+18:17 inherit "StandardError" in "JobQueue.Error"
+19:24 inherit "Error" in "JobQueue.TimeoutError"
+20:32 inherit "Error" qualifier="::JobQueue" in "JobQueue.Rejected"
+22:20 call "id" qualifier="job" in "JobQueue.Rejected.initialize"
+26:5 call "attr_reader" in "JobQueue.Rejected"
+29:14 construct "Struct" in "JobQueue.Priority"
+30:5 call "include" in "JobQueue.Priority"
+30:13 inherit "Comparable" in "JobQueue.Priority"
+33:23 call "level" qualifier="other" in "JobQueue.Priority.<=>"
+41:19 call "define" qualifier="Data" in "JobQueue.Settings"
+42:13 construct "Class" in "JobQueue.Handler"
+43:13 construct "Module" in "JobQueue.Plugins"
+47:12 call "extend" qualifier="base" in "JobQueue.Loggable.included"
+58:7 call "puts" in "JobQueue.Loggable.log"
+58:21 call "class" qualifier="self" in "JobQueue.Loggable.log"
+58:27 call "log_prefix" in "JobQueue.Loggable.log"
+61:5 call "module_function" in "JobQueue.Loggable"
+64:12 call "now" qualifier="Time" in "JobQueue.Loggable.timestamp"
+64:16 call "utc" in "JobQueue.Loggable.timestamp"
+64:20 call "iso8601" in "JobQueue.Loggable.timestamp"
+74:14 type "Rejected" in "JobQueue.Retryable.with_retries"
+74:34 type "TimeoutError" qualifier="JobQueue" in "JobQueue.Retryable.with_retries"
+76:9 call "raise" in "JobQueue.Retryable.with_retries"
+82:5 call "include" in "JobQueue.Job"
+82:13 inherit "Comparable" in "JobQueue.Job"
+83:5 call "include" in "JobQueue.Job"
+83:13 inherit "Loggable" in "JobQueue.Job"
+84:5 call "extend" in "JobQueue.Job"
+84:12 inherit "Forwardable" in "JobQueue.Job"
+85:5 call "prepend" in "JobQueue.Job"
+85:13 inherit "Retryable" in "JobQueue.Job"
+87:5 call "attr_accessor" in "JobQueue.Job"
+88:5 call "attr_reader" in "JobQueue.Job"
+95:9 call "new" in "JobQueue.Job.create"
+95:42 call "tap" in "JobQueue.Job.create"
+95:67 call "id" qualifier="job" in "JobQueue.Job.create"
+102:7 call "private" in "JobQueue.Job"
+110:19 call "parse" qualifier="JSON" in "JobQueue.Job.parse"
+111:7 call "create" in "JobQueue.Job.parse"
+111:19 call "fetch" qualifier="data" in "JobQueue.Job.parse"
+111:52 call "fetch" qualifier="data" in "JobQueue.Job.parse"
+115:13 call "map" qualifier="items" in "JobQueue.Job.build_all"
+115:26 call "create" in "JobQueue.Job.build_all"
+118:5 call "private_class_method" in "JobQueue.Job"
+121:26 call "uuid" qualifier="SecureRandom" in "JobQueue.Job.initialize"
+123:19 construct "Priority" in "JobQueue.Job.initialize"
+129:26 call "priority" qualifier="other" in "JobQueue.Job.<=>"
+133:7 call "with_retries" in "JobQueue.Job.run"
+134:9 call "log" in "JobQueue.Job.run"
+135:15 call "call" qualifier="block" in "JobQueue.Job.run"
+140:15 call "nil?" qualifier="result" in "JobQueue.Job.done?"
+152:5 call "alias_method" in "JobQueue.Job"
+154:5 call "protected" in "JobQueue.Job"
+157:26 call "attempts" qualifier="other" in "JobQueue.Job.merge_attempts"
+160:5 call "private" in "JobQueue.Job"
+163:16 call "delete" qualifier="REGISTRY" in "JobQueue.Job.cleanup"
+167:15 call "record" qualifier="Metrics" in "JobQueue.Job.audit"
+170:5 call "public" in "JobQueue.Job"
+173:30 call "inspect" qualifier="payload" in "JobQueue.Job.summary"
+176:5 call "private" in "JobQueue.Job"
+181:5 call "private" in "JobQueue.Job"
+183:39 call "size" qualifier="REGISTRY" in "JobQueue.Job.registry_size"
+187:5 call "include" in "JobQueue.Queue"
+187:13 inherit "Enumerable" in "JobQueue.Queue"
+188:5 call "include" in "JobQueue.Queue"
+188:23 inherit "Loggable" qualifier="JobQueue" in "JobQueue.Queue"
+190:5 call "attr_reader" in "JobQueue.Queue"
+192:53 construct "Clock" in "JobQueue.Queue.initialize"
+196:15 construct "Mutex" in "JobQueue.Queue.initialize"
+200:7 call "raise" in "JobQueue.Queue.push"
+200:13 construct "Rejected" in "JobQueue.Queue.push"
+200:44 call "closed?" in "JobQueue.Queue.push"
+202:13 call "synchronize" qualifier="@lock" in "JobQueue.Queue.push"
+204:15 call "sort!" qualifier="@jobs" in "JobQueue.Queue.push"
+211:13 call "synchronize" qualifier="@lock" in "JobQueue.Queue.pop"
+211:33 call "shift" qualifier="@jobs" in "JobQueue.Queue.pop"
+215:14 call "enum_for" in "JobQueue.Queue.each"
+217:13 call "each" qualifier="@jobs" in "JobQueue.Queue.each"
+222:13 call "empty?" in "JobQueue.Queue.drain"
+224:17 call "call" qualifier="handler" in "JobQueue.Queue.drain"
+226:12 type "Rejected" in "JobQueue.Queue.drain"
+227:7 call "log" in "JobQueue.Queue.drain"
+227:30 call "message" qualifier="e" in "JobQueue.Queue.drain"
+229:7 call "log" in "JobQueue.Queue.drain"
+233:13 call "empty?" qualifier="@jobs" in "JobQueue.Queue.empty?"
+245:7 construct "Stats" in "JobQueue.Queue.stats"
+245:23 call "size" qualifier="@jobs" in "JobQueue.Queue.stats"
+249:7 call "attr_reader" in "JobQueue.Queue.Stats"
+262:18 inherit "Thread" in "JobQueue.Worker"
+264:7 call "new" in "JobQueue.Worker.start"
+274:7 call "loop" in "JobQueue.Worker.work"
+275:22 call "pop" qualifier="@queue" in "JobQueue.Worker.work"
+276:18 call "call" qualifier="@handler" in "JobQueue.Worker.work"
+282:58 call "freeze" in "JobQueue.Scheduler.DEFAULTS"
+286:19 construct "Settings" in "JobQueue.Scheduler.initialize"
+286:43 call "merge" qualifier="DEFAULTS" in "JobQueue.Scheduler.initialize"
+290:23 construct "Handler" in "JobQueue.Scheduler.run"
+291:17 call "workers" qualifier="@settings" in "JobQueue.Scheduler.run"
+291:25 call "times" in "JobQueue.Scheduler.run"
+292:28 call "start" qualifier="Worker" in "JobQueue.Scheduler.run"
+294:16 call "each" qualifier="@workers" in "JobQueue.Scheduler.run"
+298:14 call "close" qualifier="@queue" in "JobQueue.Scheduler.stop"
+299:16 call "each" qualifier="@workers" in "JobQueue.Scheduler.stop"
+305:13 construct "Struct" in "Testing.FakeJob"
+308:5 construct "FakeJob" in "Testing.fake"
+308:30 call "hex" qualifier="SecureRandom" in "Testing.fake"
+312:36 inherit "Scheduler" qualifier="JobQueue" in "Runner"
+314:36 call "run" qualifier="job" in "Runner.run"
+314:46 call "puts" in "Runner.run"
+314:53 call "summary" qualifier="j" in "Runner.run"
+319:21 construct "Queue" qualifier="JobQueue" in "run_queue"
+320:9 call "each" qualifier="items" in "run_queue"
+320:29 call "push" qualifier="queue" in "run_queue"
+320:48 call "create" qualifier="JobQueue::Job" in "run_queue"
+321:13 construct "Scheduler" qualifier="JobQueue" in "run_queue"
+321:34 call "run" in "run_queue"
+322:9 call "stats" qualifier="queue" in "run_queue"
+326:11 call "run_queue"
+327:3 call "puts"
+327:14 call "size" qualifier="stats"
+# imports
+3:1-3:15 source="json"
+4:1-4:14 source="set"
+5:1-5:23 source="securerandom"
+6:1-6:33 source="support/clock"
+7:1-7:36 source="../config/limits"
+8:1-8:28 source="tasks/maintenance.rb"
+9:1-9:39 source="job_queue/metrics"
+# gaps

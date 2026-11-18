@@ -1,0 +1,7 @@
+# definitions
+2:1-2:17 variable "panel"
+# references
+# imports
+2:20-2:36 source="next.html"
+2:50-2:64 source="logo.png"
+# gaps

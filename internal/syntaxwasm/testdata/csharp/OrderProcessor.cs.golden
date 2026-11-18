@@ -1,0 +1,260 @@
+# definitions
+11:1-318:1 module "Acme.Orders" exported
+  13:1-13:70 type "Acme.Orders.OrderPlaced" exported
+  15:1-21:2 enum "Acme.Orders.OrderStatus" exported
+    17:5-17:12 constant "Acme.Orders.OrderStatus.Pending" exported
+    18:5-18:13 constant "Acme.Orders.OrderStatus.Paid" exported
+    19:5-19:12 constant "Acme.Orders.OrderStatus.Shipped" exported
+    20:5-20:19 constant "Acme.Orders.OrderStatus.Cancelled" exported
+  23:1-29:2 enum "Acme.Orders.Channels" exported
+    26:5-26:13 constant "Acme.Orders.Channels.None" exported
+    27:5-27:12 constant "Acme.Orders.Channels.Web" exported
+    28:5-28:14 constant "Acme.Orders.Channels.Phone" exported
+  31:1-44:2 interface "Acme.Orders.IOrderRepository" exported
+    33:15-33:28 constant "Acme.Orders.IOrderRepository.PageSize" exported
+    35:5-35:26 method "Acme.Orders.IOrderRepository.Find" exported
+    37:5-37:87 method "Acme.Orders.IOrderRepository.ListAsync" exported
+    39:5-39:28 method "Acme.Orders.IOrderRepository.Save" exported
+    41:24-41:29 field "Acme.Orders.IOrderRepository.Saved" exported
+    43:5-43:25 field "Acme.Orders.IOrderRepository.Name" exported
+  46:1-49:2 interface "Acme.Orders.IAuditable" exported
+    48:5-48:18 method "Acme.Orders.IAuditable.Snapshot" exported
+  51:1-56:2 class "Acme.Orders.OrderEventArgs" exported
+    53:5-53:57 constructor "Acme.Orders.OrderEventArgs.OrderEventArgs" exported
+    55:5-55:32 field "Acme.Orders.OrderEventArgs.Order" exported
+  58:1-147:2 class "Acme.Orders.Order" exported
+    61:26-61:47 constant "Acme.Orders.Order.MaxTotal" exported
+    62:37-62:71 constant "Acme.Orders.Order.Timeout" exported
+    63:24-63:32 field "Acme.Orders.Order._counter"
+    64:38-64:52 field "Acme.Orders.Order._lines"
+    65:31-65:41 field "Acme.Orders.Order.notes"
+    66:18-66:25 field "Acme.Orders.Order.version"
+    66:27-66:35 field "Acme.Orders.Order.revision"
+    68:5-73:6 constructor "Acme.Orders.Order.Order" exported
+    75:5-77:6 constructor "Acme.Orders.Order.Order" exported
+    79:5-82:6 method "Acme.Orders.Order.Order"
+    84:5-84:34 field "Acme.Orders.Order.Id" exported
+    86:5-86:41 field "Acme.Orders.Order.Customer" exported
+    88:5-88:75 field "Acme.Orders.Order.Status" exported
+    90:5-90:67 field "Acme.Orders.Order.Total" exported
+    92:32-92:45 field "Acme.Orders.Order.StatusChanged" exported
+    94:5-98:6 field "Acme.Orders.Order.this" exported
+    100:5-100:53 field "Acme.Orders.Order.Lines" exported
+    102:5-110:6 method "Acme.Orders.Order.AddLine" exported
+    112:5-122:6 method "Acme.Orders.Order.TryPay" exported
+    124:5-124:84 method "Acme.Orders.Order.OnStatusChanged"
+    126:5-134:6 method "Acme.Orders.Order.Snapshot" exported
+    136:5-136:92 method "Acme.Orders.Order.CompareTo" exported
+    138:5-142:6 method "Acme.Orders.Order.+" exported
+    144:5-144:73 method "Acme.Orders.Order.decimal" exported
+    146:5-146:73 method "Acme.Orders.Order.ToString" exported
+  149:1-154:2 class "Acme.Orders.OrderLine" exported
+    149:25-149:35 field "Acme.Orders.OrderLine.Sku" exported
+    149:37-149:49 field "Acme.Orders.OrderLine.Quantity" exported
+    149:51-149:64 field "Acme.Orders.OrderLine.Price" exported
+    151:5-151:49 field "Acme.Orders.OrderLine.Extended" exported
+    153:5-153:71 field "Acme.Orders.OrderLine.Empty" exported
+  156:1-156:70 struct "Acme.Orders.Money" exported
+    156:37-156:51 field "Acme.Orders.Money.Amount" exported
+    156:53-156:68 field "Acme.Orders.Money.Currency" exported
+  158:1-170:2 struct "Acme.Orders.Point" exported
+    160:16-160:17 field "Acme.Orders.Point.X" exported
+    161:16-161:17 field "Acme.Orders.Point.Y" exported
+    163:5-167:6 constructor "Acme.Orders.Point.Point" exported
+    169:5-169:53 method "Acme.Orders.Point.Distance" exported
+  172:1-172:67 class "Acme.Orders.PaymentResult" exported
+    172:29-172:43 field "Acme.Orders.PaymentResult.Succeeded" exported
+    172:45-172:65 field "Acme.Orders.PaymentResult.Error" exported
+  174:1-177:2 interface "Acme.Orders.IPaymentGateway" exported
+    176:5-176:59 method "Acme.Orders.IPaymentGateway.Charge" exported
+  179:1-197:2 class "Acme.Orders.RepositoryBase" exported
+    183:50-183:63 field "Acme.Orders.RepositoryBase.Store"
+    185:5-185:44 method "Acme.Orders.RepositoryBase.Get" exported
+    187:5-190:6 method "Acme.Orders.RepositoryBase.OnMissing"
+    192:5-196:6 method "Acme.Orders.RepositoryBase.Dispose" exported
+  199:1-231:2 class "Acme.Orders.MemoryOrderRepository" exported
+    201:32-201:37 field "Acme.Orders.MemoryOrderRepository.Saved" exported
+    203:5-203:36 field "Acme.Orders.MemoryOrderRepository.Name" exported
+    205:5-213:6 method "Acme.Orders.MemoryOrderRepository.Get" exported
+    215:5-215:44 method "Acme.Orders.MemoryOrderRepository.Find" exported
+    217:5-224:6 method "Acme.Orders.MemoryOrderRepository.ListAsync" exported
+    226:5-230:6 method "Acme.Orders.MemoryOrderRepository.Save" exported
+  233:1-252:2 class "Acme.Orders.OrderExtensions" exported
+    235:5-238:6 method "Acme.Orders.OrderExtensions.Open" exported
+    240:5-244:6 method "Acme.Orders.OrderExtensions.GrandTotal" exported
+      242:9-242:52 function "Acme.Orders.OrderExtensions.GrandTotal.Add"
+    246:5-251:7 method "Acme.Orders.OrderExtensions.Describe" exported
+  254:1-303:2 class "Acme.Orders.OrderService" exported
+    256:39-256:50 field "Acme.Orders.OrderService._repository"
+    257:38-257:46 field "Acme.Orders.OrderService._gateway"
+    258:26-258:33 field "Acme.Orders.OrderService._placed"
+    260:5-264:6 constructor "Acme.Orders.OrderService.OrderService" exported
+    266:5-270:6 field "Acme.Orders.OrderService.Placed" exported
+    272:5-287:6 method "Acme.Orders.OrderService.PlaceAsync" exported
+    289:5-292:6 method "Acme.Orders.OrderService.LookupPrice"
+    294:5-297:6 method "Acme.Orders.OrderService.Export" exported
+    299:5-302:6 method "Acme.Orders.OrderService.Convert" exported
+  305:1-317:2 class "Acme.Orders.OrderService" exported
+    307:5-316:6 method "Acme.Orders.OrderService.Report" exported
+# references
+8:41 type "Order" qualifier="Acme.Orders"
+13:49 type "OrderEventArgs" in "Acme.Orders.OrderPlaced"
+23:2 decorator "Flags" in "Acme.Orders.Channels"
+31:37 inherit "IDisposable" in "Acme.Orders.IOrderRepository"
+35:5 type "Order" in "Acme.Orders.IOrderRepository.Find"
+35:17 type "Guid" in "Acme.Orders.IOrderRepository.Find"
+37:5 type "Task" in "Acme.Orders.IOrderRepository.ListAsync"
+37:10 type "IReadOnlyList" in "Acme.Orders.IOrderRepository.ListAsync"
+37:24 type "Order" in "Acme.Orders.IOrderRepository.ListAsync"
+37:52 type "CancellationToken" in "Acme.Orders.IOrderRepository.ListAsync"
+39:15 type "Order" in "Acme.Orders.IOrderRepository.Save"
+41:11 type "EventHandler" in "Acme.Orders.IOrderRepository"
+48:5 type "T" in "Acme.Orders.IAuditable.Snapshot"
+51:31 inherit "EventArgs" in "Acme.Orders.OrderEventArgs"
+53:27 type "Order" in "Acme.Orders.OrderEventArgs.OrderEventArgs"
+55:12 type "Order" in "Acme.Orders.OrderEventArgs.Order"
+58:2 decorator "Serializable" in "Acme.Orders.Order"
+59:22 inherit "IAuditable" in "Acme.Orders.Order"
+59:33 type "Order" in "Acme.Orders.Order"
+59:41 inherit "IComparable" in "Acme.Orders.Order"
+59:53 type "Order" in "Acme.Orders.Order"
+62:28 type "TimeSpan" in "Acme.Orders.Order"
+62:56 call "FromSeconds" qualifier="TimeSpan" in "Acme.Orders.Order.Timeout"
+64:22 type "List" in "Acme.Orders.Order"
+64:27 type "OrderLine" in "Acme.Orders.Order"
+68:18 type "Guid" in "Acme.Orders.Order.Order"
+71:42 construct "ArgumentNullException" in "Acme.Orders.Order.Order"
+71:42 type "ArgumentNullException" in "Acme.Orders.Order.Order"
+72:21 call "Increment" qualifier="Interlocked" in "Acme.Orders.Order.Order"
+75:32 call "NewGuid" qualifier="Guid" in "Acme.Orders.Order.Order"
+81:16 call "Clear" qualifier="_lines" in "Acme.Orders.Order.Order"
+84:12 type "Guid" in "Acme.Orders.Order.Id"
+88:12 type "OrderStatus" in "Acme.Orders.Order.Status"
+90:36 call "Sum" qualifier="_lines" in "Acme.Orders.Order.Total"
+92:18 type "EventHandler" in "Acme.Orders.Order"
+94:12 type "OrderLine" in "Acme.Orders.Order.this"
+100:12 type "IReadOnlyList" in "Acme.Orders.Order.Lines"
+100:26 type "OrderLine" in "Acme.Orders.Order.Lines"
+106:23 construct "InvalidOperationException" in "Acme.Orders.Order.AddLine"
+106:23 type "InvalidOperationException" in "Acme.Orders.Order.AddLine"
+108:24 construct "OrderLine" in "Acme.Orders.Order.AddLine"
+108:24 type "OrderLine" in "Acme.Orders.Order.AddLine"
+109:16 call "Add" qualifier="_lines" in "Acme.Orders.Order.AddLine"
+112:24 type "IPaymentGateway" in "Acme.Orders.Order.TryPay"
+114:30 call "Charge" qualifier="gateway" in "Acme.Orders.Order.TryPay"
+120:9 call "OnStatusChanged" in "Acme.Orders.Order.TryPay"
+124:54 call "Invoke" qualifier="StatusChanged" in "Acme.Orders.Order.OnStatusChanged"
+126:12 type "Order" in "Acme.Orders.Order.Snapshot"
+128:24 construct "Order" in "Acme.Orders.Order.Snapshot"
+128:24 type "Order" in "Acme.Orders.Order.Snapshot"
+131:18 call "AddLine" qualifier="copy" in "Acme.Orders.Order.Snapshot"
+136:26 type "Order" in "Acme.Orders.Order.CompareTo"
+136:69 call "CompareTo" qualifier="Total" in "Acme.Orders.Order.CompareTo"
+138:19 type "Order" in "Acme.Orders.Order.+"
+138:36 type "Order" in "Acme.Orders.Order.+"
+138:48 type "OrderLine" in "Acme.Orders.Order.+"
+140:14 call "AddLine" qualifier="left" in "Acme.Orders.Order.+"
+144:45 type "Order" in "Acme.Orders.Order.decimal"
+153:19 type "OrderLine" in "Acme.Orders.OrderLine.Empty"
+153:50 construct "OrderLine" in "Acme.Orders.OrderLine.Empty"
+153:50 type "OrderLine" in "Acme.Orders.OrderLine.Empty"
+169:33 call "Sqrt" in "Acme.Orders.Point.Distance"
+176:5 type "PaymentResult" in "Acme.Orders.IPaymentGateway.Charge"
+179:55 inherit "IDisposable" in "Acme.Orders.RepositoryBase"
+183:24 type "Dictionary" in "Acme.Orders.RepositoryBase"
+183:35 type "TKey" in "Acme.Orders.RepositoryBase"
+183:41 type "TEntity" in "Acme.Orders.RepositoryBase"
+185:21 type "TEntity" in "Acme.Orders.RepositoryBase.Get"
+185:34 type "TKey" in "Acme.Orders.RepositoryBase.Get"
+187:38 type "TKey" in "Acme.Orders.RepositoryBase.OnMissing"
+189:17 call "WriteLine" qualifier="Console" in "Acme.Orders.RepositoryBase.OnMissing"
+194:15 call "Clear" qualifier="Store" in "Acme.Orders.RepositoryBase.Dispose"
+195:12 call "SuppressFinalize" qualifier="GC" in "Acme.Orders.RepositoryBase.Dispose"
+199:45 inherit "RepositoryBase" in "Acme.Orders.MemoryOrderRepository"
+199:60 type "Guid" in "Acme.Orders.MemoryOrderRepository"
+199:66 type "Order" in "Acme.Orders.MemoryOrderRepository"
+199:74 inherit "IOrderRepository" in "Acme.Orders.MemoryOrderRepository"
+201:18 type "EventHandler" in "Acme.Orders.MemoryOrderRepository"
+205:21 type "Order" in "Acme.Orders.MemoryOrderRepository.Get"
+205:32 type "Guid" in "Acme.Orders.MemoryOrderRepository.Get"
+207:19 call "TryGetValue" qualifier="Store" in "Acme.Orders.MemoryOrderRepository.Get"
+211:9 call "OnMissing" in "Acme.Orders.MemoryOrderRepository.Get"
+215:12 type "Order" in "Acme.Orders.MemoryOrderRepository.Find"
+215:24 type "Guid" in "Acme.Orders.MemoryOrderRepository.Find"
+215:36 call "Get" in "Acme.Orders.MemoryOrderRepository.Find"
+217:18 type "Task" in "Acme.Orders.MemoryOrderRepository.ListAsync"
+217:23 type "IReadOnlyList" in "Acme.Orders.MemoryOrderRepository.ListAsync"
+217:37 type "Order" in "Acme.Orders.MemoryOrderRepository.ListAsync"
+217:65 type "CancellationToken" in "Acme.Orders.MemoryOrderRepository.ListAsync"
+219:20 call "Delay" qualifier="Task" in "Acme.Orders.MemoryOrderRepository.ListAsync"
+219:36 call "ConfigureAwait" in "Acme.Orders.MemoryOrderRepository.ListAsync"
+221:14 call "Skip" qualifier="Store.Values" in "Acme.Orders.MemoryOrderRepository.ListAsync"
+222:14 call "Take" in "Acme.Orders.MemoryOrderRepository.ListAsync"
+223:14 call "ToList" in "Acme.Orders.MemoryOrderRepository.ListAsync"
+226:22 type "Order" in "Acme.Orders.MemoryOrderRepository.Save"
+229:16 call "Invoke" qualifier="Saved" in "Acme.Orders.MemoryOrderRepository.Save"
+235:19 type "IEnumerable" in "Acme.Orders.OrderExtensions.Open"
+235:31 type "Order" in "Acme.Orders.OrderExtensions.Open"
+235:48 type "IEnumerable" in "Acme.Orders.OrderExtensions.Open"
+235:60 type "Order" in "Acme.Orders.OrderExtensions.Open"
+237:23 call "Where" qualifier="orders" in "Acme.Orders.OrderExtensions.Open"
+240:46 type "IEnumerable" in "Acme.Orders.OrderExtensions.GrandTotal"
+240:58 type "T" in "Acme.Orders.OrderExtensions.GrandTotal"
+240:68 type "Func" in "Acme.Orders.OrderExtensions.GrandTotal"
+240:73 type "T" in "Acme.Orders.OrderExtensions.GrandTotal"
+243:22 call "Select" qualifier="items" in "Acme.Orders.OrderExtensions.GrandTotal"
+243:39 call "Aggregate" in "Acme.Orders.OrderExtensions.GrandTotal"
+246:40 type "Order" in "Acme.Orders.OrderExtensions.Describe"
+250:20 call "ToString" qualifier="order" in "Acme.Orders.OrderExtensions.Describe"
+256:22 type "IOrderRepository" in "Acme.Orders.OrderService"
+257:22 type "IPaymentGateway" in "Acme.Orders.OrderService"
+258:13 type "OrderPlaced" in "Acme.Orders.OrderService"
+260:25 type "IOrderRepository" in "Acme.Orders.OrderService.OrderService"
+260:54 type "IPaymentGateway" in "Acme.Orders.OrderService.OrderService"
+266:18 type "OrderPlaced" in "Acme.Orders.OrderService.Placed"
+272:18 type "Task" in "Acme.Orders.OrderService.PlaceAsync"
+272:23 type "Order" in "Acme.Orders.OrderService.PlaceAsync"
+272:58 type "IEnumerable" in "Acme.Orders.OrderService.PlaceAsync"
+274:25 construct "Order" in "Acme.Orders.OrderService.PlaceAsync"
+274:25 type "Order" in "Acme.Orders.OrderService.PlaceAsync"
+274:36 call "NewGuid" qualifier="Guid" in "Acme.Orders.OrderService.PlaceAsync"
+277:19 call "AddLine" qualifier="order" in "Acme.Orders.OrderService.PlaceAsync"
+277:37 call "LookupPrice" in "Acme.Orders.OrderService.PlaceAsync"
+279:20 call "TryPay" qualifier="order" in "Acme.Orders.OrderService.PlaceAsync"
+281:23 construct "InvalidOperationException" in "Acme.Orders.OrderService.PlaceAsync"
+281:23 type "InvalidOperationException" in "Acme.Orders.OrderService.PlaceAsync"
+283:21 call "Save" qualifier="_repository" in "Acme.Orders.OrderService.PlaceAsync"
+284:18 call "Invoke" qualifier="_placed" in "Acme.Orders.OrderService.PlaceAsync"
+284:35 construct "OrderEventArgs" in "Acme.Orders.OrderService.PlaceAsync"
+284:35 type "OrderEventArgs" in "Acme.Orders.OrderService.PlaceAsync"
+285:20 call "Yield" qualifier="Task" in "Acme.Orders.OrderService.PlaceAsync"
+291:16 call "Max" in "Acme.Orders.OrderService.LookupPrice"
+294:26 type "Order" in "Acme.Orders.OrderService.Export"
+296:21 call "Serialize" qualifier="Json" in "Acme.Orders.OrderService.Export"
+299:12 type "T" in "Acme.Orders.OrderService.Convert"
+299:27 type "IEnumerable" in "Acme.Orders.OrderService.Convert"
+301:23 call "OfType" qualifier="source" in "Acme.Orders.OrderService.Convert"
+301:30 type "T" in "Acme.Orders.OrderService.Convert"
+301:35 call "ToArray" in "Acme.Orders.OrderService.Convert"
+310:17 call "WriteLine" qualifier="Console" in "Acme.Orders.OrderService.Report"
+311:9 type "Action" in "Acme.Orders.OrderService.Report"
+311:49 call "WriteLine" qualifier="Console" in "Acme.Orders.OrderService.Report"
+312:9 call "log" in "Acme.Orders.OrderService.Report"
+313:28 type "Order" in "Acme.Orders.OrderService.Report"
+314:24 construct "List" in "Acme.Orders.OrderService.Report"
+314:24 type "List" in "Acme.Orders.OrderService.Report"
+314:29 type "Order" in "Acme.Orders.OrderService.Report"
+314:42 construct "Order" in "Acme.Orders.OrderService.Report"
+314:42 type "Order" in "Acme.Orders.OrderService.Report"
+315:17 call "WriteLine" qualifier="Console" in "Acme.Orders.OrderService.Report"
+# imports
+1:1-1:14 source="System"
+2:1-2:34 source="System.Collections.Generic"
+3:1-3:19 source="System.Linq"
+4:1-4:24 source="System.Threading"
+5:1-5:30 source="System.Threading.Tasks"
+6:1-6:26 source="System.Math"
+7:1-7:46 source="System.Text.Json.JsonSerializer" alias="Json"
+8:1-8:83 source="System.Func<Acme.Orders.Order, System.Threading.Tasks.Task<bool>>" alias="Handler"
+9:1-9:26 source="Acme.Common"
+# gaps

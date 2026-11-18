@@ -1,0 +1,44 @@
+name: Verify syntax modules
+
+# Rebuilding the syntax-analysis modules downloads the pinned wasi-sdk
+# (about 190 MB) and compiles every grammar twice, which takes several
+# minutes, so it runs only when a build input changes. Every push still
+# checks the committed modules against the manifest in Verify runtime.
+on:
+  pull_request:
+    paths:
+      - internal/syntaxwasm/modules/**
+      - internal/syntaxwasm/shim/**
+      - tools/build_syntax_modules.py
+      - THIRD_PARTY_LICENSES/syntax-analysis/**
+      - .github/workflows/verify-syntax-modules.yml
+  push:
+    branches:
+      - main
+    paths:
+      - internal/syntaxwasm/modules/**
+      - internal/syntaxwasm/shim/**
+      - tools/build_syntax_modules.py
+      - THIRD_PARTY_LICENSES/syntax-analysis/**
+      - .github/workflows/verify-syntax-modules.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-syntax-modules-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rebuild:
+    name: Rebuild syntax modules
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Rebuild twice and compare with the committed modules
+        run: python3 tools/build_syntax_modules.py

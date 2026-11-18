@@ -1,0 +1,343 @@
+# definitions
+16:1-16:37 constant "MAX_ENTRIES" exported
+17:1-17:38 constant "DEFAULT_CURRENCY"
+18:1-18:34 variable "VERSION" exported
+19:1-19:32 variable "LOAD_COUNT"
+21:1-21:26 type "AccountId" exported
+22:1-22:36 type "Shared" exported
+23:1-23:54 type "Result"
+27:1-32:2 enum "LedgerError" exported
+  28:5-28:30 constant "LedgerError.UnknownAccount" exported
+  29:5-29:52 constant "LedgerError.Overdrawn" exported
+  30:5-30:11 constant "LedgerError.Frozen" exported
+  31:5-31:20 constant "LedgerError.Storage" exported
+34:1-45:2 class "LedgerError" exported
+  35:5-44:6 method "LedgerError.fmt" exported
+47:1-47:33 class "LedgerError" exported
+49:1-53:2 class "LedgerError" exported
+  50:5-52:6 method "LedgerError.from" exported
+56:1-63:2 struct "Entry" exported
+  57:5-57:16 field "Entry.id" exported
+  58:5-58:27 field "Entry.account" exported
+  59:5-59:20 field "Entry.amount" exported
+  60:5-60:29 field "Entry.memo" exported
+  61:5-61:28 field "Entry.posted"
+  62:5-62:22 field "Entry.tags"
+66:1-69:2 struct "Totals" exported
+  67:5-67:21 field "Totals.credits" exported
+  68:5-68:20 field "Totals.debits" exported
+71:1-71:19 struct "Marker" exported
+73:1-73:31 struct "Pair" exported
+75:1-81:2 struct "Ledger" exported
+  76:5-76:15 field "Ledger.backend"
+  77:5-77:42 field "Ledger.accounts"
+  78:5-78:34 field "Ledger.entries"
+  79:5-79:37 field "Ledger.hooks"
+  80:5-80:17 field "Ledger.next_id"
+83:1-87:2 struct "Account"
+  84:5-84:18 field "Account.id"
+  85:5-85:17 field "Account.balance"
+  86:5-86:17 field "Account.frozen"
+89:1-92:2 struct "Bits" exported
+  90:5-90:19 field "Bits.whole" exported
+  91:5-91:25 field "Bits.halves" exported
+94:1-105:2 interface "Hook" exported
+  95:5-95:30 constant "Hook.NAME" exported
+  96:5-96:17 type "Hook.Output" exported
+  98:5-98:45 method "Hook.before" exported
+  100:5-102:6 method "Hook.after" exported
+  104:5-104:39 method "Hook.summary" exported
+107:1-111:2 interface "Auditor" exported
+  108:5-110:23 method "Auditor.audit" exported
+113:1-115:2 interface "Visitor"
+  114:5-114:38 method "Visitor.visit"
+117:1-143:2 class "Entry" exported
+  118:5-118:44 constant "Entry.EMPTY_TAG" exported
+  120:5-129:6 method "Entry.new" exported
+  131:5-134:6 method "Entry.with_memo" exported
+  136:5-138:6 method "Entry.is_credit"
+  140:5-142:6 method "Entry.tag_count"
+145:1-149:2 class "Entry" exported
+  146:5-148:6 method "Entry.default" exported
+151:1-231:2 class "Ledger" exported
+  152:5-162:6 method "Ledger.new" exported
+  164:5-170:6 method "Ledger.open_account" exported
+  172:5-195:6 method "Ledger.post" exported
+  197:5-201:6 method "Ledger.allocate_id"
+  203:5-211:6 method "Ledger.load"
+  213:5-223:6 method "Ledger.totals" exported
+  225:5-230:6 method "Ledger.add_hook" exported
+233:1-240:2 class "Ledger" exported
+  237:5-239:6 method "Ledger.drop" exported
+242:1-248:2 class "Totals" exported
+  243:5-247:6 method "Totals.visit" exported
+250:1-252:2 struct "CountingHook" exported
+  251:5-251:16 field "CountingHook.seen"
+254:1-265:2 class "CountingHook" exported
+  255:5-255:43 constant "CountingHook.NAME" exported
+  256:5-256:25 type "CountingHook.Output" exported
+  258:5-260:6 method "CountingHook.before" exported
+  262:5-264:6 method "CountingHook.summary" exported
+267:1-290:2 module "report" exported
+  271:5-271:33 constant "report.WIDTH" exported
+  273:5-279:6 function "report.render" exported
+  281:5-283:6 function "report.format_line"
+  285:5-289:6 module "report.csv" exported
+    286:9-288:10 function "report.csv.header" exported
+292:1-292:19 module "tests_support"
+294:1-298:2 macro "entry"
+300:1-302:2 function "compare" exported
+304:1-309:2 function "sync_remote" exported
+311:1-313:2 function "largest" exported
+315:1-317:2 function "make_adder"
+320:5-320:62 function "external_checksum"
+321:5-321:32 variable "EXTERNAL_LIMIT"
+325:1-345:2 module "tests"
+  329:5-336:6 function "tests.posts_credit"
+  340:5-344:6 function "tests.rejects_overdraft"
+347:1-356:2 function "main"
+# references
+22:17 type "T" in "Shared"
+22:22 type "Arc" in "Shared"
+22:26 type "Mutex" in "Shared"
+22:32 type "T" in "Shared"
+23:13 type "T" in "Result"
+23:31 type "Result" qualifier="std::result" in "Result"
+23:38 type "T" in "Result"
+23:41 type "LedgerError" in "Result"
+26:3 decorator "derive"
+26:10 inherit "Debug"
+26:17 inherit "Clone"
+26:24 inherit "PartialEq"
+28:20 type "AccountId" in "LedgerError.UnknownAccount"
+29:26 type "AccountId" in "LedgerError.Overdrawn"
+31:13 type "String" in "LedgerError.Storage"
+34:6 inherit "Display" in "LedgerError"
+34:6 type "Display" in "LedgerError"
+35:27 type "Formatter" in "LedgerError.fmt"
+35:50 type "Result" qualifier="fmt" in "LedgerError.fmt"
+37:48 call "write" in "LedgerError.fmt"
+38:26 type "Overdrawn" qualifier="LedgerError" in "LedgerError.fmt"
+39:17 call "write" in "LedgerError.fmt"
+41:38 call "write_str" qualifier="f" in "LedgerError.fmt"
+42:42 call "write" in "LedgerError.fmt"
+47:6 inherit "StdError" in "LedgerError"
+47:6 type "StdError" in "LedgerError"
+49:6 inherit "From" in "LedgerError"
+49:6 type "From" in "LedgerError"
+49:20 type "Error" qualifier="std::io" in "LedgerError"
+50:27 type "Error" qualifier="std::io" in "LedgerError.from"
+51:22 call "Storage" qualifier="LedgerError" in "LedgerError.from"
+51:34 call "to_string" qualifier="err" in "LedgerError.from"
+55:3 decorator "derive"
+55:10 inherit "Debug"
+55:17 inherit "Clone"
+55:24 inherit "Serialize"
+55:35 inherit "Deserialize"
+58:18 type "AccountId" in "Entry.account"
+60:15 type "Option" in "Entry.memo"
+60:22 type "String" in "Entry.memo"
+62:11 type "Vec" in "Entry.tags"
+62:15 type "String" in "Entry.tags"
+65:3 decorator "derive"
+65:10 inherit "Default"
+75:19 type "B" in "Ledger"
+75:22 type "Backend" in "Ledger"
+75:32 type "Memory" in "Ledger"
+76:14 type "B" in "Ledger.backend"
+77:15 type "HashMap" in "Ledger.accounts"
+77:23 type "AccountId" in "Ledger.accounts"
+77:34 type "Account" in "Ledger.accounts"
+78:14 type "BTreeMap" in "Ledger.entries"
+78:28 type "Entry" in "Ledger.entries"
+79:12 type "Vec" in "Ledger.hooks"
+79:16 type "Box" in "Ledger.hooks"
+79:24 type "Hook" in "Ledger.hooks"
+79:31 type "Send" in "Ledger.hooks"
+84:9 type "AccountId" in "Account.id"
+98:30 type "Entry" in "Hook.before"
+100:29 type "Entry" in "Hook.after"
+104:32 type "Output" qualifier="Self" in "Hook.summary"
+107:20 inherit "Hook" in "Auditor"
+107:20 type "Hook" in "Auditor"
+107:27 inherit "Send" in "Auditor"
+107:27 type "Send" in "Auditor"
+107:34 inherit "Sync" in "Auditor"
+107:34 type "Sync" in "Auditor"
+108:14 type "E" in "Auditor.audit"
+108:17 type "StdError" in "Auditor.audit"
+108:40 type "E" in "Auditor.audit"
+108:46 type "String" in "Auditor.audit"
+110:9 type "E" in "Auditor.audit"
+110:17 type "Debug" qualifier="fmt" in "Auditor.audit"
+113:30 type "T" in "Visitor"
+114:35 type "T" in "Visitor.visit"
+120:34 type "AccountId" in "Entry.new"
+121:9 construct "Entry" in "Entry.new"
+121:9 type "Entry" in "Entry.new"
+127:24 call "new" qualifier="Vec" in "Entry.new"
+131:43 type "Into" in "Entry.with_memo"
+131:48 type "String" in "Entry.with_memo"
+132:21 call "Some" in "Entry.with_memo"
+132:31 call "into" qualifier="memo" in "Entry.with_memo"
+141:19 call "len" qualifier="self.tags" in "Entry.tag_count"
+145:6 inherit "Default" in "Entry"
+145:6 type "Default" in "Entry"
+147:15 call "new" qualifier="Self" in "Entry.default"
+151:6 type "B" in "Ledger"
+151:9 type "Backend" in "Ledger"
+151:25 type "B" in "Ledger"
+152:25 type "B" in "Ledger.new"
+153:26 construct "Ledger" in "Ledger.new"
+153:26 type "Ledger" in "Ledger.new"
+155:32 call "new" qualifier="HashMap" in "Ledger.new"
+156:32 call "new" qualifier="BTreeMap" in "Ledger.new"
+157:25 call "new" qualifier="Vec" in "Ledger.new"
+160:16 call "load" qualifier="ledger" in "Ledger.new"
+160:23 call "expect" in "Ledger.new"
+164:40 type "AccountId" in "Ledger.open_account"
+164:59 type "Account" in "Ledger.open_account"
+165:23 call "entry" qualifier="self.accounts" in "Ledger.open_account"
+165:33 call "or_insert_with" in "Ledger.open_account"
+165:51 construct "Account" in "Ledger.open_account"
+165:51 type "Account" in "Ledger.open_account"
+172:37 type "AccountId" in "Ledger.post"
+172:64 type "Result" in "Ledger.post"
+175:14 call "get" qualifier="self\n            .accounts" in "Ledger.post"
+176:14 call "map" in "Ledger.post"
+177:14 call "ok_or" in "Ledger.post"
+177:33 call "UnknownAccount" qualifier="LedgerError" in "Ledger.post"
+179:20 call "Err" in "Ledger.post"
+179:37 construct "Overdrawn" qualifier="LedgerError" in "Ledger.post"
+179:37 type "Overdrawn" qualifier="LedgerError" in "Ledger.post"
+184:23 call "allocate_id" qualifier="self" in "Ledger.post"
+185:28 call "new" qualifier="Entry" in "Ledger.post"
+185:53 call "with_memo" in "Ledger.post"
+186:32 call "iter" qualifier="self.hooks" in "Ledger.post"
+187:22 call "before" qualifier="hook" in "Ledger.post"
+188:24 call "Err" in "Ledger.post"
+191:22 call "write" qualifier="self.backend" in "Ledger.post"
+192:22 call "insert" qualifier="self.entries" in "Ledger.post"
+193:23 call "get_mut" qualifier="self.accounts" in "Ledger.post"
+193:41 call "unwrap" in "Ledger.post"
+194:9 call "Ok" in "Ledger.post"
+203:27 type "Result" in "Ledger.load"
+207:35 call "read_all" qualifier="self.backend" in "Ledger.load"
+208:26 call "insert" qualifier="self.entries" in "Ledger.load"
+210:9 call "Ok" in "Ledger.load"
+213:29 type "Totals" in "Ledger.totals"
+214:34 call "default" qualifier="Totals" in "Ledger.totals"
+215:35 call "values" qualifier="self.entries" in "Ledger.totals"
+216:22 call "is_credit" qualifier="entry" in "Ledger.totals"
+225:21 type "H" in "Ledger.add_hook"
+225:41 type "H" in "Ledger.add_hook"
+227:9 type "H" in "Ledger.add_hook"
+227:12 type "Hook" in "Ledger.add_hook"
+227:19 type "Send" in "Ledger.add_hook"
+229:20 call "push" qualifier="self.hooks" in "Ledger.add_hook"
+229:30 call "new" qualifier="Box" in "Ledger.add_hook"
+233:6 type "B" in "Ledger"
+233:9 inherit "Drop" in "Ledger"
+233:9 type "Drop" in "Ledger"
+233:25 type "B" in "Ledger"
+235:5 type "B" in "Ledger"
+235:8 type "Backend" in "Ledger"
+238:30 call "flush" qualifier="self.backend" in "Ledger.drop"
+242:10 inherit "Visitor" in "Totals"
+242:10 type "Visitor" in "Totals"
+242:22 type "Entry" in "Totals"
+243:35 type "Entry" in "Totals.visit"
+244:17 call "is_credit" qualifier="item" in "Totals.visit"
+254:6 inherit "Hook" in "CountingHook"
+254:6 type "Hook" in "CountingHook"
+258:30 type "Entry" in "CountingHook.before"
+273:19 type "B" in "report.render"
+273:22 type "Backend" in "report.render"
+273:40 type "Ledger" in "report.render"
+273:47 type "B" in "report.render"
+273:54 type "String" in "report.render"
+274:30 call "new" qualifier="Vec" in "report.render"
+275:43 call "iter" qualifier="ledger.entries" in "report.render"
+276:19 call "push" qualifier="lines" in "report.render"
+276:24 call "format_line" in "report.render"
+278:15 call "join" qualifier="lines" in "report.render"
+281:37 type "Entry" in "report.format_line"
+281:47 type "String" in "report.format_line"
+282:9 call "format" in "report.format_line"
+300:20 type "Entry" in "compare"
+300:31 type "Entry" in "compare"
+300:41 type "Ordering" in "compare"
+301:14 call "cmp" qualifier="a.amount" in "compare"
+301:29 call "then_with" in "compare"
+301:47 call "cmp" qualifier="a.id" in "compare"
+304:26 type "T" in "sync_remote"
+304:29 type "Read" in "sync_remote"
+304:48 type "T" in "sync_remote"
+304:54 type "Result" in "sync_remote"
+305:30 call "new" qualifier="String" in "sync_remote"
+306:12 call "read_to_string" qualifier="source" in "sync_remote"
+307:17 type "Vec" in "sync_remote"
+307:21 type "Entry" in "sync_remote"
+307:42 call "from_str" qualifier="serde_json" in "sync_remote"
+307:60 call "map_err" in "sync_remote"
+307:85 call "Storage" qualifier="LedgerError" in "sync_remote"
+307:95 call "to_string" qualifier="e" in "sync_remote"
+308:5 call "Ok" in "sync_remote"
+308:15 call "len" qualifier="parsed" in "sync_remote"
+311:34 type "Entry" in "largest"
+311:45 type "Option" in "largest"
+311:56 type "Entry" in "largest"
+312:13 call "iter" qualifier="entries" in "largest"
+312:20 call "max_by" in "largest"
+312:34 call "compare" in "largest"
+315:31 type "Fn" in "make_adder"
+324:3 decorator "cfg"
+328:7 decorator "test" in "tests"
+330:34 call "new" qualifier="Ledger" in "tests.posts_credit"
+330:46 call "default" qualifier="Memory" in "tests.posts_credit"
+331:16 call "open_account" qualifier="ledger" in "tests.posts_credit"
+332:25 call "post" qualifier="ledger" in "tests.posts_credit"
+332:37 call "unwrap" in "tests.posts_credit"
+333:9 call "assert_eq" in "tests.posts_credit"
+334:17 call "entry" in "tests.posts_credit"
+335:9 call "assert" in "tests.posts_credit"
+338:7 decorator "test" in "tests"
+339:7 decorator "should_panic" in "tests"
+341:25 type "Ledger" in "tests.rejects_overdraft"
+341:42 call "new" qualifier="Ledger" in "tests.rejects_overdraft"
+341:54 call "default" qualifier="Memory" in "tests.rejects_overdraft"
+342:16 call "open_account" qualifier="ledger" in "tests.rejects_overdraft"
+343:16 call "post" qualifier="ledger" in "tests.rejects_overdraft"
+343:28 call "unwrap" in "tests.rejects_overdraft"
+348:26 call "new" qualifier="Ledger" in "main"
+348:38 call "default" qualifier="Memory" in "main"
+349:32 call "render" qualifier="crate::report" in "main"
+350:26 call "size_of" qualifier="std::mem" in "main"
+350:36 type "Entry" in "main"
+351:17 call "make_adder" in "main"
+352:5 call "println" in "main"
+354:16 call "Pair" in "main"
+# imports
+3:1-3:43 source="std::collections" name="BTreeMap"
+3:1-3:43 source="std::collections" name="HashMap"
+4:1-4:42 source="std::fmt" name="self"
+4:1-4:42 source="std::fmt" name="Display"
+4:1-4:42 source="std::fmt" name="Formatter"
+5:1-5:33 source="std::io" name="Read" alias="_"
+5:1-5:33 source="std::io" name="Write"
+6:1-6:29 source="std::sync" name="Arc"
+6:1-6:29 source="std::sync" name="Mutex"
+7:1-7:52 source="std" name="cmp::Ordering"
+7:1-7:52 source="std" name="error::Error" alias="StdError"
+9:1-9:21 source="crate::money" name="*"
+10:1-10:65 source="crate::storage::backend" name="Backend"
+10:1-10:65 source="crate::storage::backend" name="MemoryBackend" alias="Memory"
+11:1-11:37 source="serde" name="Deserialize"
+11:1-11:37 source="serde" name="Serialize"
+13:1-13:20 source="alloc"
+14:1-14:31 source="core" alias="std_core"
+268:5-268:32 source="super" name="Entry" in "report"
+268:5-268:32 source="super" name="Ledger" in "report"
+269:5-269:42 source="crate::storage::backend" name="Backend" in "report"
+326:5-326:18 source="super" name="*" in "tests"
+# gaps

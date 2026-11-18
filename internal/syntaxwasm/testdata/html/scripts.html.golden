@@ -1,0 +1,26 @@
+# definitions
+4:3-4:21 variable "theme"
+10:3-10:47 variable "config"
+13:3-13:17 variable "app"
+15:7-17:8 function "boot"
+18:7-21:8 class "Store"
+  19:9-19:43 constructor "Store.constructor"
+  20:9-20:45 method "Store.add"
+26:18-26:46 constant "ready"
+29:5-29:43 interface "Options"
+  29:25-29:41 field "Options.verbose"
+30:5-30:67 function "configure"
+35:3-35:22 variable "side"
+# references
+16:9 call "render" in "boot"
+16:31 call "getElementById" qualifier="document" in "boot"
+20:32 call "push" qualifier="this.items" in "Store.add"
+26:26 call "mount" in "ready"
+30:33 type "Options" in "configure"
+30:50 call "apply" in "configure"
+35:4 construct "x-panel" in "side"
+# imports
+8:11-8:26 source="vendor.js"
+25:5-25:40 source="./mount.js" name="mount"
+# gaps
+33:5-33:23 parse_error

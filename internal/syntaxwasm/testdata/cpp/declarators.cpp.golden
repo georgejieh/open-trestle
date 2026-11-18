@@ -1,0 +1,16 @@
+# definitions
+2:1-2:37 module "outer::inner" exported
+  2:26-2:35 function "outer::inner.g" exported
+3:1-3:26 function "g" exported container="inner"
+4:1-4:23 method "draw" exported container="Widget"
+5:1-5:29 variable "size" exported
+5:29-5:41 variable "count" exported
+6:1-6:19 variable "first" exported
+6:19-6:38 variable "second" exported
+7:1-7:20 constant "limit"
+7:20-7:40 variable "cursor" exported
+# references
+6:13 call "make" in "first"
+6:30 call "build" in "second"
+# imports
+# gaps

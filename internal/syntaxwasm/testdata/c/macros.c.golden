@@ -1,0 +1,34 @@
+# definitions
+5:1-7:1 macro "DEFINE_OP"
+8:1-9:1 macro "FOR_EACH"
+18:1-21:2 struct "op"
+  19:5-19:22 field "op.name"
+  20:5-20:25 field "op.fn"
+23:1-26:3 constant "op_table"
+29:1-29:28 variable "debug_level"
+31:1-31:28 variable "debug_level"
+34:1-50:2 function "apply" exported
+56:1-60:2 function "macros_init"
+# references
+10:1 call "DEFINE_OP"
+11:1 call "DEFINE_OP"
+13:1 call "MODULE_LICENSE"
+14:1 call "EXPORT_SYMBOL"
+15:8 call "DEFINE_MUTEX"
+16:1 call "LIST_HEAD"
+23:21 type "op" in "op_table"
+40:5 call "FOR_EACH" in "apply"
+45:13 call "strcmp" in "apply"
+46:32 call "fn" in "apply"
+52:1 call "FOR_EACH"
+58:5 call "list_add" in "macros_init"
+61:1 call "module_init"
+# imports
+2:1-3:1 source="<linux/module.h>"
+3:1-4:1 source="list.h"
+# gaps
+10:22-11:1 parse_error
+11:22-12:1 parse_error
+40:19-40:20 parse_error
+52:15-52:16 parse_error
+56:12-56:18 parse_error

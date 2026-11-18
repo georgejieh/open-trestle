@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fleet dashboard</title>
+  <base href="/app/">
+  <link rel="icon" href="img/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/reset.css">
+  <link rel="stylesheet" href="css/dashboard.css" media="screen">
+  <link rel="preload" href="fonts/inter.woff2" as="font" crossorigin>
+  <link rel="canonical" href="https://example.test/fleet">
+  <link rel="alternate" type="application/rss+xml" href="feeds/fleet.xml">
+  <style id="theme-vars">
+    :root { --accent: #1b6ef3; --gap: 12px; }
+    .panel { padding: var(--gap); border: 1px solid #ccd; }
+  </style>
+  <script src="js/vendor/chart.min.js" defer></script>
+  <script src="js/app.js" type="module"></script>
+  <script id="bootstrap-data" type="application/json">
+    {"user": "ops", "region": "eu-west", "refresh": 30}
+  </script>
+  <script id="inline-boot">
+    window.addEventListener('load', function () { startPolling(30); });
+  </script>
+</head>
+<body class="theme-light">
+  <a class="skip" href="#main-content">Skip to content</a>
+
+  <header id="site-header" class="bar">
+    <a href="/" class="logo"><img src="img/logo.png" alt="Fleet" width="32" height="32"></a>
+    <nav id="primary-nav" aria-label="Primary">
+      <ul>
+        <li><a href="overview.html">Overview</a></li>
+        <li><a href="vehicles/index.html">Vehicles</a></li>
+        <li><a href="drivers.html#active">Drivers</a></li>
+        <li><a href="reports/monthly.pdf" download>Reports</a></li>
+        <li><a href="https://status.example.test/">Status</a></li>
+        <li><a href="mailto:ops@example.test">Contact</a></li>
+        <li><a href="tel:+15550100">Call</a></li>
+        <li><a href="javascript:void(0)" id="help-link">Help</a></li>
+      </ul>
+    </nav>
+    <form id="search-form" action="/search" method="get" role="search">
+      <label for="search-box">Search</label>
+      <input id="search-box" name="q" type="search" placeholder="Plate or driver">
+      <button type="submit" formaction="/search/advanced">Go</button>
+    </form>
+    <user-menu id="account-menu" name="ops" data-role="admin"></user-menu>
+  </header>
+
+  <main id="main-content">
+    <section id="summary" class="panel">
+      <h1>Today</h1>
+      <div class="cards">
+        <stat-card id="card-active" label="Active" value="48"></stat-card>
+        <stat-card id="card-idle" label="Idle" value="12"></stat-card>
+        <stat-card id="card-service" label="In service" value="5"></stat-card>
+        <my-Gauge id="gauge-fuel" min="0" max="100"></my-Gauge>
+      </div>
+      <p class="note">Updated <time datetime="2026-11-17T08:00:00Z">08:00</time>.</p>
+    </section>
+
+    <section id="map-section" class="panel">
+      <h2>Map</h2>
+      <fleet-map id="fleet-map" center="52.37,4.89" zoom="9">
+        <map-layer id="layer-roads" src="geo/roads.json"></map-layer>
+        <map-layer id="layer-depots" src="geo/depots.json"></map-layer>
+      </fleet-map>
+      <noscript>
+        <img src="img/map-static.png" srcset="img/map-static@2x.png 2x" alt="Static map">
+      </noscript>
+      <iframe id="traffic-frame" src="https://traffic.example.test/embed?city=ams" title="Traffic" loading="lazy"></iframe>
+    </section>
+
+    <section id="vehicles" class="panel">
+      <h2>Vehicles</h2>
+      <table id="vehicle-table">
+        <thead>
+          <tr><th>Plate</th><th>Driver</th><th>Status</th><th>Fuel</th></tr>
+        </thead>
+        <tbody>
+          <tr id="row-ab-123"><td>AB-123</td><td>Rivera</td><td>Active</td><td>71%</td></tr>
+          <tr id="row-cd-456"><td>CD-456</td><td>Okafor</td><td>Idle</td><td>43%</td></tr>
+          <tr id="row-ef-789"><td>EF-789</td><td>Lindqvist</td><td>Service</td><td>88%</td></tr>
+        </tbody>
+      </table>
+      <template id="row-template">
+        <tr class="vehicle-row">
+          <td><a href="vehicles/detail.html?id=0" class="plate"></a></td>
+          <td class="driver"></td>
+          <td><status-pill state="idle"></status-pill></td>
+          <td><progress-ring value="0" max="100"></progress-ring></td>
+        </tr>
+      </template>
+    </section>
+
+    <section id="media" class="panel">
+      <h2>Briefing</h2>
+      <video id="briefing-video" controls poster="img/briefing.jpg" preload="none">
+        <source src="media/briefing.webm" type="video/webm">
+        <source src="media/briefing.mp4" type="video/mp4">
+        <track kind="captions" src="media/briefing.en.vtt" srclang="en" label="English">
+        <p>Your browser cannot play this video.</p>
+      </video>
+      <audio id="alert-sound" src="media/alert.ogg" preload="auto"></audio>
+      <picture>
+        <source srcset="img/hero.avif" type="image/avif">
+        <img id="hero-image" src="img/hero.jpg" alt="Depot at dawn">
+      </picture>
+      <object id="legacy-chart" data="media/chart.swf" type="application/x-shockwave-flash"></object>
+      <embed id="spec-sheet" src="docs/spec.pdf" type="application/pdf">
+      <svg id="legend" width="120" height="20" role="img" aria-label="Legend">
+        <use href="img/sprites.svg#legend"></use>
+        <rect width="20" height="20" fill="#1b6ef3"/>
+      </svg>
+    </section>
+
+    <section id="settings" class="panel">
+      <h2>Settings</h2>
+      <form id="settings-form" action="settings/save.php" method="post" enctype="multipart/form-data">
+        <fieldset>
+          <legend>Refresh</legend>
+          <label for="refresh-seconds">Seconds</label>
+          <input id="refresh-seconds" name="refresh" type="number" min="5" value="30">
+          <label for="theme-select">Theme</label>
+          <select id="theme-select" name="theme">
+            <option value="light" selected>Light</option>
+            <option value="dark">Dark</option>
+          </select>
+          <label><input type="checkbox" name="alerts" checked> Alerts</label>
+          <input type="image" id="save-image" src="img/save.png" alt="Save">
+          <input type="file" name="logo" accept="image/*">
+        </fieldset>
+        <button id="save-button" type="submit">Save</button>
+        <button type="submit" formaction="settings/reset.php" formnovalidate>Reset</button>
+      </form>
+      <form id="empty-action" action="" method="post"></form>
+      <dialog id="confirm-dialog">
+        <p>Discard changes?</p>
+        <form method="dialog">
+          <button value="cancel">Cancel</button>
+          <button value="ok">Discard</button>
+        </form>
+      </dialog>
+    </section>
+
+    <section id="logs" class="panel">
+      <h2>Recent events</h2>
+      <ol id="event-list">
+        <li id="event-1">Vehicle AB-123 left depot</li>
+        <li id="event-2">Driver Okafor started shift</li>
+        <li id="event-3">Fuel alert on EF-789</li>
+      </ol>
+      <pre id="raw-log"><code>
+08:00 sync ok
+08:05 sync ok
+</code></pre>
+      <details id="log-help">
+        <summary>About the log</summary>
+        <p>Events older than a day are archived to <a href="archive/events.html">the archive</a>.</p>
+      </details>
+    </section>
+  </main>
+
+  <aside id="sidebar">
+    <h2>Shortcuts</h2>
+    <ul>
+      <li><a href="vehicles/new.html">Add vehicle</a></li>
+      <li><a href="drivers/new.html">Add driver</a></li>
+      <li><a href="#settings">Settings</a></li>
+    </ul>
+    <br>
+    <hr>
+    <img id="sidebar-badge" src="img/badge.png" alt="">
+  </aside>
+
+  <footer id="site-footer">
+    <p>&copy; 2026 Fleet Co.</p>
+    <a href="legal/terms.html">Terms</a>
+    <a href="legal/privacy.html">Privacy</a>
+    <script src="js/analytics.js" async></script>
+  </footer>
+
+  <section id="reports" class="panel">
+    <h2>Reports</h2>
+    <report-list id="report-list" source="reports/index.json">
+      <report-item id="report-2026-10" href="reports/2026-10.pdf" title="October">
+        <a href="reports/2026-10.pdf">October 2026</a>
+        <a href="reports/2026-10.csv" download="october.csv">CSV</a>
+      </report-item>
+      <report-item id="report-2026-09" href="reports/2026-09.pdf" title="September">
+        <a href="reports/2026-09.pdf">September 2026</a>
+        <a href="reports/2026-09.csv" download="september.csv">CSV</a>
+      </report-item>
+      <report-item id="report-2026-08" href="reports/2026-08.pdf" title="August">
+        <a href="reports/2026-08.pdf">August 2026</a>
+        <a href="reports/2026-08.csv" download="august.csv">CSV</a>
+      </report-item>
+    </report-list>
+    <table id="cost-table" class="grid">
+      <caption>Cost per kilometre</caption>
+      <colgroup>
+        <col>
+        <col span="2">
+      </colgroup>
+      <thead>
+        <tr><th scope="col">Month</th><th scope="col">Fuel</th><th scope="col">Service</th></tr>
+      </thead>
+      <tbody>
+        <tr id="cost-oct"><th scope="row">October</th><td>0.21</td><td>0.08</td></tr>
+        <tr id="cost-sep"><th scope="row">September</th><td>0.22</td><td>0.07</td></tr>
+        <tr id="cost-aug"><th scope="row">August</th><td>0.20</td><td>0.11</td></tr>
+      </tbody>
+      <tfoot>
+        <tr id="cost-avg"><th scope="row">Average</th><td>0.21</td><td>0.09</td></tr>
+      </tfoot>
+    </table>
+    <figure id="cost-chart">
+      <img src="img/cost-chart.png" alt="Cost chart" usemap="#cost-areas">
+      <map name="cost-areas">
+        <area shape="rect" coords="0,0,80,80" href="reports/2026-10.pdf" alt="October">
+        <area shape="rect" coords="80,0,160,80" href="reports/2026-09.pdf" alt="September">
+        <area shape="default" nohref alt="Other">
+      </map>
+      <figcaption>Fuel and service cost</figcaption>
+    </figure>
+  </section>
+
+  <section id="support" class="panel">
+    <h2>Support</h2>
+    <form id="support-form" action="support/ticket" method="post">
+      <label for="ticket-subject">Subject</label>
+      <input id="ticket-subject" name="subject" type="text" required>
+      <label for="ticket-body">Message</label>
+      <textarea id="ticket-body" name="body" rows="4"></textarea>
+      <label for="ticket-kind">Kind</label>
+      <select id="ticket-kind" name="kind">
+        <optgroup label="Hardware">
+          <option value="tracker">Tracker</option>
+          <option value="sensor">Sensor</option>
+        </optgroup>
+        <optgroup label="Software">
+          <option value="app">App</option>
+          <option value="api">API</option>
+        </optgroup>
+      </select>
+      <input type="hidden" name="source" value="dashboard">
+      <button id="ticket-submit" type="submit">Send</button>
+    </form>
+    <dl id="support-hours">
+      <dt>Weekdays</dt>
+      <dd>07:00 to 19:00</dd>
+      <dt>Weekends</dt>
+      <dd>09:00 to 15:00</dd>
+    </dl>
+    <ul id="support-links">
+      <li><a href="support/faq.html">FAQ</a></li>
+      <li><a href="support/status.html">Service status</a></li>
+      <li><a href="//cdn.example.test/guide.pdf">Guide</a></li>
+      <li><a href="../shared/contact.html">Contact</a></li>
+    </ul>
+  </section>
+
+  <script type="importmap">
+    {"imports": {"chart": "./js/vendor/chart.min.js"}}
+  </script>
+  <script>
+    document.getElementById('help-link').addEventListener('click', openHelp);
+    function openHelp() { document.getElementById('confirm-dialog').showModal(); }
+  </script>
+  <script src="js/boot.js"></script>
+</body>
+</html>

@@ -1,0 +1,56 @@
+# definitions
+3:1-5:23 struct "point_t"
+  4:5-4:10 field "point_t.x"
+  4:10-4:14 field "point_t.y"
+  5:13-5:22 type "point_t.point_ptr"
+7:9-14:2 struct "value"
+  8:5-8:12 field "value.l"
+  9:5-9:14 field "value.d"
+  10:5-13:13 field "value.parts"
+    11:9-11:16 field "value.parts.lo"
+    12:9-12:16 field "value.parts.hi"
+14:3-14:10 type "value_t"
+16:1-21:2 struct "list"
+  17:5-17:23 field "list.next"
+  18:5-18:49 field "list.visit"
+  19:5-19:19 field "list.name"
+  20:5-20:26 field "list.table"
+23:1-23:61 enum "flags"
+  23:14-23:24 constant "flags.F_NONE"
+  23:26-23:41 constant "flags.F_READ"
+  23:43-23:59 constant "flags.F_WRITE"
+25:1-25:32 type "handler_fn"
+26:1-26:27 type "buffer_t"
+28:1-28:23 variable "counters"
+28:23-28:34 variable "total"
+28:34-28:42 variable "last"
+29:1-29:26 constant "ratio" exported
+30:1-30:58 constant "greetings"
+31:1-31:32 variable "mutable_text" exported
+32:1-32:27 constant "fixed_ptr" exported
+33:1-33:29 variable "callback" exported
+34:1-34:20 variable "ticks" exported
+36:1-36:36 function "select_handler" exported
+37:1-40:2 function "select_handler" exported
+42:1-48:2 function "scale"
+50:1-63:2 function "visit_all" exported
+65:1-65:55 function "fatal" exported
+66:1-66:33 function "checked" exported
+68:1-73:2 function "old_style" exported
+# references
+17:12 type "list" in "list.next"
+18:26 type "list" in "list.visit"
+44:5 type "va_list" in "scale"
+45:5 call "va_start" in "scale"
+46:5 call "va_end" in "scale"
+50:23 type "list" in "visit_all"
+53:12 type "list" in "visit_all"
+54:5 type "point_t" in "visit_all"
+55:5 type "value_t" in "visit_all"
+55:18 type "value_t" in "visit_all"
+57:14 call "visit" qualifier="cur" in "visit_all"
+65:16 decorator "noreturn" in "fatal"
+66:3 decorator "nodiscard" in "checked"
+# imports
+1:1-2:1 source="<stdarg.h>"
+# gaps

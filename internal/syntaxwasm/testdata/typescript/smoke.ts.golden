@@ -1,0 +1,40 @@
+# definitions
+4:8-7:2 interface "Store" exported
+  5:3-5:34 method "Store.get"
+  6:3-6:15 field "Store.size"
+9:8-9:34 type "Id" exported
+11:8-11:37 enum "Color" exported
+  11:21-11:24 constant "Color.Red"
+  11:26-11:35 constant "Color.Green"
+14:8-19:2 class "Repo" exported
+  15:3-15:39 field "Repo.items"
+  16:3-16:49 constructor "Repo.constructor"
+  17:3-17:66 method "Repo.get"
+  18:3-18:24 field "Repo.size"
+21:1-21:63 module "Util"
+  21:25-21:61 function "Util.id"
+22:9-22:45 function "external"
+# references
+4:24 type "T" in "Store"
+4:35 inherit "Base" in "Store"
+4:35 type "Base" in "Store"
+4:40 type "T" in "Store"
+5:21 type "T" in "Store.get"
+13:2 decorator "Injectable"
+13:2 call "Injectable"
+14:28 type "T" in "Repo"
+14:42 inherit "Store" in "Repo"
+14:42 type "Store" in "Repo"
+14:48 type "T" in "Repo"
+15:23 construct "Map" in "Repo.items"
+15:35 type "T" in "Repo.items"
+16:39 type "Client" qualifier="Db" in "Repo.constructor"
+17:21 type "T" in "Repo.get"
+17:55 call "get" qualifier="this.items" in "Repo.get"
+21:40 type "Id" in "Util.id"
+21:45 type "Id" in "Util.id"
+22:30 type "Request" in "external"
+# imports
+1:1-1:40 source="express" name="Request"
+2:1-2:27 source="fs" alias="fs"
+# gaps

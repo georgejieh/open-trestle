@@ -1,0 +1,86 @@
+# definitions
+8:1-85:2 module "sched" exported
+  12:1-17:2 module "sched.detail" exported
+    13:1-16:2 struct "sched.detail.Node" exported
+      14:5-14:15 field "sched.detail.Node.value" exported
+      15:5-15:26 field "sched.detail.Node.next" exported
+  19:1-19:32 enum "sched.Mode" exported
+    19:19-19:24 constant "sched.Mode.Eager" exported
+    19:26-19:30 constant "sched.Mode.Lazy" exported
+  22:1-22:47 type "sched.Runnable" exported
+  25:1-56:2 class "sched.Pool" exported
+    27:5-27:26 type "sched.Pool.value_type" exported
+    28:5-28:48 constant "sched.Pool.kCapacity" exported
+    29:5-29:26 field "sched.Pool.instances" exported
+    31:5-31:37 constructor "sched.Pool.Pool" exported
+    32:5-32:33 constructor "sched.Pool.Pool" exported
+    33:5-33:13 method "sched.Pool.~Pool" exported
+    35:5-35:18 method "sched.Pool.acquire" exported
+    36:5-36:36 method "sched.Pool.release" exported
+    38:5-38:46 method "sched.Pool.operator==" exported
+    39:27-39:48 method "sched.Pool.adopt" exported
+    41:5-44:6 struct "sched.Pool.Stats" exported
+      42:9-42:30 field "sched.Pool.Stats.hits" exported
+      43:9-43:32 field "sched.Pool.Stats.misses" exported
+    45:5-45:43 method "sched.Pool.stats" exported
+    48:5-48:33 method "sched.Pool.on_exhausted"
+    52:5-52:23 field "sched.Pool.name_"
+    53:5-53:27 field "sched.Pool.items_"
+    54:5-54:27 field "sched.Pool.size_"
+    55:5-55:18 field "sched.Pool.stats_"
+  58:1-66:2 struct "sched.Config" exported
+    59:5-59:21 field "sched.Config.workers" exported
+    60:5-60:23 field "sched.Config.label" exported
+    61:5-61:30 method "sched.Config.defaults" exported
+    63:5-63:21 field "sched.Config.secret_"
+    65:5-65:22 field "sched.Config.visible_" exported
+  68:1-71:2 function "sched.clamp" exported
+  73:1-73:35 constant "sched.kHeaderConstant" exported
+  74:1-74:22 variable "sched.g_counter" exported
+  75:1-75:27 variable "sched.g_internal"
+  77:1-80:2 module "sched.namespace"
+    78:1-78:29 function "sched.namespace.helper_in_header"
+    79:1-79:36 class "sched.namespace.Hidden"
+      79:24-79:34 method "sched.namespace.Hidden.go"
+  82:1-82:65 function "sched.make_scheduler" exported
+  83:1-83:26 function "sched.shared_pool" exported
+# references
+10:7 type "Scheduler" in "sched"
+15:5 type "Node" in "sched.detail.Node.next"
+22:29 type "T" in "sched.Runnable"
+22:38 call "run" qualifier="t" in "sched.Runnable"
+24:28 type "size_t" qualifier="std" in "sched"
+25:26 inherit "enable_shared_from_this" qualifier="std" in "sched.Pool"
+25:50 type "Pool" in "sched.Pool"
+25:55 type "T" in "sched.Pool"
+25:58 type "N" in "sched.Pool"
+25:81 inherit "Node" qualifier="detail" in "sched.Pool"
+27:24 type "T" in "sched.Pool.value_type"
+28:27 type "size_t" qualifier="std" in "sched.Pool.kCapacity"
+31:24 type "string" qualifier="std" in "sched.Pool.Pool"
+32:16 type "Pool" in "sched.Pool.Pool"
+35:5 type "T" in "sched.Pool.acquire"
+36:18 type "T" in "sched.Pool.release"
+38:27 type "Pool" in "sched.Pool.operator=="
+39:38 type "U" in "sched.Pool.adopt"
+42:14 type "size_t" qualifier="std" in "sched.Pool.Stats.hits"
+43:14 type "size_t" qualifier="std" in "sched.Pool.Stats.misses"
+45:5 type "Stats" in "sched.Pool.stats"
+51:18 type "Scheduler" in "sched.Pool"
+52:10 type "string" qualifier="std" in "sched.Pool.name_"
+53:10 type "vector" qualifier="std" in "sched.Pool.items_"
+53:17 type "T" in "sched.Pool.items_"
+54:10 type "size_t" qualifier="std" in "sched.Pool.size_"
+55:5 type "Stats" in "sched.Pool.stats_"
+60:10 type "string" qualifier="std" in "sched.Config.label"
+61:12 type "Config" in "sched.Config.defaults"
+82:6 type "unique_ptr" qualifier="std" in "sched.make_scheduler"
+82:17 type "Scheduler" in "sched.make_scheduler"
+82:49 type "Config" in "sched.make_scheduler"
+83:1 type "Pool" in "sched.shared_pool"
+# imports
+3:1-4:1 source="<cstddef>"
+4:1-5:1 source="<memory>"
+5:1-6:1 source="<string>"
+6:1-7:1 source="<vector>"
+# gaps

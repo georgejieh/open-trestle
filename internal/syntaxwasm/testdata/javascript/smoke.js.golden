@@ -1,0 +1,27 @@
+# definitions
+3:7-3:25 constant "fs"
+4:14-4:23 constant "LIMIT" exported
+5:5-5:16 variable "counter"
+7:16-11:2 class "Widget" exported
+  8:3-8:14 field "Widget.#secret"
+  9:3-9:56 constructor "Widget.constructor"
+  10:3-10:66 method "Widget.render"
+13:8-16:2 function "helper" exported
+  14:9-14:41 function "helper.inner"
+18:7-18:46 constant "handlers" exported
+  18:20-18:44 function "handlers.onClick"
+# references
+3:12 call "require" in "fs"
+7:43 inherit "Component" qualifier="React" in "Widget"
+10:28 construct "Body" qualifier="Panel" in "Widget.render"
+10:45 call "join" qualifier="path" in "Widget.render"
+14:26 call "readFileSync" qualifier="fs" in "helper.inner"
+15:10 call "inner" in "helper"
+18:35 call "helper" in "handlers.onClick"
+# imports
+1:1-1:64 source="react" alias="React"
+1:1-1:64 source="react" name="useEffect"
+1:1-1:64 source="react" name="useState" alias="useLocal"
+2:1-2:35 source="node:path" alias="path"
+3:12-3:25 source="fs" in "fs"
+# gaps

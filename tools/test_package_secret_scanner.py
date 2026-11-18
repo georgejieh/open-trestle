@@ -630,6 +630,7 @@ class ReleaseContractTest(unittest.TestCase):
             "aws-sdk-go-v2-1.45.1-Apache-2.0.txt",
             "aws-smithy-go-1.28.1-Apache-2.0.txt",
             "golang-x-sync-v0.22.0-BSD-3-Clause.txt",
+            "golang-x-sys-v0.44.0-BSD-3-Clause.txt",
             "golang-x-text-v0.41.0-BSD-3-Clause.txt",
             "lucide-react-1.39.0-ISC.txt",
             "pgpassfile-v1.0.0-MIT.txt",
@@ -637,6 +638,7 @@ class ReleaseContractTest(unittest.TestCase):
             "pgx-v5.9.2-MIT.txt",
             "puddle-v2.2.2-MIT.txt",
             "react-family-19.2.8-MIT.txt",
+            "wazero-v1.12.0-Apache-2.0.txt",
         }
         license_root = repository_root / "THIRD_PARTY_LICENSES"
         self.assertEqual(

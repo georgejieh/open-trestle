@@ -1,0 +1,33 @@
+# definitions
+2:1-4:4 module "Billing" exported
+  3:3-3:22 module "Billing.Ledgers" exported
+6:1-25:4 class "Invoice" exported container="Billing"
+  7:3-7:30 method "Invoice.number" exported
+  7:3-7:30 method "Invoice.total" exported
+  8:3-8:20 method "Invoice.note" exported
+  9:3-9:25 method "Invoice.status" exported
+  10:11-10:30 method "Invoice.secret"
+  12:3-12:45 method "Invoice.paid?" exported
+  13:3-16:6 method "Invoice.void!" exported
+  19:3-19:31 method "Invoice.amount" exported
+  20:3-20:22 method "Invoice.to_s" exported
+  24:3-24:27 method "Invoice.audit_trail"
+27:1-30:4 module "Export" exported container="Ledgers"
+  28:3-28:17 constant "Export.FORMAT" exported
+  29:3-29:35 constant "Export.DEFAULT" exported container="Ledgers"
+# references
+7:3 call "attr_reader" in "Invoice"
+8:3 call "attr_writer" in "Invoice"
+9:3 call "attr_accessor" in "Invoice"
+10:3 call "private" in "Invoice"
+10:11 call "attr_reader" in "Invoice"
+12:3 call "define_method" in "Invoice"
+13:3 call "define_method" in "Invoice"
+14:10 call "status" qualifier="self" in "Invoice.void!"
+15:5 call "notify" in "Invoice.void!"
+17:3 call "define_method" in "Invoice"
+19:3 call "alias_method" in "Invoice"
+22:3 call "protected" in "Invoice"
+24:3 call "attr_reader" in "Invoice"
+# imports
+# gaps

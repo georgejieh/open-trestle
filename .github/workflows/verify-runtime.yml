@@ -75,6 +75,8 @@ jobs:
           cache: false
       - name: Verify root module sums
         run: GOWORK=off GOTOOLCHAIN=go1.26.11 go mod verify
+      - name: Verify committed syntax modules
+        run: python3 tools/build_syntax_modules.py --committed
       - name: Run tests
         run: |
           umask 022

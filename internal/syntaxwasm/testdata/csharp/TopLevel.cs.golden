@@ -1,0 +1,11 @@
+# definitions
+6:1-6:29 function "Compute"
+8:1-11:2 class "Helper"
+  10:5-10:36 method "Helper.Run"
+# references
+3:13 call "Compute"
+4:9 call "WriteLine" qualifier="Console"
+10:25 call "Compute" in "Helper.Run"
+# imports
+1:1-1:14 source="System"
+# gaps

@@ -1,0 +1,75 @@
+# definitions
+5:1-7:2 module "outer::inner" exported
+  6:1-6:20 variable "outer::inner.deep_value" exported
+12:1-15:2 module "namespace"
+  13:1-13:24 variable "namespace.hidden_counter"
+  14:1-14:43 function "namespace.hidden_helper"
+17:1-61:2 module "sched" exported
+  20:1-20:31 variable "sched.instances" exported container="Pool"
+  23:1-23:63 constructor "sched.Pool" exported container="Pool"
+  26:1-26:31 method "sched.~Pool" exported container="Pool"
+  29:1-35:2 method "sched.acquire" exported container="Pool"
+  38:1-41:2 method "sched.operator==" exported container="Pool"
+  43:1-54:2 method "sched.defaults" exported container="Config"
+  56:1-59:2 function "sched.operator new" exported
+63:1-70:2 module "detail_ns" exported
+  64:1-64:14 variable "detail_ns.alpha" exported
+  64:14-64:25 variable "detail_ns.beta" exported
+  65:12-65:33 function "detail_ns.c_linkage" exported
+  67:1-67:22 function "detail_ns.block_one" exported
+  68:1-68:20 function "detail_ns.block_two" exported
+72:1-72:44 function "attributed"
+73:1-73:36 struct "Old"
+74:1-78:2 class "Derived"
+  76:5-76:35 constructor "Derived.Derived"
+  77:5-77:30 method "Derived.run"
+80:1-86:2 function "main" exported
+# references
+19:28 type "size_t" qualifier="std" in "sched"
+20:10 type "T" in "sched.instances"
+20:13 type "N" in "sched.instances"
+22:28 type "size_t" qualifier="std" in "sched"
+23:6 type "T" in "sched.Pool"
+23:9 type "N" in "sched.Pool"
+23:23 type "string" qualifier="std" in "sched.Pool"
+23:49 call "move" qualifier="std" in "sched.Pool"
+25:28 type "size_t" qualifier="std" in "sched"
+26:6 type "T" in "sched.~Pool"
+26:9 type "N" in "sched.~Pool"
+28:28 type "size_t" qualifier="std" in "sched"
+29:1 type "T" in "sched.acquire"
+29:9 type "T" in "sched.acquire"
+29:12 type "N" in "sched.acquire"
+31:25 call "size" qualifier="items_" in "sched.acquire"
+32:9 call "on_exhausted" in "sched.acquire"
+37:28 type "size_t" qualifier="std" in "sched"
+38:11 type "T" in "sched.operator=="
+38:14 type "N" in "sched.operator=="
+38:35 type "Pool" in "sched.operator=="
+43:1 type "Config" in "sched.defaults"
+45:5 type "Config" in "sched.defaults"
+46:10 type "vector" qualifier="std" in "sched.defaults"
+46:10 construct "vector" in "sched.defaults"
+47:10 type "string" qualifier="std" in "sched.defaults"
+47:10 construct "string" in "sched.defaults"
+48:5 type "Config" in "sched.defaults"
+49:10 type "unique_ptr" qualifier="std" in "sched.defaults"
+49:10 construct "unique_ptr" in "sched.defaults"
+49:21 type "Pool" in "sched.defaults"
+49:41 construct "Pool" in "sched.defaults"
+49:41 type "Pool" in "sched.defaults"
+56:25 type "size_t" qualifier="std" in "sched.operator new"
+72:3 decorator "nodiscard" in "attributed"
+73:10 decorator "deprecated" in "Old"
+74:37 inherit "Config" qualifier="sched" in "Derived"
+74:65 inherit "exception" qualifier="std" in "Derived"
+82:12 type "Pool" qualifier="sched" in "main"
+82:12 construct "Pool" in "main"
+83:18 call "acquire" qualifier="p" in "main"
+# imports
+1:1-2:1 source="<iostream>"
+2:1-3:1 source="scheduler.hpp"
+4:1-4:32 source="std::filesystem" alias="fs"
+9:1-9:30 source="outer::inner"
+10:1-10:32 source="outer::inner::deep_value"
+# gaps

@@ -1,0 +1,12 @@
+# definitions
+1:1-1:15 function "before"
+3:1-5:2 function "broken"
+7:1-7:22 struct "Good"
+  7:15-7:20 field "Good.a"
+9:1-9:25 function "after"
+# references
+9:14 call "before" in "after"
+# imports
+# gaps
+3:11-3:12 parse_error
+4:11-4:12 parse_error
