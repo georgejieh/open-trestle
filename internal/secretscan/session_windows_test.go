@@ -3,6 +3,8 @@
 package secretscan
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
@@ -122,4 +124,30 @@ func TestOpenCacheDirectoryOnWindows(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestOpenVerifiedHelperChecksTheFileACL(t *testing.T) {
+	directory := ownersonlytest.TempDir(t)
+	path := filepath.Join(directory, "helper.exe")
+	content := []byte("not really a helper")
+	if err := os.WriteFile(path, content, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(content)
+	digest := hex.EncodeToString(sum[:])
+	helper, err := openVerifiedHelper(path, digest)
+	if err != nil {
+		t.Fatalf("an owner-only helper file was refused: %v", err)
+	}
+	helper.close()
+	ownersonlytest.Grant(t, path, ownersonlytest.Users+":(RX)")
+	helper, err = openVerifiedHelper(path, digest)
+	if err != nil {
+		t.Fatalf("a helper file others may only read and run was refused: %v", err)
+	}
+	helper.close()
+	ownersonlytest.Grant(t, path, ownersonlytest.Everyone+":(M)")
+	if _, err := openVerifiedHelper(path, digest); !errors.Is(err, ErrHelperUntrusted) {
+		t.Fatalf("a helper file others can write was accepted: %v", err)
+	}
 }

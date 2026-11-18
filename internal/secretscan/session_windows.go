@@ -81,7 +81,10 @@ type jobObjectExtendedLimitInformation struct {
 // handle is open, hashes it through that handle and keeps the handle open
 // until the helper has started. Reparse points are refused. The path must
 // end in .exe, so os/exec runs exactly that path instead of trying other
-// extensions. File ownership and ACLs are not checked on Windows.
+// extensions. As on Unix, the file must also be owned by the current user,
+// LocalSystem, Administrators or TrustedInstaller, and no other principal
+// may write it, delete it or change its security; the digest already pins
+// its content, so this is defence in depth.
 func openVerifiedHelper(path string, expectedDigest string) (verifiedHelper, error) {
 	if !filepath.IsAbs(path) || filepath.Clean(path) != path || !strings.EqualFold(filepath.Ext(path), ".exe") || !validDigest(expectedDigest) {
 		return verifiedHelper{}, ErrHelperUntrusted
@@ -95,7 +98,8 @@ func openVerifiedHelper(path string, expectedDigest string) (verifiedHelper, err
 		return verifiedHelper{}, ErrHelperUntrusted
 	}
 	var information syscall.ByHandleFileInformation
-	if err := syscall.GetFileInformationByHandle(handle, &information); err != nil || information.FileAttributes&(syscall.FILE_ATTRIBUTE_DIRECTORY|syscall.FILE_ATTRIBUTE_REPARSE_POINT) != 0 {
+	if err := syscall.GetFileInformationByHandle(handle, &information); err != nil || information.FileAttributes&(syscall.FILE_ATTRIBUTE_DIRECTORY|syscall.FILE_ATTRIBUTE_REPARSE_POINT) != 0 ||
+		ownersonly.CheckHandle(handle, ownersonly.Rule{Owner: ownersonly.OwnerTrusted, Others: ownersonly.OthersRead}) != nil {
 		_ = syscall.CloseHandle(handle)
 		return verifiedHelper{}, ErrHelperUntrusted
 	}
