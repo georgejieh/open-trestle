@@ -488,7 +488,7 @@ The exit policy on the merged set works as follows:
 
 ## Snapshot investigation (opt-in)
 
-Add `--investigation-policy /protected/investigation.json` to the command above to let the generation model request bounded snapshot tools. Without this flag, the original flow with a single generation is unchanged. The runtime policy must pin one generation route and must permit a verifier. The generation route cannot change during an investigation.
+Add `--investigation-policy /protected/investigation.json` to the command above to let the generation model request bounded snapshot tools. Without this flag, the original flow with a single generation is unchanged. The runtime policy must pin one generation route and must permit a verifier. The generation route cannot change during an investigation. Investigation requests are not secret-scanned, so an investigation runs only with `--egress local-only`; `policy-approved` is refused as a usage error.
 
 The investigation policy is a separate protected file of at most 4096 bytes. Its parser requires exact canonical JSON, so the field order, the spelling of integers and the whitespace all matter. Do not pretty-print the file, and do not add a trailing newline. In an existing directory that meets the protection rules above, this example writes the canonical bytes:
 

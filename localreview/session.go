@@ -131,6 +131,11 @@ func newSession(o SessionOptions, investigationPolicy *review.InvestigationPolic
 	if o.RetainedMemoryInput != nil && (investigationPolicy != nil || o.Egress != EgressLocalOnly) {
 		return nil, ErrInvalidSession
 	}
+	// Investigation requests are not secret-scanned, so they stay on this
+	// machine.
+	if investigationPolicy != nil && o.Egress != EgressLocalOnly {
+		return nil, ErrInvalidSession
+	}
 	if !specialist.IsZero() && (investigationPolicy != nil || specialist.Validate() != nil) {
 		return nil, ErrInvalidSession
 	}

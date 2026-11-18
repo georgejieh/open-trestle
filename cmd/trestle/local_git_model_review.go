@@ -197,6 +197,11 @@ func parseLocalModelReview(args []string) (localModelReviewOptions, evidence.Rep
 	if values["--retained-memory-input"] != "" && (values["--investigation-policy"] != "" || egress != localreview.EgressLocalOnly) {
 		return fail()
 	}
+	// Investigation requests are not secret-scanned, so they stay on this
+	// machine.
+	if values["--investigation-policy"] != "" && egress != localreview.EgressLocalOnly {
+		return fail()
+	}
 	format := values["--format"]
 	if format == "" {
 		format = "json"

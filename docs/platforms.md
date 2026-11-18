@@ -42,10 +42,11 @@ The packaged install and `trestle update` are Linux amd64 only.
 
 Every review scans every model request twice before it is sent, whether the
 model server is on this machine or remote. The scan runs in the secret scan
-helper. A plain `go build` pins no helper, so it refuses every review with
-`this build pins no secret scan helper; build it with
-tools/package_secret_scanner.py`. Build with
-`python3 tools/package_secret_scanner.py --development DIR` instead. See
+helper. Snapshot investigations (`--investigation-policy`) are the exception:
+their requests are not scanned, so they run only with a model server on this
+machine. A plain `go build` pins no helper, so it refuses every review with
+`this build pins no secret scan helper; build trestle with its helper by
+python3 tools/package_secret_scanner.py --development DIR`. See
 [remote model review](remote-model-review.md#prerequisite-1-a-trestle-with-its-secret-scanner).
 
 `trestle update` is refused off Linux amd64. It updates only the packaged install,
