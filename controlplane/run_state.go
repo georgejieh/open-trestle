@@ -491,6 +491,16 @@ func (s ReviewRunState) HeadIdentity() string      { return s.headIdentity }
 func (s ReviewRunState) OutputIdentity() string    { return s.outputIdentity }
 func (s ReviewRunState) Failure() RunFailure       { return s.failure }
 func (s ReviewRunState) LastOccurredAt() time.Time { return runMillisToTime(s.lastOccurredAtMillis) }
+
+// TransitionTime returns the time at which a transition observed at at is
+// recorded: at itself, or the last event time when the wall clock has stepped
+// back behind it. Recorded event times therefore never decrease.
+func (s ReviewRunState) TransitionTime(at time.Time) time.Time {
+	if last := s.LastOccurredAt(); at.Before(last) {
+		return last
+	}
+	return at
+}
 func (s ReviewRunState) Task(key string) (TaskRuntimeState, bool) {
 	task, exists := s.tasks[key]
 	return task, exists

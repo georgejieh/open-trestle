@@ -133,7 +133,8 @@ func (c *Coordinator) PrepareContextPacket(ctx context.Context, plan ReviewRunPl
 		if descriptor.LeaseEventIdentity != runtime.lastEventIdentity || descriptor.LeaseIdentity != deriveTaskLeaseIdentity(expectedLease) {
 			return PreparedContextPacket{}, ErrPreparedContextPacket
 		}
-		if !transitionTimeAllowed(state, at) || at.UnixMilli() > runtime.leaseExpiresAtMillis {
+		at, timely := transitionTime(state, at)
+		if !timely || at.UnixMilli() > runtime.leaseExpiresAtMillis {
 			return PreparedContextPacket{}, ErrRunTransitionLeaseMismatch
 		}
 		event := RunEvent{planIdentity: plan.Identity(), scope: plan.Scope(), sequence: state.Revision() + 1, previousIdentity: state.HeadIdentity(), kind: RunEventContextPacketPrepared, taskKey: runtime.Key(), taskIdentity: runtime.Definition().Identity(), attempt: runtime.Attempts(), leaseTokenIdentity: runtime.leaseTokenIdentity, outputIdentity: descriptor.ArtifactIdentity, occurredAtMillis: at.UnixMilli(), packetDescriptor: descriptor}
@@ -177,7 +178,8 @@ func (c *Coordinator) TerminatePreparedContextPacket(ctx context.Context, plan R
 			return state, nil
 		}
 		current, ok := runtime.PreparedContextPacket()
-		if !ok || current.Identity() != prepared.Identity() || !transitionTimeAllowed(state, at) || at.UnixMilli() < runtime.leaseExpiresAtMillis {
+		at, timely := transitionTime(state, at)
+		if !ok || current.Identity() != prepared.Identity() || !timely || at.UnixMilli() < runtime.leaseExpiresAtMillis {
 			return ReviewRunState{}, ErrPreparedContextPacket
 		}
 		event, err := NewRunEvent(plan, state.Revision()+1, state.HeadIdentity(), RunEventTaskFailed, runtime.Definition(), runtime.Attempts(), runtime.leaseTokenIdentity, "", time.Time{}, "", RunFailurePolicy, time.Time{}, at)
@@ -222,7 +224,8 @@ func (c *Coordinator) RefusePreparedContextPacket(ctx context.Context, plan Revi
 			return state, nil
 		}
 		current, ok := runtime.PreparedContextPacket()
-		if !ok || current.Identity() != prepared.Identity() || !runtimeMatchesLease(runtime, lease) || !transitionTimeAllowed(state, at) || at.UnixMilli() > runtime.leaseExpiresAtMillis {
+		at, timely := transitionTime(state, at)
+		if !ok || current.Identity() != prepared.Identity() || !runtimeMatchesLease(runtime, lease) || !timely || at.UnixMilli() > runtime.leaseExpiresAtMillis {
 			return ReviewRunState{}, ErrPreparedContextPacket
 		}
 		event, err := NewRunEvent(plan, state.Revision()+1, state.HeadIdentity(), RunEventTaskFailed, runtime.Definition(), runtime.Attempts(), runtime.leaseTokenIdentity, "", time.Time{}, "", RunFailurePolicy, time.Time{}, at)

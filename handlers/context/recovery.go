@@ -52,9 +52,6 @@ func recoverPreparedContextAbstention(ctx context.Context, coordinator *controlp
 	prepared, exists := runtime.PreparedContextAbstention()
 	if !exists {
 		if runtime.Status() == controlplane.TaskRuntimeFailed && runtime.OutputIdentity() != "" {
-			if at.Before(state.LastOccurredAt()) {
-				at = state.LastOccurredAt()
-			}
 			_, err := coordinator.FailRun(ctx, plan, runtime.Failure(), at)
 			if err != nil {
 				return ErrContextAbstentionRecovery
@@ -82,9 +79,6 @@ func recoverPreparedContextAbstention(ctx context.Context, coordinator *controlp
 	}
 	if err != nil || stored.Identity() != value.Identity() || !reflect.DeepEqual(stored.Provenance(), value.Provenance()) || validateContextAbstentionForTask(stored, plan, task) != nil {
 		return ErrContextAbstentionRecovery
-	}
-	if at.Before(state.LastOccurredAt()) {
-		at = state.LastOccurredAt()
 	}
 	if _, err = coordinator.SettlePreparedContextAbstention(ctx, plan, prepared, at); err != nil {
 		return ErrContextAbstentionRecovery

@@ -273,7 +273,8 @@ func DispatchLeasedTask(ctx context.Context, catalog TaskHandlerCatalog, state R
 	if state.Status() != ReviewRunActive {
 		return TaskCompletion{}, ErrRunAlreadyTerminal
 	}
-	if !transitionTimeAllowed(state, at) {
+	at, timely := transitionTime(state, at)
+	if !timely {
 		return TaskCompletion{}, ErrRunTransitionSequenceMismatch
 	}
 	if err := lease.Validate(); err != nil {
