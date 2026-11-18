@@ -17,10 +17,13 @@
 // on every loop iteration, would make a parse several times slower. A guest
 // that stops asking, which only a defect in tree-sitter or a grammar could
 // cause, is caught by a watchdog at twice the deadline (at least one second
-// more): the file gets a deadline gap at once, the instance is left to
-// finish on its own goroutine and is then closed, and the family switches
-// for the rest of the process to code compiled with wazero's termination
-// checks, which stops every later call at its deadline.
+// more): the file gets a deadline gap at once, the call is abandoned so
+// that its next stop check traps it, the instance is closed when the call
+// ends, and the family switches for the rest of the process to code
+// compiled with wazero's termination checks, which stops every later call
+// at its deadline. A guest that loops without ever reaching a stop check
+// cannot be interrupted in fast code; its goroutine runs until the loop
+// ends or the process exits.
 //
 // Modules are compiled lazily, once per family and process, with wazero's
 // compiler. Where the compiler does not run, every file gets an
@@ -96,9 +99,12 @@ type Analyzer struct {
 	// after a guest ignores the stop checks (guarded by mu).
 	terminating wazero.Runtime
 	// orphans counts guest calls still running after their watchdog fired
-	// (guarded by mu). Their runtimes are never closed: closing a runtime
-	// unmaps the code a call is executing.
-	orphans     int
+	// (guarded by mu). While one runs, the runtimes stay open: closing a
+	// runtime unmaps the code a call is executing. Close leaves them to the
+	// last orphan to end.
+	orphans int
+	// stalls counts the calls whose watchdog fired (guarded by mu).
+	stalls      int
 	unavailable bool
 
 	// calls is held for reading by every analysis and for writing by
@@ -207,6 +213,11 @@ func (a *Analyzer) newRuntime(ctx context.Context, terminating bool) (wazero.Run
 	_, err := r.NewHostModuleBuilder("ot_host").
 		NewFunctionBuilder().
 		WithFunc(func(ctx context.Context) uint32 {
+			if callAbandoned(ctx) {
+				// Unwinds the guest call; wazero returns the panic as
+				// the call's error.
+				panic(errAbandoned)
+			}
 			if stopRequested(ctx) {
 				return 1
 			}
@@ -261,8 +272,8 @@ func (a *Analyzer) HasQueryPack(language syntaxanalysis.Language) bool {
 }
 
 // Close releases every instance and compiled module after the analyses in
-// progress end. A call left running by the watchdog keeps its runtime
-// open until the process exits.
+// progress end. While a call abandoned by the watchdog still runs, the
+// runtimes stay open; they are closed when the last such call ends.
 func (a *Analyzer) Close(ctx context.Context) error {
 	a.calls.Lock()
 	defer a.calls.Unlock()
@@ -272,10 +283,26 @@ func (a *Analyzer) Close(ctx context.Context) error {
 		return nil
 	}
 	a.closed = true
-	var err error
 	if a.orphans > 0 {
 		return nil
 	}
+	return a.closeRuntimes(ctx)
+}
+
+// orphanEnded records the end of a call abandoned by the watchdog, and
+// closes the runtimes if Close ran while it was still going.
+func (a *Analyzer) orphanEnded() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.orphans--
+	if a.closed && a.orphans == 0 {
+		_ = a.closeRuntimes(context.Background())
+	}
+}
+
+// closeRuntimes closes the runtimes and the cache. The caller holds mu.
+func (a *Analyzer) closeRuntimes(ctx context.Context) error {
+	var err error
 	if a.runtime != nil {
 		err = a.runtime.Close(ctx)
 	}

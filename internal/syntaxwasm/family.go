@@ -5,6 +5,7 @@ import (
 	"errors"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/tetratelabs/wazero"
@@ -18,36 +19,59 @@ import (
 const setupDeadline = 30 * time.Second
 
 var (
-	errInstance = errors.New("syntax module instance is unusable")
-	errStopped  = errors.New("syntax module stopped at the host's request")
-	errStalled  = errors.New("syntax module ignored the stop checks")
+	errInstance  = errors.New("syntax module instance is unusable")
+	errStopped   = errors.New("syntax module stopped at the host's request")
+	errStalled   = errors.New("syntax module ignored the stop checks")
+	errAbandoned = errors.New("syntax module call was abandoned by the watchdog")
 )
 
-// watch runs ot_analyze and waits at most until the watchdog: the deadline
-// plus the deadline again, and at least one second more. A call that
-// outlives it ignored the stop checks; it is left to finish on its own
-// goroutine, which then closes the instance, and the family switches to
-// terminating code.
+// abandonKey keys the flag that the watchdog sets on the context of a call
+// it gave up on.
+type abandonKey struct{}
+
+// callAbandoned reports whether the watchdog gave up on the call that ctx
+// belongs to. The host's stop check then traps the guest, so a call that
+// still asks ends at its next check instead of running on.
+func callAbandoned(ctx context.Context) bool {
+	flag, ok := ctx.Value(abandonKey{}).(*atomic.Bool)
+	return ok && flag.Load()
+}
+
+// watchdog is how long watch waits for a call: the deadline plus the
+// deadline again, and at least one second more.
+func watchdog(deadline time.Duration) time.Duration {
+	return deadline + max(deadline, time.Second)
+}
+
+// watch runs ot_analyze and waits at most until the watchdog. A call that
+// outlives it ignored the stop checks. The call is then abandoned, so its
+// next stop check traps it, and the family switches to terminating code. A
+// guest that never reaches a stop check again keeps running on its own
+// goroutine until it returns; that goroutine closes the instance.
 func (f *family) watch(ctx context.Context, deadline time.Duration, inst *instance, params ...uint64) (uint32, error) {
 	type outcome struct {
 		value uint32
 		err   error
 	}
+	abandoned := &atomic.Bool{}
+	ctx = context.WithValue(ctx, abandonKey{}, abandoned)
 	done := make(chan outcome, 1)
 	go func() {
 		value, err := inst.call(ctx, inst.analyze, params...)
 		done <- outcome{value, err}
 	}()
-	timer := time.NewTimer(deadline + max(deadline, time.Second))
+	timer := time.NewTimer(watchdog(deadline))
 	defer timer.Stop()
 	select {
 	case o := <-done:
 		return o.value, o.err
 	case <-timer.C:
 	}
+	abandoned.Store(true)
 	a := f.analyzer
 	a.mu.Lock()
 	a.orphans++
+	a.stalls++
 	a.mu.Unlock()
 	f.mu.Lock()
 	f.terminating = true
@@ -55,9 +79,7 @@ func (f *family) watch(ctx context.Context, deadline time.Duration, inst *instan
 	go func() {
 		<-done
 		inst.close()
-		a.mu.Lock()
-		a.orphans--
-		a.mu.Unlock()
+		a.orphanEnded()
 	}()
 	return 0, errStalled
 }

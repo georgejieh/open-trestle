@@ -11,9 +11,12 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 	"unicode/utf8"
+
+	"github.com/tetratelabs/wazero"
 
 	"github.com/georgejieh/open-trestle/syntaxanalysis"
 )
@@ -388,7 +391,11 @@ func TestDeeplyNestedInputDoesNotCrashOrHang(t *testing.T) {
 }
 
 func TestVeryLongLines(t *testing.T) {
-	a := testAnalyzer(t)
+	// The deadline is not what this test is about: on a loaded machine the
+	// default five seconds can pass before the megabyte line is parsed.
+	limits := syntaxanalysis.DefaultLimits()
+	limits.FileDeadline = 10 * time.Minute
+	a := newTestAnalyzer(t, Config{Limits: limits})
 	var b strings.Builder
 	for i := 0; b.Len() < 1<<20; i++ {
 		b.WriteString("function f")
@@ -416,12 +423,11 @@ func TestDeadlineStopsARunawayParse(t *testing.T) {
 		b.WriteString("export function handler(a: number, b: string): Promise<void> { return run(a, b.length, [a, b]); }\n")
 	}
 	content := []byte(b.String())
-	started := time.Now()
 	analysis := analyze(t, a, "large.ts", content)
-	elapsed := time.Since(started)
 	onlyGap(t, analysis, syntaxanalysis.GapDeadlineExceeded, "")
-	if elapsed > time.Second {
-		t.Fatalf("the deadline fired after %v", elapsed)
+	// The guest's stop checks ended the call, not the watchdog.
+	if stalls := analyzerStalls(a); stalls != 0 {
+		t.Fatalf("the watchdog fired %d times", stalls)
 	}
 	f := a.languages[syntaxanalysis.LanguageTypeScript].family
 	f.mu.Lock()
@@ -435,7 +441,7 @@ func TestDeadlineStopsARunawayParse(t *testing.T) {
 	unbounded := syntaxanalysis.DefaultLimits()
 	unbounded.FileDeadline = 2 * time.Minute
 	full := newTestAnalyzer(t, Config{Limits: unbounded})
-	started = time.Now()
+	started := time.Now()
 	complete := analyze(t, full, "large.ts", content)
 	if !complete.Complete() || time.Since(started) < 10*limits.FileDeadline {
 		t.Fatalf("full analysis: gaps %+v in %v", complete.Gaps, time.Since(started))
@@ -445,30 +451,75 @@ func TestDeadlineStopsARunawayParse(t *testing.T) {
 	}
 }
 
-func TestGuestIgnoringTheStopChecksIsContained(t *testing.T) {
-	saved := stopRequested
-	stopRequested = func(context.Context) bool { return false }
-	restored := false
-	restore := func() {
-		if !restored {
-			stopRequested = saved
-			restored = true
+func analyzerStalls(a *Analyzer) int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.stalls
+}
+
+func waitForNoOrphans(t *testing.T, a *Analyzer) {
+	t.Helper()
+	for deadline := time.Now().Add(2 * time.Minute); ; {
+		a.mu.Lock()
+		orphans := a.orphans
+		a.mu.Unlock()
+		if orphans == 0 {
+			return
 		}
+		if time.Now().After(deadline) {
+			t.Fatal("the abandoned call never ended")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
-	defer restore()
-	limits := syntaxanalysis.DefaultLimits()
-	limits.FileDeadline = 5 * time.Millisecond
-	a := newTestAnalyzer(t, Config{Limits: limits, InstancesPerFamily: 1})
+}
+
+// stuckGuest makes the guest's stop checks model a guest that never stops
+// on its own: the first check of a call waits until the watchdog has given
+// up on it, and every check answers that the guest may go on. It returns
+// the count of checks answered after the call was abandoned; the real
+// checks come back when the test ends. With a release channel, the waiting
+// check also waits for it to close.
+func stuckGuest(t *testing.T, release <-chan struct{}) *atomic.Int64 {
+	t.Helper()
+	saved := stopRequested
+	t.Cleanup(func() { stopRequested = saved })
+	answered := &atomic.Int64{}
+	stopRequested = func(ctx context.Context) bool {
+		for !callAbandoned(ctx) {
+			time.Sleep(time.Millisecond)
+		}
+		if release != nil {
+			<-release
+		}
+		answered.Add(1)
+		return false
+	}
+	return answered
+}
+
+func largeTypeScript() []byte {
 	var b strings.Builder
 	for b.Len() < 2<<20-256 {
 		b.WriteString("export function handler(a: number, b: string): Promise<void> { return run(a, b.length, [a, b]); }\n")
 	}
+	return []byte(b.String())
+}
+
+func TestGuestIgnoringTheStopChecksIsContained(t *testing.T) {
+	limits := syntaxanalysis.DefaultLimits()
+	limits.FileDeadline = 5 * time.Millisecond
+	a := newTestAnalyzer(t, Config{Limits: limits, InstancesPerFamily: 1})
+	// Compile the query first, so the watched call is the parse.
+	_ = analyze(t, a, "warm.ts", []byte("let a = 1;\n"))
+	large := largeTypeScript()
+	answered := stuckGuest(t, nil)
 	started := time.Now()
-	analysis := analyze(t, a, "large.ts", []byte(b.String()))
-	elapsed := time.Since(started)
-	onlyGap(t, analysis, syntaxanalysis.GapDeadlineExceeded, "")
-	if elapsed > 2*time.Second {
-		t.Fatalf("the watchdog fired after %v", elapsed)
+	onlyGap(t, analyze(t, a, "large.ts", large), syntaxanalysis.GapDeadlineExceeded, "")
+	if elapsed := time.Since(started); elapsed < watchdog(limits.FileDeadline) {
+		t.Fatalf("the analysis returned after %v, before the watchdog", elapsed)
+	}
+	if stalls := analyzerStalls(a); stalls != 1 {
+		t.Fatalf("the watchdog fired %d times", stalls)
 	}
 	f := a.languages[syntaxanalysis.LanguageTypeScript].family
 	f.mu.Lock()
@@ -477,32 +528,55 @@ func TestGuestIgnoringTheStopChecksIsContained(t *testing.T) {
 	if !switched {
 		t.Fatal("the family did not switch to terminating code")
 	}
+	// The abandoned call ends at its next stop check: one check is answered
+	// after the watchdog, and the one after it traps the guest.
+	waitForNoOrphans(t, a)
+	if n := answered.Load(); n != 1 {
+		t.Fatalf("%d stop checks were answered after the call was abandoned", n)
+	}
+
 	// With terminating code the deadline holds even while the guest's stop
-	// checks are still ignored. The small file first compiles that code.
+	// checks are ignored: the call ends without the watchdog. The small file
+	// first compiles that code.
+	stopRequested = func(context.Context) bool { return false }
 	if got := analyze(t, a, "small.ts", []byte("function f() {}\n")); len(got.Definitions) != 1 {
 		t.Fatalf("analysis with terminating code = %+v", got)
 	}
-	started = time.Now()
-	onlyGap(t, analyze(t, a, "large.ts", []byte(b.String())), syntaxanalysis.GapDeadlineExceeded, "")
-	if elapsed := time.Since(started); elapsed > time.Second {
-		t.Fatalf("terminating code stopped after %v", elapsed)
+	onlyGap(t, analyze(t, a, "large.ts", large), syntaxanalysis.GapDeadlineExceeded, "")
+	if stalls := analyzerStalls(a); stalls != 1 {
+		t.Fatalf("the watchdog fired %d times", stalls)
 	}
-	restore()
-	if got := analyze(t, a, "small.ts", []byte("function f() {}\n")); len(got.Definitions) != 1 {
-		t.Fatalf("analysis with terminating code = %+v", got)
+}
+
+func TestCloseDuringAnAbandonedCallClosesTheRuntimesWhenItEnds(t *testing.T) {
+	limits := syntaxanalysis.DefaultLimits()
+	limits.FileDeadline = 5 * time.Millisecond
+	a, err := New(context.Background(), Config{Limits: limits, InstancesPerFamily: 1})
+	if err != nil {
+		t.Fatal(err)
 	}
-	// Close waits for no orphan and must not unmap code an orphan runs.
-	for deadline := time.Now().Add(30 * time.Second); ; {
-		a.mu.Lock()
-		orphans := a.orphans
-		a.mu.Unlock()
-		if orphans == 0 {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("the orphaned call never finished")
-		}
-		time.Sleep(10 * time.Millisecond)
+	if !a.Available() {
+		t.Skip("the wazero compiler does not run on this platform")
+	}
+	_ = analyze(t, a, "warm.ts", []byte("let a = 1;\n"))
+	release := make(chan struct{})
+	stuckGuest(t, release)
+	onlyGap(t, analyze(t, a, "large.ts", largeTypeScript()), syntaxanalysis.GapDeadlineExceeded, "")
+	if err := a.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	f := a.languages[syntaxanalysis.LanguageTypeScript].family
+	compiled := f.compiled[modeFast]
+	// The abandoned call still runs, so its runtime must stay open.
+	if module, err := a.runtime.InstantiateModule(context.Background(), compiled, wazero.NewModuleConfig().WithName("")); err != nil {
+		t.Fatalf("the runtime was closed under a running call: %v", err)
+	} else {
+		_ = module.Close(context.Background())
+	}
+	close(release)
+	waitForNoOrphans(t, a)
+	if _, err := a.runtime.InstantiateModule(context.Background(), compiled, wazero.NewModuleConfig().WithName("")); err == nil {
+		t.Fatal("the runtime stayed open after the last abandoned call ended")
 	}
 }
 
