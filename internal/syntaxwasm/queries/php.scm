@@ -9,13 +9,14 @@
 (enum_declaration name: (name) @name) @definition.enum
 
 ; Functions, methods, constants, properties and enum cases. A constructor
-; parameter that declares a property is not recorded as a field, because
-; the field belongs to the class and not to the constructor around it.
+; parameter that declares a property is a field; finishPHP moves it from
+; the constructor to the class.
 (function_definition name: (name) @name) @definition.function
 (method_declaration name: (name) @name) @definition.method
 (enum_case name: (name) @name) @definition.constant
 (const_declaration (const_element . (name) @name)) @definition.constant
 (property_declaration (property_element name: (variable_name (name) @name))) @definition.field
+(property_promotion_parameter name: [(variable_name (name) @name) (by_ref (variable_name (name) @name))]) @definition.field
 (function_call_expression function: (name) @match.define arguments: (arguments . (argument (string (string_content) @name)))) @definition.constant
 
 ; Variables assigned at file level are globals.

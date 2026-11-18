@@ -8,6 +8,7 @@
   26:1-26:27 variable "Shop\\Orders.started" exported
   28:1-34:2 class "Shop\\Orders.Audited" exported
     31:5-33:6 constructor "Shop\\Orders.Audited.__construct" exported
+    31:33-31:75 field "Shop\\Orders.Audited.channel" exported container="Audited"
   36:1-41:2 interface "Shop\\Orders.Identifiable" exported
     38:5-38:32 constant "Shop\\Orders.Identifiable.PREFIX" exported
     40:5-40:34 method "Shop\\Orders.Identifiable.id" exported
@@ -38,6 +39,7 @@
     129:5-129:41 field "Shop\\Orders.Entity.instances"
     130:5-130:33 field "Shop\\Orders.Entity.changes"
     132:5-135:6 constructor "Shop\\Orders.Entity.__construct" exported
+    132:33-132:53 field "Shop\\Orders.Entity.id" container="Entity"
     137:5-140:6 method "Shop\\Orders.Entity.id" exported
     142:5-145:6 method "Shop\\Orders.Entity.record"
     147:5-150:6 method "Shop\\Orders.Entity.changes" exported
@@ -45,6 +47,9 @@
     154:5-157:6 method "Shop\\Orders.Entity.instances" exported
   160:1-176:2 class "Shop\\Orders.OrderLine" exported
     162:5-170:6 constructor "Shop\\Orders.OrderLine.__construct" exported
+    163:9-163:36 field "Shop\\Orders.OrderLine.sku" exported container="OrderLine"
+    164:9-164:38 field "Shop\\Orders.OrderLine.quantity" exported container="OrderLine"
+    165:9-165:41 field "Shop\\Orders.OrderLine.unitPrice" exported container="OrderLine"
     172:5-175:6 method "Shop\\Orders.OrderLine.total" exported
   178:1-281:2 class "Shop\\Orders.Order" exported
     185:5-185:42 constant "Shop\\Orders.Order.STATUS_FIELD" exported
@@ -55,6 +60,7 @@
     192:5-192:33 field "Shop\\Orders.Order.note" exported
     193:5-193:17 field "Shop\\Orders.Order.legacy" exported
     195:5-199:6 constructor "Shop\\Orders.Order.__construct" exported
+    195:45-195:74 field "Shop\\Orders.Order.clock" container="Order"
     201:5-207:6 method "Shop\\Orders.Order.create" exported
     209:5-219:6 method "Shop\\Orders.Order.addLine" exported
     221:5-229:6 method "Shop\\Orders.Order.total" exported
@@ -69,6 +75,9 @@
   283:1-345:2 class "Shop\\Orders.OrderService" exported
     285:5-285:35 field "Shop\\Orders.OrderService.listeners"
     287:5-292:6 constructor "Shop\\Orders.OrderService.__construct" exported
+    288:9-288:47 field "Shop\\Orders.OrderService.repository" container="OrderService"
+    289:9-289:29 field "Shop\\Orders.OrderService.clock" container="OrderService"
+    290:9-290:48 field "Shop\\Orders.OrderService.logger" container="OrderService"
     294:5-311:6 method "Shop\\Orders.OrderService.place" exported
     313:5-316:6 method "Shop\\Orders.OrderService.find" exported
     318:5-321:6 method "Shop\\Orders.OrderService.onPlaced" exported
@@ -104,7 +113,7 @@
 116:19 construct "InvalidArgumentException" in "Shop\\Orders.Status.fromLabel"
 125:34 inherit "Identifiable" in "Shop\\Orders.Entity"
 127:9 inherit "Timestamps" in "Shop\\Orders.Entity"
-165:25 type "Money" in "Shop\\Orders.OrderLine.__construct"
+165:25 type "Money" in "Shop\\Orders.OrderLine.unitPrice"
 168:23 construct "InvalidArgumentException" in "Shop\\Orders.OrderLine.__construct"
 172:30 type "Money" in "Shop\\Orders.OrderLine.total"
 174:34 call "times" qualifier="$this->unitPrice" in "Shop\\Orders.OrderLine.total"
@@ -114,7 +123,7 @@
 181:9 inherit "Loggable" in "Shop\\Orders.Order"
 181:19 inherit "Timestamps" in "Shop\\Orders.Order"
 191:15 type "Status" in "Shop\\Orders.Order.status"
-195:62 type "Clock" in "Shop\\Orders.Order.__construct"
+195:62 type "Clock" in "Shop\\Orders.Order.clock"
 197:17 call "__construct" qualifier="parent" in "Shop\\Orders.Order.__construct"
 198:16 call "touch" qualifier="$this" in "Shop\\Orders.Order.__construct"
 201:51 type "Clock" in "Shop\\Orders.Order.create"
@@ -146,9 +155,9 @@
 269:30 type "OrderLine" in "Shop\\Orders.Order.summary"
 279:33 type "Order" in "Shop\\Orders.Order.isEditable"
 279:58 call "isFinal" qualifier="$this->status" in "Shop\\Orders.Order.isEditable"
-288:17 type "RepositoryContract" in "Shop\\Orders.OrderService.__construct"
-289:17 type "Clock" in "Shop\\Orders.OrderService.__construct"
-290:18 type "LoggerInterface" in "Shop\\Orders.OrderService.__construct"
+288:17 type "RepositoryContract" in "Shop\\Orders.OrderService.repository"
+289:17 type "Clock" in "Shop\\Orders.OrderService.clock"
+290:18 type "LoggerInterface" in "Shop\\Orders.OrderService.logger"
 294:43 type "OrderLine" in "Shop\\Orders.OrderService.place"
 294:65 type "Order" in "Shop\\Orders.OrderService.place"
 296:25 call "create" qualifier="Order" in "Shop\\Orders.OrderService.place"

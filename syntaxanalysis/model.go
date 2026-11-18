@@ -230,12 +230,16 @@ func (k ReferenceKind) Valid() bool { return referenceKinds[k] }
 
 // Definition is a named definition. Parent is the index in
 // FileAnalysis.Definitions of the innermost definition that lexically
-// contains this one, or -1 at the top level.
+// contains this one, or -1 at the top level. A definition written inside
+// one definition but owned by an outer one, such as a property declared in
+// a constructor's parameter list, has the owner as its parent and names it
+// as its container.
 type Definition struct {
 	Kind DefinitionKind `json:"kind"`
 	Name Text           `json:"name"`
 	// Container names the declared owner when it is not the lexical parent,
-	// such as the receiver type of a Go method.
+	// such as the receiver type of a Go method or the class of a property
+	// declared in a constructor's parameter list.
 	Container Text  `json:"container,omitzero"`
 	Range     Range `json:"range"`
 	NameRange Range `json:"name_range"`

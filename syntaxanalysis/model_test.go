@@ -258,3 +258,29 @@ func TestAssembleMergesOverlappingPatternResults(t *testing.T) {
 		t.Fatalf("definitions with equal ranges must be siblings: %+v", a.Definitions)
 	}
 }
+
+func TestEnclosingDefinitionLooksInsideTheDefinitionAnOwnedOneIsWrittenIn(t *testing.T) {
+	// class Box { function __construct(private int $a, private int $b) { body(); } function after() {} }
+	content := "class Box { function __construct(private int $a, private int $b) { body(); } function after() {} }"
+	span := func(text string) Range {
+		at := strings.Index(content, text)
+		return Range{StartByte: at, EndByte: at + len(text)}
+	}
+	ctor := "function __construct(private int $a, private int $b) { body(); }"
+	a := FileAnalysis{Definitions: []Definition{
+		{Kind: KindClass, Name: newText("Box"), Range: span(content), Parent: -1},
+		{Kind: KindConstructor, Name: newText("__construct"), Range: span(ctor), Parent: 0},
+		{Kind: KindField, Name: newText("a"), Container: newText("Box"), Range: span("private int $a"), Parent: 0},
+		{Kind: KindField, Name: newText("b"), Container: newText("Box"), Range: span("private int $b"), Parent: 0},
+		{Kind: KindMethod, Name: newText("after"), Range: span("function after() {}"), Parent: 0},
+	}}
+	cases := map[string]int{"$a": 2, "$b": 3, "body": 1, "{ body": 1, "after": 4, "class": 0}
+	for text, want := range cases {
+		if got := a.EnclosingDefinition(strings.Index(content, text)); got != want {
+			t.Errorf("%q: enclosing %d, want %d", text, got, want)
+		}
+	}
+	if got := a.QualifiedName(3).Untrusted(); got != "Box.b" {
+		t.Fatalf("qualified name %q", got)
+	}
+}

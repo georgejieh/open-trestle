@@ -452,17 +452,39 @@ func pointSpan(at, size int) Span {
 }
 
 // enclosing finds the innermost definition containing the offset. The
-// definitions are sorted by start and properly nested, so the candidates
-// are the last definition starting at or before the offset and its parents.
+// definitions are sorted by start and nested, so the candidates are the
+// last definition starting at or before the offset and the definitions
+// around it. Those are its parents, except around an owned definition (see
+// owned), where the definition it is written in comes first.
 func enclosing(definitions []Definition, offset int) int {
 	i := sort.Search(len(definitions), func(i int) bool { return definitions[i].Range.StartByte > offset }) - 1
 	for depth := 0; i >= 0 && depth <= len(definitions); depth++ {
 		if definitions[i].Range.Contains(offset) {
 			return i
 		}
-		i = definitions[i].Parent
+		next := definitions[i].Parent
+		if owned(definitions, i) {
+			// Skip the owned definitions written next to it; the one
+			// before them may be the definition they are written in.
+			k := i - 1
+			for k > next && owned(definitions, k) && definitions[k].Parent == next {
+				k--
+			}
+			if k > next && definitions[k].Range.Contains(definitions[i].Range.StartByte) {
+				next = k
+			}
+		}
+		i = next
 	}
 	return -1
+}
+
+// owned reports whether a definition belongs to its parent, which it names
+// as its container, although it may be written inside another definition,
+// such as a property declared in a constructor's parameter list.
+func owned(definitions []Definition, i int) bool {
+	p := definitions[i].Parent
+	return p >= 0 && p < i && !definitions[i].Container.Empty() && definitions[i].Container.Untrusted() == definitions[p].Name.Untrusted()
 }
 
 type lineIndex struct{ starts []int }

@@ -20,6 +20,10 @@ func finishPHP(content []byte, _ syntaxanalysis.RawFile, a *syntaxanalysis.FileA
 		if d.Kind == syntaxanalysis.KindMethod && strings.EqualFold(d.Name.Untrusted(), "__construct") {
 			d.Kind = syntaxanalysis.KindConstructor
 		}
+	}
+	phpPromoteProperties(content, a)
+	for i := range a.Definitions {
+		d := &a.Definitions[i]
 		if d.Parent < 0 {
 			d.Exported = true
 			continue
@@ -45,6 +49,39 @@ func finishPHP(content []byte, _ syntaxanalysis.RawFile, a *syntaxanalysis.FileA
 		kept = append(kept, r)
 	}
 	a.References = kept
+}
+
+// phpPromoteProperties makes a property declared in a constructor's
+// parameter list a field of the class: its parent becomes the class, which
+// it also names as its container, since it is written inside the
+// constructor. A property declared in the constructor of an anonymous
+// class, which has no record, is dropped. A promoted parameter is a field
+// child of a constructor whose text does not end in a semicolon, unlike a
+// property declaration.
+func phpPromoteProperties(content []byte, a *syntaxanalysis.FileAnalysis) {
+	var drop []bool
+	for i := range a.Definitions {
+		d := &a.Definitions[i]
+		if d.Kind != syntaxanalysis.KindField || d.Parent < 0 || d.Range.EndByte <= d.Range.StartByte || d.Range.EndByte > len(content) || content[d.Range.EndByte-1] == ';' {
+			continue
+		}
+		constructor := a.Definitions[d.Parent]
+		if constructor.Kind != syntaxanalysis.KindConstructor {
+			continue
+		}
+		if owner := constructor.Parent; owner >= 0 && a.Definitions[owner].Kind.Container() {
+			d.Parent = owner
+			d.Container = a.Definitions[owner].Name
+			continue
+		}
+		if drop == nil {
+			drop = make([]bool, len(a.Definitions))
+		}
+		drop[i] = true
+	}
+	if drop != nil {
+		removeDefinitions(a, drop)
+	}
 }
 
 // phpRestricted reports whether the modifiers in content[start:end], the
