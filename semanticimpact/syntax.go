@@ -79,7 +79,9 @@ func (a GoSyntaxAnalyzer) Analyze(ctx context.Context, source syntaxanalysis.Sou
 	if time.Since(started) > limits.FileDeadline {
 		return syntaxanalysis.WholeFileGap(source, GoSyntaxAnalyzerIdentity, syntaxanalysis.GapDeadlineExceeded, ""), nil
 	}
-	return syntaxanalysis.Assemble(source, GoSyntaxAnalyzerIdentity, raw, limits), nil
+	analysis := syntaxanalysis.Assemble(source, GoSyntaxAnalyzerIdentity, raw, limits)
+	syntaxanalysis.ExportThroughOwners(&analysis)
+	return analysis, nil
 }
 
 // lineErrorSpan covers an error position up to the end of its line, so that
@@ -193,46 +195,40 @@ func (w goWalker) collect(file *ast.File) {
 	}
 	// Definitions are the top-level declarations and the members of
 	// top-level struct and interface types, as in the impact profile.
-	for _, decl := range file.Decls {
-		switch d := decl.(type) {
-		case *ast.FuncDecl:
+	goDeclarations(file, func(g goDeclaration) {
+		switch s := g.spec.(type) {
+		case nil:
+			d := g.decl.(*ast.FuncDecl)
 			kind := syntaxanalysis.KindFunction
 			container := syntaxanalysis.Span{}
 			if d.Recv != nil && len(d.Recv.List) > 0 {
 				kind = syntaxanalysis.KindMethod
 				container = w.receiverName(d.Recv.List[0].Type)
 			}
-			w.definition(kind, d.Name, d, container)
-		case *ast.GenDecl:
-			for _, spec := range d.Specs {
-				switch s := spec.(type) {
-				case *ast.TypeSpec:
-					kind := syntaxanalysis.KindType
-					switch t := s.Type.(type) {
-					case *ast.StructType:
-						kind = syntaxanalysis.KindStruct
-						w.structFields(t)
-					case *ast.InterfaceType:
-						kind = syntaxanalysis.KindInterface
-						w.interfaceMethods(t)
-					}
-					node := ast.Node(s)
-					if len(d.Specs) == 1 {
-						node = d
-					}
-					w.definition(kind, s.Name, node, syntaxanalysis.Span{})
-				case *ast.ValueSpec:
-					kind := syntaxanalysis.KindVariable
-					if d.Tok == token.CONST {
-						kind = syntaxanalysis.KindConstant
-					}
-					for _, name := range s.Names {
-						w.definition(kind, name, s, syntaxanalysis.Span{})
-					}
-				}
+			w.definition(kind, g.name, d, container)
+		case *ast.TypeSpec:
+			kind := syntaxanalysis.KindType
+			switch t := s.Type.(type) {
+			case *ast.StructType:
+				kind = syntaxanalysis.KindStruct
+				w.structFields(t)
+			case *ast.InterfaceType:
+				kind = syntaxanalysis.KindInterface
+				w.interfaceMethods(t)
 			}
+			node := ast.Node(s)
+			if d := g.decl.(*ast.GenDecl); len(d.Specs) == 1 {
+				node = d
+			}
+			w.definition(kind, g.name, node, syntaxanalysis.Span{})
+		case *ast.ValueSpec:
+			kind := syntaxanalysis.KindVariable
+			if g.decl.(*ast.GenDecl).Tok == token.CONST {
+				kind = syntaxanalysis.KindConstant
+			}
+			w.definition(kind, g.name, s, syntaxanalysis.Span{})
 		}
-	}
+	})
 	ast.Inspect(file, func(n ast.Node) bool {
 		switch d := n.(type) {
 		case *ast.BadDecl, *ast.BadStmt, *ast.BadExpr:

@@ -238,7 +238,7 @@ func TestAssembleMergesOverlappingPatternResults(t *testing.T) {
 		},
 		Definitions: []RawDefinition{
 			{Kind: KindClass, Name: spanOf(t, content, "C", 0), Node: Span{strings.Index(content, "class"), strings.LastIndex(content, "}") + 1}},
-			{Kind: KindVariable, Name: spanOf(t, content, "p", 0), Node: Span{strings.Index(content, "let"), len(content)}},
+			{Kind: KindVariable, Name: spanOf(t, content, "p", 1), Node: Span{strings.Index(content, "let"), len(content)}},
 			{Kind: KindVariable, Name: spanOf(t, content, "q", 0), Node: Span{strings.Index(content, "let"), len(content)}},
 		},
 	}

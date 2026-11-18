@@ -6,53 +6,6 @@ import (
 	"unicode/utf8"
 )
 
-// Span is a half-open byte range of the source. An empty span marks an
-// absent optional part, such as a missing alias.
-type Span struct{ Start, End int }
-
-// Empty reports whether the span covers no bytes.
-func (s Span) Empty() bool { return s.End <= s.Start }
-
-// RawDefinition is a definition as an analyzer found it, before validation.
-type RawDefinition struct {
-	Kind      DefinitionKind
-	Name      Span
-	Node      Span
-	Container Span
-	Exported  bool
-}
-
-// RawReference is a reference as an analyzer found it.
-type RawReference struct {
-	Kind      ReferenceKind
-	Name      Span
-	Qualifier Span
-}
-
-// RawImport is an import as an analyzer found it.
-type RawImport struct {
-	Source, Name, Alias, Node Span
-}
-
-// RawGap is a gap as an analyzer found it. A gap with an empty span covers
-// the whole file.
-type RawGap struct {
-	Reason GapReason
-	Limit  Limit
-	Span   Span
-}
-
-// RawFile collects an analyzer's raw records for one source.
-type RawFile struct {
-	Definitions []RawDefinition
-	References  []RawReference
-	Imports     []RawImport
-	Gaps        []RawGap
-	// Exports are names listed in an export clause; a top-level definition
-	// with one of these names is exported.
-	Exports []Span
-}
-
 // definitionRank orders kinds when two records claim the same name: the
 // more specific kind wins.
 func definitionRank(k DefinitionKind) int {
@@ -72,8 +25,9 @@ func definitionRank(k DefinitionKind) int {
 // FileAnalysis. It is shared by every analyzer so that the same trust rules
 // apply to all of them:
 //
-//   - a span outside the source makes the whole result untrustworthy, so
-//     the records are dropped and the file gets an analysis_failed gap;
+//   - a span outside the source, or a name of a definition or an import
+//     outside its node, makes the whole result untrustworthy, so the
+//     records are dropped and the file gets an analysis_failed gap;
 //   - a name that is not valid UTF-8 is dropped with an invalid_text gap;
 //   - a name longer than MaxNameBytes is dropped with a name_length gap;
 //   - records beyond MaxRecords are dropped in source order with a records
@@ -88,69 +42,116 @@ func Assemble(source Source, analyzer string, raw RawFile, limits Limits) FileAn
 	if !limits.Valid() {
 		limits = DefaultLimits()
 	}
-	content := source.content
-	size := len(content)
-	failed := func() FileAnalysis {
+	if !validRaw(raw, len(source.content)) {
 		return WholeFileGap(source, analyzer, GapAnalysisFailed, "")
 	}
+	b := &builder{content: source.content, lines: NewLineIndex(source.content), limits: limits, budget: limits.MaxRecords, firstDropped: -1}
+	merged, byName := b.mergeDefinitions(raw.Definitions)
+	definitions := b.definitionTree(merged)
+	markExportList(b, definitions, raw.Exports)
+	imports := b.imports(raw.Imports, definitions)
+	references := b.references(raw.References, byName, definitions)
+	return FileAnalysis{
+		Path: source.path, Language: source.language, ContentSHA256: source.digest, Analyzer: analyzer,
+		Definitions: definitions, References: references, Imports: imports, Gaps: b.allGaps(raw.Gaps),
+	}
+}
+
+// ExportThroughOwners applies the rule of Definition.Exported to flags that
+// hold each definition's own visibility: a definition whose parent is not
+// exported is not exported. An analyzer applies it after Assemble and after
+// any rule of its own that sets the flags.
+func ExportThroughOwners(a *FileAnalysis) {
+	for i := range a.Definitions {
+		if p := a.Definitions[i].Parent; p >= 0 && p < i && !a.Definitions[p].Exported {
+			a.Definitions[i].Exported = false
+		}
+	}
+}
+
+// validRaw checks every span against the source and the name, alias and
+// container of a definition or import against its node.
+func validRaw(raw RawFile, size int) bool {
 	inBounds := func(s Span) bool { return s.Start >= 0 && s.End >= s.Start && s.End <= size }
+	part := func(node, s Span) bool { return inBounds(s) && (s.Empty() || node.Contains(s)) }
 	for _, d := range raw.Definitions {
-		if !d.Kind.Valid() || !inBounds(d.Name) || !inBounds(d.Node) || !inBounds(d.Container) {
-			return failed()
+		if !d.Kind.Valid() || !inBounds(d.Node) || !part(d.Node, d.Name) || !part(d.Node, d.Container) {
+			return false
 		}
 	}
 	for _, r := range raw.References {
 		if !r.Kind.Valid() || !inBounds(r.Name) || !inBounds(r.Qualifier) {
-			return failed()
+			return false
 		}
 	}
 	for _, i := range raw.Imports {
-		if !inBounds(i.Source) || !inBounds(i.Name) || !inBounds(i.Alias) || !inBounds(i.Node) {
-			return failed()
+		if !inBounds(i.Node) || !part(i.Node, i.Name) || !part(i.Node, i.Alias) || !inBounds(i.Source) {
+			return false
 		}
 	}
 	for _, g := range raw.Gaps {
 		if !inBounds(g.Span) {
-			return failed()
+			return false
 		}
 	}
 	for _, e := range raw.Exports {
 		if !inBounds(e) {
-			return failed()
+			return false
 		}
 	}
+	return true
+}
 
-	lines := newLineIndex(content)
-	gaps := []RawGap{}
-	// text returns the span's text, or ok=false after recording a gap.
-	text := func(s Span) (string, bool) {
-		value := content[s.Start:s.End]
-		if s.End-s.Start > limits.MaxNameBytes {
-			gaps = append(gaps, RawGap{Reason: GapLimitExceeded, Limit: LimitNameLength, Span: s})
-			return "", false
-		}
-		if !utf8.Valid(value) {
-			gaps = append(gaps, RawGap{Reason: GapInvalidText, Span: s})
-			return "", false
-		}
-		return string(value), true
-	}
-	optional := func(s Span) (Text, bool) {
-		if s.Empty() {
-			return Text{}, true
-		}
-		value, ok := text(s)
-		return newText(value), ok
-	}
+// builder holds what the assembly steps share: the source, its line index,
+// the record budget and the gaps found so far.
+type builder struct {
+	content      []byte
+	lines        LineIndex
+	limits       Limits
+	gaps         []RawGap
+	budget       int
+	firstDropped int
+}
 
-	// Merge definitions that share a name span.
-	type pending struct {
-		raw  RawDefinition
-		name string
+// text returns the span's text, or ok=false after recording a gap.
+func (b *builder) text(s Span) (string, bool) {
+	value := b.content[s.Start:s.End]
+	if s.End-s.Start > b.limits.MaxNameBytes {
+		b.gaps = append(b.gaps, RawGap{Reason: GapLimitExceeded, Limit: LimitNameLength, Span: s})
+		return "", false
 	}
+	if !utf8.Valid(value) {
+		b.gaps = append(b.gaps, RawGap{Reason: GapInvalidText, Span: s})
+		return "", false
+	}
+	return string(value), true
+}
+
+func (b *builder) optional(s Span) (Text, bool) {
+	if s.Empty() {
+		return Text{}, true
+	}
+	value, ok := b.text(s)
+	return newText(value), ok
+}
+
+func (b *builder) drop(at int) {
+	if b.firstDropped < 0 || at < b.firstDropped {
+		b.firstDropped = at
+	}
+}
+
+type pendingDefinition struct {
+	raw  RawDefinition
+	name string
+}
+
+// mergeDefinitions joins the definitions that share a name span and sorts
+// them by node, outer nodes first.
+func (b *builder) mergeDefinitions(raw []RawDefinition) ([]pendingDefinition, map[Span]int) {
 	byName := map[Span]int{}
-	merged := []pending{}
-	for _, d := range raw.Definitions {
+	merged := []pendingDefinition{}
+	for _, d := range raw {
 		if d.Name.Empty() || d.Node.Empty() {
 			continue
 		}
@@ -169,44 +170,38 @@ func Assemble(source Source, analyzer string, raw RawFile, limits Limits) FileAn
 			continue
 		}
 		byName[d.Name] = len(merged)
-		merged = append(merged, pending{raw: d})
+		merged = append(merged, pendingDefinition{raw: d})
 	}
 	kept := merged[:0]
 	for _, p := range merged {
-		name, ok := text(p.raw.Name)
-		if !ok {
-			continue
+		if name, ok := b.text(p.raw.Name); ok {
+			p.name = name
+			kept = append(kept, p)
 		}
-		p.name = name
-		kept = append(kept, p)
 	}
-	merged = kept
-	slices.SortStableFunc(merged, func(a, b pending) int {
-		if a.raw.Node.Start != b.raw.Node.Start {
-			return a.raw.Node.Start - b.raw.Node.Start
+	slices.SortStableFunc(kept, func(x, y pendingDefinition) int {
+		if x.raw.Node.Start != y.raw.Node.Start {
+			return x.raw.Node.Start - y.raw.Node.Start
 		}
-		if a.raw.Node.End != b.raw.Node.End {
-			return b.raw.Node.End - a.raw.Node.End
+		if x.raw.Node.End != y.raw.Node.End {
+			return y.raw.Node.End - x.raw.Node.End
 		}
-		return a.raw.Name.Start - b.raw.Name.Start
+		return x.raw.Name.Start - y.raw.Name.Start
 	})
+	return kept, byName
+}
 
-	budget := limits.MaxRecords
-	var firstDropped = -1
-	drop := func(at int) {
-		if firstDropped < 0 || at < firstDropped {
-			firstDropped = at
-		}
-	}
-
+// definitionTree gives each definition the innermost definition whose node
+// contains its own as its parent, within the record budget.
+func (b *builder) definitionTree(merged []pendingDefinition) []Definition {
 	definitions := make([]Definition, 0, len(merged))
 	stack := []int{}
 	for _, p := range merged {
-		if len(definitions) >= budget {
-			drop(p.raw.Node.Start)
+		if len(definitions) >= b.budget {
+			b.drop(p.raw.Node.Start)
 			break
 		}
-		container, ok := optional(p.raw.Container)
+		container, ok := b.optional(p.raw.Container)
 		if !ok {
 			continue
 		}
@@ -228,54 +223,68 @@ func Assemble(source Source, analyzer string, raw RawFile, limits Limits) FileAn
 		}
 		definitions = append(definitions, Definition{
 			Kind: kind, Name: newText(p.name), Container: container,
-			Range: lines.rangeOf(p.raw.Node), NameRange: lines.rangeOf(p.raw.Name),
+			Range: b.lines.Range(p.raw.Node), NameRange: b.lines.Range(p.raw.Name),
 			Parent: parent, Exported: p.raw.Exported,
 		})
 		stack = append(stack, len(definitions)-1)
 	}
-	budget -= len(definitions)
+	b.budget -= len(definitions)
+	return definitions
+}
 
-	if len(raw.Exports) > 0 {
-		exported := map[string]bool{}
-		for _, e := range raw.Exports {
-			if value, ok := text(e); ok {
-				exported[value] = true
-			}
-		}
-		for i := range definitions {
-			if definitions[i].Parent < 0 && exported[definitions[i].Name.Untrusted()] {
-				definitions[i].Exported = true
-			}
+// markExportList exports the top-level definitions an export clause names.
+func markExportList(b *builder, definitions []Definition, exports []Span) {
+	if len(exports) == 0 {
+		return
+	}
+	exported := map[string]bool{}
+	for _, e := range exports {
+		if value, ok := b.text(e); ok {
+			exported[value] = true
 		}
 	}
-
-	imports := []Import{}
-	rawImports := slices.Clone(raw.Imports)
-	slices.SortStableFunc(rawImports, func(a, b RawImport) int {
-		if a.Node.Start != b.Node.Start {
-			return a.Node.Start - b.Node.Start
+	for i := range definitions {
+		if definitions[i].Parent < 0 && exported[definitions[i].Name.Untrusted()] {
+			definitions[i].Exported = true
 		}
-		return a.Source.Start - b.Source.Start
+	}
+}
+
+// imports drops repeated imports and an import that another one of the
+// same statement and source describes more completely.
+func (b *builder) imports(raw []RawImport, definitions []Definition) []Import {
+	sorted := slices.Clone(raw)
+	slices.SortStableFunc(sorted, func(x, y RawImport) int {
+		if x.Node.Start != y.Node.Start {
+			return x.Node.Start - y.Node.Start
+		}
+		return x.Source.Start - y.Source.Start
 	})
-	seenImports := map[RawImport]bool{}
-	for at, i := range rawImports {
-		if i.Source.Empty() || seenImports[i] || subsumed(rawImports, at) {
+	groups := map[[2]Span][]RawImport{}
+	for _, i := range sorted {
+		key := [2]Span{i.Node, i.Source}
+		groups[key] = append(groups[key], i)
+	}
+	imports := []Import{}
+	seen := map[RawImport]bool{}
+	for _, i := range sorted {
+		if i.Source.Empty() || seen[i] || subsumed(groups[[2]Span{i.Node, i.Source}], i) {
 			continue
 		}
-		seenImports[i] = true
-		if len(imports) >= budget {
-			drop(i.Node.Start)
+		seen[i] = true
+		if len(imports) >= b.budget {
+			b.drop(i.Node.Start)
 			break
 		}
-		sourceText, ok := text(i.Source)
+		sourceText, ok := b.text(i.Source)
 		if !ok {
 			continue
 		}
-		name, ok := optional(i.Name)
+		name, ok := b.optional(i.Name)
 		if !ok {
 			continue
 		}
-		alias, ok := optional(i.Alias)
+		alias, ok := b.optional(i.Alias)
 		if !ok {
 			continue
 		}
@@ -285,139 +294,17 @@ func Assemble(source Source, analyzer string, raw RawFile, limits Limits) FileAn
 		}
 		imports = append(imports, Import{
 			Source: newText(sourceText), Name: name, Alias: alias,
-			Range: lines.rangeOf(node), Enclosing: enclosing(definitions, node.Start),
+			Range: b.lines.Range(node), Enclosing: enclosing(definitions, node.Start),
 		})
 	}
-	budget -= len(imports)
-
-	references := []Reference{}
-	rawReferences := slices.Clone(raw.References)
-	slices.SortStableFunc(rawReferences, func(a, b RawReference) int {
-		if a.Name.Start != b.Name.Start {
-			return a.Name.Start - b.Name.Start
-		}
-		return a.Name.End - b.Name.End
-	})
-	// A name already recorded with a qualifier is not repeated without one,
-	// and the name of a definition is not a reference to it.
-	type referenceKey struct {
-		kind ReferenceKind
-		name Span
-	}
-	qualified := map[referenceKey]bool{}
-	for _, r := range rawReferences {
-		if !r.Qualifier.Empty() {
-			qualified[referenceKey{r.Kind, r.Name}] = true
-		}
-	}
-	seenReferences := map[referenceKey]bool{}
-	for _, r := range rawReferences {
-		key := referenceKey{r.Kind, r.Name}
-		if r.Name.Empty() || seenReferences[key] || (r.Qualifier.Empty() && qualified[key]) {
-			continue
-		}
-		if _, isDefinition := byName[r.Name]; isDefinition {
-			continue
-		}
-		seenReferences[key] = true
-		if len(references) >= budget {
-			drop(r.Name.Start)
-			break
-		}
-		name, ok := text(r.Name)
-		if !ok {
-			continue
-		}
-		// An over-long or undecodable qualifier is left out with its gap;
-		// the call site itself is still recorded.
-		qualifier, _ := optional(r.Qualifier)
-		references = append(references, Reference{
-			Kind: r.Kind, Name: newText(name), Qualifier: qualifier,
-			Range: lines.rangeOf(r.Name), Enclosing: enclosing(definitions, r.Name.Start),
-		})
-	}
-	if firstDropped >= 0 {
-		gaps = append(gaps, RawGap{Reason: GapLimitExceeded, Limit: LimitRecords, Span: Span{Start: firstDropped, End: size}})
-	}
-
-	// Parse-error regions: merge overlaps and bound the count.
-	errorRegions := []Span{}
-	for _, g := range raw.Gaps {
-		if g.Reason == GapParseError && !g.Span.Empty() {
-			errorRegions = append(errorRegions, g.Span)
-		} else if g.Reason == GapParseError {
-			errorRegions = append(errorRegions, pointSpan(g.Span.Start, size))
-		} else {
-			gaps = append(gaps, g)
-		}
-	}
-	slices.SortFunc(errorRegions, func(a, b Span) int {
-		if a.Start != b.Start {
-			return a.Start - b.Start
-		}
-		return a.End - b.End
-	})
-	mergedRegions := []Span{}
-	for _, r := range errorRegions {
-		if n := len(mergedRegions); n > 0 && r.Start <= mergedRegions[n-1].End {
-			mergedRegions[n-1].End = max(mergedRegions[n-1].End, r.End)
-			continue
-		}
-		mergedRegions = append(mergedRegions, r)
-	}
-	if len(mergedRegions) > limits.MaxErrorRegions {
-		rest := mergedRegions[limits.MaxErrorRegions]
-		mergedRegions = mergedRegions[:limits.MaxErrorRegions]
-		gaps = append(gaps, RawGap{Reason: GapLimitExceeded, Limit: LimitErrorRegions, Span: Span{Start: rest.Start, End: size}})
-	}
-	for _, r := range mergedRegions {
-		gaps = append(gaps, RawGap{Reason: GapParseError, Span: r})
-	}
-
-	out := make([]Gap, 0, len(gaps))
-	seenGaps := map[RawGap]bool{}
-	for _, g := range gaps {
-		if seenGaps[g] {
-			continue
-		}
-		seenGaps[g] = true
-		gap := Gap{Reason: g.Reason, Limit: g.Limit}
-		if !g.Span.Empty() {
-			gap.HasRange = true
-			gap.Range = lines.rangeOf(g.Span)
-		}
-		out = append(out, gap)
-	}
-	slices.SortStableFunc(out, func(a, b Gap) int {
-		if a.HasRange != b.HasRange {
-			if !a.HasRange {
-				return -1
-			}
-			return 1
-		}
-		if a.Range.StartByte != b.Range.StartByte {
-			return a.Range.StartByte - b.Range.StartByte
-		}
-		if a.Reason != b.Reason {
-			if a.Reason < b.Reason {
-				return -1
-			}
-			return 1
-		}
-		return a.Range.EndByte - b.Range.EndByte
-	})
-
-	return FileAnalysis{
-		Path: source.path, Language: source.language, ContentSHA256: source.digest, Analyzer: analyzer,
-		Definitions: definitions, References: references, Imports: imports, Gaps: out,
-	}
+	b.budget -= len(imports)
+	return imports
 }
 
-// subsumed reports whether another import of the same node and source says
-// everything rawImports[at] says and more, as when a pattern for a bare
+// subsumed reports whether another import of the same node and source, one
+// of group, says everything i says and more, as when a pattern for a bare
 // import and a pattern for its named members both match one statement.
-func subsumed(imports []RawImport, at int) bool {
-	i := imports[at]
+func subsumed(group []RawImport, i RawImport) bool {
 	fields := func(r RawImport) int {
 		n := 0
 		if !r.Name.Empty() {
@@ -428,8 +315,8 @@ func subsumed(imports []RawImport, at int) bool {
 		}
 		return n
 	}
-	for j, other := range imports {
-		if j == at || other.Node != i.Node || other.Source != i.Source || fields(other) <= fields(i) {
+	for _, other := range group {
+		if fields(other) <= fields(i) {
 			continue
 		}
 		if (i.Name.Empty() || i.Name == other.Name) && (i.Alias.Empty() || i.Alias == other.Alias) {
@@ -437,6 +324,132 @@ func subsumed(imports []RawImport, at int) bool {
 		}
 	}
 	return false
+}
+
+// references drops repeated references, a name already recorded with a
+// qualifier when it comes again without one, and the names of definitions.
+func (b *builder) references(raw []RawReference, definitionNames map[Span]int, definitions []Definition) []Reference {
+	sorted := slices.Clone(raw)
+	slices.SortStableFunc(sorted, func(x, y RawReference) int {
+		if x.Name.Start != y.Name.Start {
+			return x.Name.Start - y.Name.Start
+		}
+		return x.Name.End - y.Name.End
+	})
+	type key struct {
+		kind ReferenceKind
+		name Span
+	}
+	qualified := map[key]bool{}
+	for _, r := range sorted {
+		if !r.Qualifier.Empty() {
+			qualified[key{r.Kind, r.Name}] = true
+		}
+	}
+	seen := map[key]bool{}
+	references := []Reference{}
+	for _, r := range sorted {
+		k := key{r.Kind, r.Name}
+		if r.Name.Empty() || seen[k] || (r.Qualifier.Empty() && qualified[k]) {
+			continue
+		}
+		if _, isDefinition := definitionNames[r.Name]; isDefinition {
+			continue
+		}
+		seen[k] = true
+		if len(references) >= b.budget {
+			b.drop(r.Name.Start)
+			break
+		}
+		name, ok := b.text(r.Name)
+		if !ok {
+			continue
+		}
+		// An over-long or undecodable qualifier is left out with its gap;
+		// the call site itself is still recorded.
+		qualifier, _ := b.optional(r.Qualifier)
+		references = append(references, Reference{
+			Kind: r.Kind, Name: newText(name), Qualifier: qualifier,
+			Range: b.lines.Range(r.Name), Enclosing: enclosing(definitions, r.Name.Start),
+		})
+	}
+	return references
+}
+
+// allGaps merges the parse-error regions, bounds their count, adds the
+// gaps found while assembling and sorts the result.
+func (b *builder) allGaps(raw []RawGap) []Gap {
+	size := len(b.content)
+	gaps := b.gaps
+	if b.firstDropped >= 0 {
+		gaps = append(gaps, RawGap{Reason: GapLimitExceeded, Limit: LimitRecords, Span: Span{Start: b.firstDropped, End: size}})
+	}
+	regions := []Span{}
+	for _, g := range raw {
+		switch {
+		case g.Reason != GapParseError:
+			gaps = append(gaps, g)
+		case g.Span.Empty():
+			regions = append(regions, pointSpan(g.Span.Start, size))
+		default:
+			regions = append(regions, g.Span)
+		}
+	}
+	slices.SortFunc(regions, func(x, y Span) int {
+		if x.Start != y.Start {
+			return x.Start - y.Start
+		}
+		return x.End - y.End
+	})
+	merged := []Span{}
+	for _, r := range regions {
+		if n := len(merged); n > 0 && r.Start <= merged[n-1].End {
+			merged[n-1].End = max(merged[n-1].End, r.End)
+			continue
+		}
+		merged = append(merged, r)
+	}
+	if len(merged) > b.limits.MaxErrorRegions {
+		rest := merged[b.limits.MaxErrorRegions]
+		merged = merged[:b.limits.MaxErrorRegions]
+		gaps = append(gaps, RawGap{Reason: GapLimitExceeded, Limit: LimitErrorRegions, Span: Span{Start: rest.Start, End: size}})
+	}
+	for _, r := range merged {
+		gaps = append(gaps, RawGap{Reason: GapParseError, Span: r})
+	}
+	out := make([]Gap, 0, len(gaps))
+	seen := map[RawGap]bool{}
+	for _, g := range gaps {
+		if seen[g] {
+			continue
+		}
+		seen[g] = true
+		gap := Gap{Reason: g.Reason, Limit: g.Limit}
+		if !g.Span.Empty() {
+			gap.HasRange = true
+			gap.Range = b.lines.Range(g.Span)
+		}
+		out = append(out, gap)
+	}
+	slices.SortStableFunc(out, func(x, y Gap) int {
+		if x.HasRange != y.HasRange {
+			if !x.HasRange {
+				return -1
+			}
+			return 1
+		}
+		if x.Range.StartByte != y.Range.StartByte {
+			return x.Range.StartByte - y.Range.StartByte
+		}
+		if x.Reason != y.Reason {
+			if x.Reason < y.Reason {
+				return -1
+			}
+			return 1
+		}
+		return x.Range.EndByte - y.Range.EndByte
+	})
+	return out
 }
 
 // pointSpan widens a zero-width error position, such as a missing token, to
@@ -485,25 +498,4 @@ func enclosing(definitions []Definition, offset int) int {
 func owned(definitions []Definition, i int) bool {
 	p := definitions[i].Parent
 	return p >= 0 && p < i && !definitions[i].Container.Empty() && definitions[i].Container.Untrusted() == definitions[p].Name.Untrusted()
-}
-
-type lineIndex struct{ starts []int }
-
-func newLineIndex(content []byte) lineIndex {
-	starts := []int{0}
-	for i, b := range content {
-		if b == '\n' {
-			starts = append(starts, i+1)
-		}
-	}
-	return lineIndex{starts: starts}
-}
-
-func (l lineIndex) position(offset int) Position {
-	line := sort.Search(len(l.starts), func(i int) bool { return l.starts[i] > offset }) - 1
-	return Position{Line: line + 1, Column: offset - l.starts[line] + 1}
-}
-
-func (l lineIndex) rangeOf(s Span) Range {
-	return Range{StartByte: s.Start, EndByte: s.End, Start: l.position(s.Start), End: l.position(s.End)}
 }

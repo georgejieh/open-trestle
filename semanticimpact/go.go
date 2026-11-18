@@ -168,56 +168,38 @@ func parseGoFile(f File) (parsedGoFile, bool) {
 	}
 	out := parsedGoFile{path: f.filePath, file: node, fset: fset, declarations: map[string]rawDeclaration{}}
 	initCount := 0
-	for _, decl := range node.Decls {
-		switch d := decl.(type) {
-		case *ast.FuncDecl:
-			if d.Name.Name == "_" {
-				continue
-			}
-			key := "func:" + d.Name.Name
-			if d.Recv == nil && d.Name.Name == "init" {
+	duplicate := false
+	goDeclarations(node, func(g goDeclaration) {
+		name := g.name.Name
+		var key, kind string
+		var declNode ast.Node
+		switch s := g.spec.(type) {
+		case nil:
+			d := g.decl.(*ast.FuncDecl)
+			key, kind, declNode = "func:"+name, "function", d
+			if d.Recv == nil && name == "init" {
 				initCount++
 				if initCount > 1 {
 					key += "#" + strconv.Itoa(initCount)
 				}
 			}
-			kind := "function"
 			if d.Recv != nil && len(d.Recv.List) > 0 {
-				receiver := formatExpr(fset, d.Recv.List[0].Type)
-				key = "method:" + receiver + "." + d.Name.Name
-				kind = "method"
+				key, kind = "method:"+formatExpr(fset, d.Recv.List[0].Type)+"."+name, "method"
 			}
-			if _, exists := out.declarations[key]; exists {
-				return parsedGoFile{}, false
-			}
-			out.declarations[key] = rawDecl(fset, d, key, d.Name.Name, kind, ast.IsExported(d.Name.Name), d.Name.Pos())
-		case *ast.GenDecl:
-			for _, spec := range d.Specs {
-				switch s := spec.(type) {
-				case *ast.TypeSpec:
-					if s.Name.Name == "_" {
-						continue
-					}
-					key := "type:" + s.Name.Name
-					if _, exists := out.declarations[key]; exists {
-						return parsedGoFile{}, false
-					}
-					out.declarations[key] = rawDecl(fset, s, key, s.Name.Name, "type", ast.IsExported(s.Name.Name), s.Name.Pos())
-				case *ast.ValueSpec:
-					kind := strings.ToLower(d.Tok.String())
-					for _, name := range s.Names {
-						if name.Name == "_" {
-							continue
-						}
-						key := kind + ":" + name.Name
-						if _, exists := out.declarations[key]; exists {
-							return parsedGoFile{}, false
-						}
-						out.declarations[key] = rawDecl(fset, s, key, name.Name, kind, ast.IsExported(name.Name), name.Pos())
-					}
-				}
-			}
+		case *ast.TypeSpec:
+			key, kind, declNode = "type:"+name, "type", s
+		case *ast.ValueSpec:
+			kind = strings.ToLower(g.decl.(*ast.GenDecl).Tok.String())
+			key, declNode = kind+":"+name, s
 		}
+		if _, exists := out.declarations[key]; exists {
+			duplicate = true
+			return
+		}
+		out.declarations[key] = rawDecl(fset, declNode, key, name, kind, ast.IsExported(name), g.name.Pos())
+	})
+	if duplicate {
+		return parsedGoFile{}, false
 	}
 	return out, true
 }

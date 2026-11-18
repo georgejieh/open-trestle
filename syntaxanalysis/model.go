@@ -244,10 +244,12 @@ type Definition struct {
 	Range     Range `json:"range"`
 	NameRange Range `json:"name_range"`
 	Parent    int   `json:"parent"`
-	// Exported reports whether the language's syntax makes the definition
-	// visible outside its file or module: a capitalised Go name, a Java or
-	// C#-style public modifier, a JavaScript export, or a Python name without
-	// a leading underscore at module or class level.
+	// Exported reports whether the definition can be reached from outside
+	// its file or module: its own visibility allows it, as a capitalised Go
+	// name, a public modifier, an export or a Python name without a leading
+	// underscore do, and its parent is exported. Blocks that carry no
+	// visibility of their own, such as namespaces, impl blocks and
+	// extensions, are exported.
 	Exported bool `json:"exported"`
 }
 
