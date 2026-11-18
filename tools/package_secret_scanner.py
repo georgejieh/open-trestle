@@ -717,7 +717,10 @@ def build_development(repository: Path, output: Path, target: tuple[str, str] | 
     if output.is_symlink() or output.exists() and not output.is_dir():
         raise ValueError("development output must be a directory")
     _verify_go_mod_pins(repository)
-    with tempfile.TemporaryDirectory(prefix="open-trestle-development-") as directory:
+    # The build folder sits next to the output, so that moving the results
+    # into place never crosses a file system or drive.
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".open-trestle-development-", dir=output.parent) as directory:
         temporary = Path(directory)
         go_tmp = temporary / "go-tmp"
         target = target or _host_target(repository, go_tmp)

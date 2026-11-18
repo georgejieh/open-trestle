@@ -154,6 +154,10 @@ jobs:
           GOWORK=off GOTOOLCHAIN=go1.26.11 CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go test -run='^$' -exec=true ./...
       - name: Run scan helper session and review integration tests
         run: OPEN_TRESTLE_SCAN_HELPER_INTEGRATION=1 GOWORK=off GOTOOLCHAIN=go1.26.11 go test -count=1 -timeout=20m -run='^(TestScanHelper|TestRemoteReviewScansThroughTheScanHelper)' ./internal/secretscan/ ./cmd/trestle/
+      - name: Build a development trestle with its scan helper
+        run: |
+          python3 tools/package_secret_scanner.py --development "$RUNNER_TEMP/open-trestle-development"
+          "$RUNNER_TEMP/open-trestle-development/bin/trestle" build-info
       - name: Build deterministic release staging
         run: |
           python3 tools/package_secret_scanner.py --output .container
@@ -369,6 +373,11 @@ jobs:
           go build ./...
           go vet ./internal/scanhelper/ ./internal/ownersonly/ ./cmd/...
           go test -count=1 -timeout=15m ./internal/scanhelper/ ./internal/ownersonly/
+      # The temporary folder is on another drive than the checkout.
+      - name: Build a development trestle with its scan helper
+        run: |
+          python tools/package_secret_scanner.py --development "$env:TMP\open-trestle-development"
+          & "$env:TMP\open-trestle-development\bin\trestle.exe" build-info
       - name: Run scan helper session and review integration tests
         env:
           OPEN_TRESTLE_SCAN_HELPER_INTEGRATION: "1"

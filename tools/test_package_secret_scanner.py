@@ -368,8 +368,20 @@ class DevelopmentBuildTest(unittest.TestCase):
             go.helper_target = "GOARCH=amd64\n\tbuild\tGOOS=windows"
             build_helper, calls = _FakeGo.build_helper()
             output = root / "dev"
-            with patch.multiple(package_secret_scanner, build_helper=build_helper, _run=go.run):
+            moves = []
+            replace = os.replace
+
+            def recording_replace(source, destination):
+                moves.append(Path(source))
+                replace(source, destination)
+
+            with patch.multiple(package_secret_scanner, build_helper=build_helper, _run=go.run), \
+                    patch.object(package_secret_scanner.os, "replace", recording_replace):
                 package_secret_scanner.build_development(root, output, ("windows", "amd64"))
+            self.assertEqual(len(moves), 3)
+            for source in moves:
+                self.assertTrue(source.relative_to(root).parts[0].startswith(".open-trestle-development-"))
+            self.assertFalse([path for path in root.iterdir() if path.name.startswith(".open-trestle-development-")])
             helper = output / "libexec/open-trestle/open-trestle-scan-helper.exe"
             digest = hashlib.sha256(helper.read_bytes()).hexdigest()
             self.assertEqual(calls, [("windows", "amd64")])
