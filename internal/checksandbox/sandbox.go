@@ -21,10 +21,11 @@ type Limits struct {
 	// Time is the wall clock limit; the whole process tree is killed when it
 	// passes.
 	Time time.Duration
-	// MemoryBytes is the memory limit: per process on Linux and macOS, for
-	// the whole tree on Windows.
+	// MemoryBytes is the memory limit: per process on Linux, for the whole
+	// tree on Windows. macOS has no limit a user can set.
 	MemoryBytes uint64
-	// Processes bounds the processes that may exist at once.
+	// Processes bounds the processes that may exist at once; on Linux each
+	// thread counts as one.
 	Processes int
 	// OutputBytes bounds standard output and standard error, each.
 	OutputBytes int
@@ -37,7 +38,7 @@ func DefaultLimits() Limits {
 	return Limits{
 		Time:        3 * time.Minute,
 		MemoryBytes: 4 << 30,
-		Processes:   256,
+		Processes:   1024,
 		OutputBytes: 8 << 20,
 		DiskBytes:   2 << 30,
 	}
