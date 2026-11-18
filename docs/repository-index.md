@@ -59,7 +59,7 @@ Every file starts with the format and the analysis identity, the SHA-256 of the 
 
 A file a limit leaves out keeps the limit as its status, and the next build continues with it. Past the size limit, the oldest commits are dropped first; the newest is always kept, and its files past the limit get `store_limit`. A file whose analysis fails as a whole, for example by its deadline, gets `analysis_failed` and is tried again by the next build. Per-file limits are those of [syntax analysis](syntax-analysis.md#resource-limits).
 
-Files are analysed in worker processes, one per CPU within half of the physical memory. A worker that takes longer than three times the per-file deadline plus five seconds, crashes or answers malformed output is killed and replaced, and its file gets `analysis_failed`. Workers start with an empty environment.
+Files are analysed in worker processes, one per CPU within half of the memory (the cgroup memory limit on Linux when it is lower). A worker that takes longer than three times the per-file deadline plus five seconds, crashes or answers malformed output is killed and replaced, and its file gets `analysis_failed`. Workers start with an empty environment.
 
 ## Commands
 
