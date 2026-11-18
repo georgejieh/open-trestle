@@ -305,6 +305,9 @@ func TestSyntheticMebibyteMatchesTheNativeScanner(t *testing.T) {
 // helper session and requires the native scanner's status and matches for
 // each, including the requests the native scanner stops at the match limit.
 func TestDenseAndLimitRequestsEndAsTheNativeScannerDoes(t *testing.T) {
+	if raceDetector {
+		t.Skip("the native reference scan misses its deadline under the race detector")
+	}
 	binaries(t)
 	fixtures, _ := readQualification(t)
 	dense := repeatedFixtures(fixtures, reviewSourceBytes)
