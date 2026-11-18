@@ -26,7 +26,7 @@ A reference is a candidate for a definition when it has the definition's exact n
 | `import` | the file imports the definition's file, or its package for a Go or C# import or a Java wildcard, as resolved from the import text, and the definition is exported | all |
 | `name` | the definition is exported and the language makes it visible without an import of its file | C, C++, C#, Swift, PHP, Ruby |
 
-In Go, a reference qualified by the name an import binds (its alias, or the package's declared name) matches only that package's top-level definitions, and a method or field of another package matches only a selector in a file that imports that package.
+In Go, a reference qualified by the name an import binds (its alias, or the package's declared name) matches only that package's top-level definitions, any other selector matches only methods and fields, a bare name never matches a method or field, and a method or field of another package matches only a selector in a file that imports that package.
 
 Imports resolve by path rules: Go import paths through the module paths of the commit's `go.mod` files (an import outside them stays unresolved; only a file under no known module falls back to the directory the path ends with), Java class names to their file, relative JavaScript and TypeScript imports with the usual extensions and `index` files, HTML `src`, `href` and `action` values relative to the page, Python modules to `.py`, `.pyi` or `__init__.py`, C and C++ includes, Rust `use` paths, Ruby and PHP required paths and PHP namespaced names to files, and C# `using` to the files declaring the namespace. An import of a package outside the repository is unresolved and counted.
 

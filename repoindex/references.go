@@ -56,8 +56,9 @@ type target struct {
 	name       int32
 	exported   bool
 	// topLevel is a definition at the top level of its file that is not a
-	// method or field of a type, which Go reaches only through a package.
-	topLevel bool
+	// method or field of a type, which Go reaches only through a package;
+	// member is a method or field, which Go reaches only through a selector.
+	topLevel, member bool
 	// importers are the files that imported the definition's file in the
 	// base, for a definition whose file the head no longer has.
 	importers map[int32]bool
@@ -67,7 +68,7 @@ func (g *Graph) targetOf(i int32) target {
 	d := g.defs[i]
 	f := g.files[d.file]
 	member := d.kind == syntaxanalysis.KindMethod || d.kind == syntaxanalysis.KindField || d.container != 0
-	return target{file: d.file, unit: f.unit, family: f.family, name: d.name, exported: d.exported, topLevel: d.parent < 0 && !member}
+	return target{file: d.file, unit: f.unit, family: f.family, name: d.name, exported: d.exported, topLevel: d.parent < 0 && !member, member: member}
 }
 
 // scope applies the candidate rules to one reference.
@@ -99,14 +100,18 @@ func (g *Graph) scope(t target, r graphRef) Scope {
 
 // goScope applies Go's rules: a reference qualified by the name an import
 // binds refers to that package only, a top-level definition of another
-// package is reached only through such a qualifier, and a selector on a
-// value may reach a method or field of any package the file imports.
+// package is reached only through such a qualifier, a selector on a value
+// reaches only a method or field, of its own package or of any package the
+// file imports, and a bare name never reaches a method or field.
 func (g *Graph) goScope(t target, r graphRef) Scope {
 	qualifier := g.names[r.qualifier].Untrusted()
 	if imported, ok := g.goImports[r.file][qualifier]; ok && qualifier != "" {
 		if imported == t.unit && t.unit >= 0 && t.exported && t.topLevel {
 			return ScopeImport
 		}
+		return ""
+	}
+	if t.topLevel && r.qualifier != 0 || t.member && r.qualifier == 0 {
 		return ""
 	}
 	switch {
