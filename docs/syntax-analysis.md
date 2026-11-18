@@ -47,6 +47,8 @@ Captures:
 | `@qualifier` | The expression before a referenced name, such as a receiver. Keep it to identifiers and member chains. |
 | `@import` | The whole import, with `@import.source`, and optionally `@import.name` and `@import.alias`. |
 | `@export` | An export list entry; a top-level definition with its `@name` is exported. |
+| `@container` | The owner named in a definition's name, as in `Owner::name`, when it is not the lexical parent. |
+| `@opaque` | A span in which the pack drops type references, because the grammar reads values or macro arguments there as types. |
 | `@match.<word>` | Keeps the match only when the captured text is `<word>`, in place of `#eq?`. |
 | `@_<anything>` | A helper capture with no meaning. |
 

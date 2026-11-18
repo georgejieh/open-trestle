@@ -3,6 +3,7 @@ package syntaxwasm
 import (
 	"embed"
 	"errors"
+	"slices"
 	"strings"
 
 	"github.com/georgejieh/open-trestle/syntaxanalysis"
@@ -82,6 +83,8 @@ const (
 	roleImportName
 	roleImportAlias
 	roleMatch
+	roleContainer
+	roleOpaque
 )
 
 // captureRoles maps every capture name of a query to its role and refuses
@@ -118,7 +121,7 @@ func captureRoles(names []string) ([]role, error) {
 				"import": roleImport, "export": roleExport, "name": roleName,
 				"exported": roleExported, "qualifier": roleQualifier,
 				"import.source": roleImportSource, "import.name": roleImportName,
-				"import.alias": roleImportAlias,
+				"import.alias": roleImportAlias, "container": roleContainer, "opaque": roleOpaque,
 			}[name]
 			if !ok {
 				return nil, errQueryPack
@@ -134,12 +137,13 @@ func captureRoles(names []string) ([]role, error) {
 // export.
 func rawFile(content []byte, result analysisResult, roles []role) (syntaxanalysis.RawFile, error) {
 	raw := syntaxanalysis.RawFile{}
+	var opaqueSpans []syntaxanalysis.Span
 matches:
 	for _, m := range result.matches {
 		var record *capture
 		var recordRole role
-		var name, qualifier, source, imported, alias syntaxanalysis.Span
-		var names []syntaxanalysis.Span
+		var name, qualifier, source, imported, alias, container syntaxanalysis.Span
+		var names, opaque []syntaxanalysis.Span
 		exported := false
 		for i := range m.captures {
 			c := &m.captures[i]
@@ -166,19 +170,27 @@ matches:
 				imported = span
 			case roleImportAlias:
 				alias = span
+			case roleContainer:
+				container = span
+			case roleOpaque:
+				opaque = append(opaque, span)
 			case roleMatch:
 				if string(content[c.start:c.end]) != r.text {
 					continue matches
 				}
 			}
 		}
+		opaqueSpans = append(opaqueSpans, opaque...)
 		if record == nil {
+			if len(opaque) > 0 {
+				continue
+			}
 			return syntaxanalysis.RawFile{}, errQueryPack
 		}
 		node := syntaxanalysis.Span{Start: record.start, End: record.end}
 		switch recordRole.kind {
 		case roleDefinition:
-			raw.Definitions = append(raw.Definitions, syntaxanalysis.RawDefinition{Kind: recordRole.definition, Name: name, Node: node, Exported: exported})
+			raw.Definitions = append(raw.Definitions, syntaxanalysis.RawDefinition{Kind: recordRole.definition, Name: name, Node: node, Container: container, Exported: exported})
 		case roleReference:
 			raw.References = append(raw.References, syntaxanalysis.RawReference{Kind: recordRole.reference, Name: name, Qualifier: qualifier})
 		case roleImport:
@@ -187,8 +199,43 @@ matches:
 			raw.Exports = append(raw.Exports, names...)
 		}
 	}
+	raw.References = dropOpaque(raw.References, opaqueSpans)
 	for _, r := range result.regions {
 		raw.Gaps = append(raw.Gaps, syntaxanalysis.RawGap{Reason: syntaxanalysis.GapParseError, Span: syntaxanalysis.Span{Start: r.start, End: r.end}})
 	}
 	return raw, nil
+}
+
+// dropOpaque removes the type references whose name lies inside one of the
+// opaque spans: code that the grammar reads as declarations although the
+// names in it are values or macro arguments.
+func dropOpaque(references []syntaxanalysis.RawReference, spans []syntaxanalysis.Span) []syntaxanalysis.RawReference {
+	if len(spans) == 0 {
+		return references
+	}
+	slices.SortFunc(spans, func(a, b syntaxanalysis.Span) int { return a.Start - b.Start })
+	merged := spans[:1]
+	for _, s := range spans[1:] {
+		if last := &merged[len(merged)-1]; s.Start <= last.End {
+			last.End = max(last.End, s.End)
+		} else {
+			merged = append(merged, s)
+		}
+	}
+	kept := references[:0]
+	for _, r := range references {
+		if r.Kind != syntaxanalysis.ReferenceType {
+			kept = append(kept, r)
+			continue
+		}
+		at, _ := slices.BinarySearchFunc(merged, r.Name.Start, func(s syntaxanalysis.Span, start int) int { return s.Start - start })
+		inside := at < len(merged) && merged[at].Start == r.Name.Start
+		if !inside && at > 0 && r.Name.Start < merged[at-1].End {
+			inside = true
+		}
+		if !inside {
+			kept = append(kept, r)
+		}
+	}
+	return kept
 }
