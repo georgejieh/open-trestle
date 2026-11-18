@@ -62,8 +62,8 @@ func (s *Store) Snapshot(ctx context.Context, algorithm, commit string) (Snapsho
 	return sess.snapshot(algorithm, commit)
 }
 
-// Load builds the graph of an indexed commit. A record of the snapshot that
-// is missing or damaged makes it ErrDamaged.
+// Load builds the graph of an indexed commit. Damage clears the index and
+// is ErrDamaged.
 func (s *Store) Load(ctx context.Context, algorithm, commit string) (*Graph, error) {
 	sess, err := s.open(ctx, false)
 	if err != nil {
@@ -88,7 +88,7 @@ func (s *Store) Load(ctx context.Context, algorithm, commit string) (*Graph, err
 			}
 			decoded, err := record.decode(f.Path)
 			if err != nil {
-				return nil, sess.damaged(key)
+				return nil, sess.clear()
 			}
 			analysis = &decoded
 		}
@@ -99,8 +99,7 @@ func (s *Store) Load(ctx context.Context, algorithm, commit string) (*Graph, err
 }
 
 // Load returns the graph of a tree's commit. It builds the commit first
-// when the index has no snapshot of it or the snapshot's records are
-// damaged or missing, the one way the index recovers from damage.
+// when the index has no snapshot of it, as after damage cleared it.
 func (b Builder) Load(ctx context.Context, tree Tree) (*Graph, bool, error) {
 	g, err := b.Store.Load(ctx, tree.Algorithm(), tree.Commit())
 	if !errors.Is(err, ErrNotIndexed) && !errors.Is(err, ErrDamaged) {

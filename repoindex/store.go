@@ -22,10 +22,10 @@ var (
 	ErrBusy = errors.New("repository index is in use by another process")
 	// ErrNotIndexed reports a commit the index has no snapshot of.
 	ErrNotIndexed = errors.New("commit is not indexed")
-	// ErrDamaged reports a snapshot whose records are damaged or missing.
-	// The damaged segment is removed, so a build of the commit analyses
-	// those files again; Builder.Load does that.
-	ErrDamaged = errors.New("index records of the commit are damaged or missing")
+	// ErrDamaged reports damage: a file that fails its check or a record a
+	// snapshot needs that is missing. The index is cleared, and the next
+	// build starts over; Builder.Load and Builder.Build do that.
+	ErrDamaged = errors.New("the repository index was damaged and has been cleared")
 
 	errCorrupt = errors.New("repository index file is corrupt")
 	errStale   = errors.New("repository index file has another analysis identity")
@@ -232,8 +232,11 @@ func (sess *session) addSegment(name string) error {
 	entries, err := readSegmentDirectory(file, info.Size(), sess.store.identity, len(sess.segments))
 	if err != nil {
 		_ = file.Close()
-		if errors.Is(err, errStale) || errors.Is(err, errCorrupt) {
+		if errors.Is(err, errStale) {
 			return sess.remove(name)
+		}
+		if errors.Is(err, errCorrupt) {
+			return sess.clear()
 		}
 		return err
 	}
@@ -275,12 +278,12 @@ func (sess *session) has(key Key) bool {
 
 func (sess *session) recordBytes(key Key) int64 { return sess.records[key].length }
 
-// record reads a record. A record that is missing, or damaged, is damage:
-// see damaged.
+// record reads a record. A record that is missing or fails its check is
+// damage, which clears the index.
 func (sess *session) record(key Key) (blobRecord, error) {
 	l, ok := sess.records[key]
 	if !ok {
-		return blobRecord{}, ErrDamaged
+		return blobRecord{}, sess.clear()
 	}
 	data, err := readRecord(sess.segments[l.segment].file, l)
 	if err == nil {
@@ -289,27 +292,26 @@ func (sess *session) record(key Key) (blobRecord, error) {
 			return record, nil
 		}
 	}
-	return blobRecord{}, sess.damaged(key)
+	return blobRecord{}, sess.clear()
 }
 
-// damaged handles a record that failed its check: it removes the segment
-// holding it and forgets that segment's records, so that the next build
-// analyses their files again, and reports ErrDamaged. Every reader of
-// records takes this one path.
-func (sess *session) damaged(key Key) error {
-	l, ok := sess.records[key]
-	if !ok {
-		return ErrDamaged
+// clear is the one answer to damage: it removes every segment and
+// snapshot, so that the index starts over, and reports ErrDamaged.
+func (sess *session) clear() error {
+	for _, seg := range sess.segments {
+		_ = seg.file.Close()
 	}
-	seg := sess.segments[l.segment]
-	for k, other := range sess.records {
-		if other.segment == l.segment {
-			delete(sess.records, k)
+	sess.segments, sess.records, sess.snapshots = nil, map[Key]location{}, map[string]int64{}
+	entries, err := os.ReadDir(sess.store.dir)
+	if err != nil {
+		return ErrUnavailable
+	}
+	for _, entry := range entries {
+		if name := entry.Name(); strings.HasPrefix(name, "seg-") || strings.HasPrefix(name, "snap-") {
+			if err := sess.remove(name); err != nil {
+				return err
+			}
 		}
-	}
-	_ = seg.file.Close()
-	if err := sess.remove(seg.name); err != nil {
-		return err
 	}
 	return ErrDamaged
 }

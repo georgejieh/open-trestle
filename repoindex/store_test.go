@@ -34,7 +34,7 @@ func TestBuilderLoadRebuildsMissingRecords(t *testing.T) {
 	}
 }
 
-func TestCompactionRemovesADamagedSegmentAndCompletes(t *testing.T) {
+func TestDamageFoundByCompactionClearsTheIndexAndTheBuildStartsOver(t *testing.T) {
 	store := newTestStore(t, DefaultStoreLimits())
 	analyzer := &fakeAnalyzer{}
 	old := newMemoryTree(1, map[string]string{"old.go": "package old\n"}, nil)
@@ -45,8 +45,6 @@ func TestCompactionRemovesADamagedSegmentAndCompletes(t *testing.T) {
 	if err := os.WriteFile(segments[0], data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	current := newMemoryTree(2, map[string]string{"new.go": "package current\n"}, nil)
-	build(t, store, analyzer, current, DefaultBuildLimits(), nil)
 	sess, err := store.open(context.Background(), false)
 	if err != nil {
 		t.Fatal(err)
@@ -55,14 +53,14 @@ func TestCompactionRemovesADamagedSegmentAndCompletes(t *testing.T) {
 	live, _ := sess.liveRecords(snapshots)
 	err = sess.compact(live)
 	sess.close()
-	if err != nil {
-		t.Fatalf("compaction failed on a damaged record: %v", err)
+	if !errors.Is(err, ErrDamaged) {
+		t.Fatalf("compaction over a damaged record = %v", err)
 	}
-	if _, err := store.Load(context.Background(), "sha1", current.commit); err != nil {
-		t.Fatalf("the current commit lost its records: %v", err)
+	if got := indexFiles(t, store); got["seg"] != 0 || got["snap"] != 0 {
+		t.Fatalf("the damaged index was not cleared: %v", got)
 	}
-	if _, err := store.Load(context.Background(), "sha1", old.commit); !errors.Is(err, ErrDamaged) {
-		t.Fatalf("the damaged commit loaded: %v", err)
+	if _, built, err := (Builder{Store: store, Analyzer: analyzer}).Load(context.Background(), old); err != nil || !built {
+		t.Fatalf("the cleared commit was not built again: %v", err)
 	}
 }
 

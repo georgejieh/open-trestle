@@ -128,7 +128,10 @@ func (sess *session) readSnapshot(name string) (Snapshot, bool, error) {
 		return Snapshot{}, false, ErrUnavailable
 	}
 	snapshot, err := decodeSnapshot(data, sess.store.identity)
-	if errors.Is(err, errCorrupt) || errors.Is(err, errStale) || err == nil && name != snapshotName(snapshot.Algorithm, snapshot.Commit) {
+	if errors.Is(err, errCorrupt) || err == nil && name != snapshotName(snapshot.Algorithm, snapshot.Commit) {
+		return Snapshot{}, false, sess.clear()
+	}
+	if errors.Is(err, errStale) {
 		delete(sess.snapshots, name)
 		return Snapshot{}, false, sess.remove(name)
 	}

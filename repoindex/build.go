@@ -43,7 +43,17 @@ type outcome struct {
 // no record of are read and analysed. A file a limit leaves out keeps the
 // limit as its status, so a later build of the same commit continues where
 // this one stopped. Cancellation aborts the build and stores nothing.
+//
+// Damage found on the way clears the index, and the build starts over once.
 func (b Builder) Build(ctx context.Context, tree Tree) (Snapshot, error) {
+	s, err := b.build(ctx, tree)
+	if errors.Is(err, ErrDamaged) {
+		s, err = b.build(ctx, tree)
+	}
+	return s, err
+}
+
+func (b Builder) build(ctx context.Context, tree Tree) (Snapshot, error) {
 	limits := b.Limits
 	if limits == (BuildLimits{}) {
 		limits = DefaultBuildLimits()

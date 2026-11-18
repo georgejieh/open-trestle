@@ -1,7 +1,6 @@
 package repoindex
 
 import (
-	"errors"
 	"fmt"
 	"slices"
 )
@@ -68,10 +67,8 @@ func (sess *session) snapshotBytes(snapshots []Snapshot) int64 {
 }
 
 // compact writes the live records to one new segment and then removes the
-// old segments. A damaged record removes its segment through damaged, and
-// the records of that segment are left out: the snapshots that use them
-// report ErrDamaged until they are built again. The new segment's name is
-// made durable before any old segment is removed.
+// old segments. A damaged record clears the index. The new segment's name
+// is made durable before any old segment is removed.
 func (sess *session) compact(live map[Key]bool) error {
 	keys := make([]Key, 0, len(live))
 	for key := range live {
@@ -90,17 +87,11 @@ func (sess *session) compact(live map[Key]bool) error {
 		return err
 	}
 	for _, key := range keys {
-		l, ok := sess.records[key]
-		if !ok {
-			continue
-		}
+		l := sess.records[key]
 		data, err := readRecord(old[l.segment].file, l)
 		if err != nil {
-			if err := sess.damaged(key); !errors.Is(err, ErrDamaged) {
-				sess.discard(w)
-				return err
-			}
-			continue
+			sess.discard(w)
+			return sess.clear()
 		}
 		if err := w.add(key, l.flags, data); err != nil {
 			sess.discard(w)
