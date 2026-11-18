@@ -39,6 +39,7 @@ var packSpecs = map[syntaxanalysis.Language]packSpec{
 	syntaxanalysis.LanguageTypeScript: {files: []string{"ecmascript", "typescript"}, finish: finishECMAScript},
 	syntaxanalysis.LanguageTSX:        {files: []string{"ecmascript", "typescript", "jsx"}, finish: finishECMAScript},
 	syntaxanalysis.LanguagePython:     {files: []string{"python"}, finish: finishPython},
+	syntaxanalysis.LanguageC:          {files: []string{"c"}, finish: finishC},
 }
 
 func loadPacks() (map[syntaxanalysis.Language]pack, error) {

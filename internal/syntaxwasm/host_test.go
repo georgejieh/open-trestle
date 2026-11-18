@@ -141,7 +141,7 @@ func TestEveryFamilyInstantiatesAndDescribesItsLanguages(t *testing.T) {
 
 func TestLanguagesWithoutQueryPacksReportAGap(t *testing.T) {
 	a := testAnalyzer(t)
-	for _, path := range []string{"a.c", "a.cpp", "a.cs", "a.swift", "a.rs", "a.php", "a.rb", "a.html"} {
+	for _, path := range []string{"a.cpp", "a.cs", "a.swift", "a.rs", "a.php", "a.rb", "a.html"} {
 		language, _ := syntaxanalysis.LanguageForPath(path)
 		if !a.Supports(language) || a.HasQueryPack(language) {
 			t.Fatalf("%s: supports=%v pack=%v", path, a.Supports(language), a.HasQueryPack(language))
@@ -273,6 +273,7 @@ func TestSyntaxErrorsAreRegionsAndTheRestIsAnalysed(t *testing.T) {
 		"Broken.java": "class A {\n  void before() {}\n  void broken( { int x = ; }\n  void after() { before(); }\n}\n",
 		"broken.ts":   "function before(): void {}\nfunction broken(a: ) { let = ; }\nfunction after() { before(); }\n",
 		"broken.js":   "function before() {}\nconst x = (;\nfunction after() { before(); }\n",
+		"broken.c":    "int before(void) { return 1; }\nint broken(int a { return ; }\nint after(void) { return before(); }\n",
 	}
 	for path, content := range cases {
 		analysis := analyze(t, a, path, []byte(content))
@@ -311,6 +312,7 @@ func TestInvalidUTF8NeverReachesText(t *testing.T) {
 		"bad.py":   "def caf\xff\xfe():\n    pass\n\ndef good():\n    caf\xff\xfe()\n",
 		"bad.js":   "function \xc3\x28x() {}\nimport y from \"mod\xff\";\nfunction good() {}\n",
 		"Bad.java": "class C\xff { void m\xe2\x82() {} void good() {} }\n",
+		"bad.c":    "int caf\xff\xfe(void) { return 0; }\nint good(void) { return caf\xff\xfe(); }\n",
 	}
 	for path, content := range cases {
 		analysis := analyze(t, a, path, []byte(content))
@@ -345,6 +347,7 @@ func TestDeeplyNestedInputDoesNotCrashOrHang(t *testing.T) {
 		"nested.py":   append(append([]byte("x = "), bytes.Repeat([]byte("("), depth)...), bytes.Repeat([]byte(")"), depth)...),
 		"Nested.java": append(append([]byte("class A { int x = "), bytes.Repeat([]byte("("), depth)...), append(bytes.Repeat([]byte(")"), depth), []byte("1; }")...)...),
 		"open.ts":     bytes.Repeat([]byte("{"), depth),
+		"nested.c":    append(append([]byte("int x = "), bytes.Repeat([]byte("("), depth)...), bytes.Repeat([]byte(")"), depth)...),
 	}
 	for path, content := range cases {
 		started := time.Now()

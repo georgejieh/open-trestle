@@ -16,7 +16,7 @@ Every name, qualifier and import path is repository text. It is carried as a `sy
 ## Analyzers
 
 - Go uses `semanticimpact.GoSyntaxAnalyzer`, built on `go/parser`.
-- The other languages use `internal/syntaxwasm`: tree-sitter grammars compiled to WebAssembly and run under wazero. Java, JavaScript, TypeScript, TSX and Python have query packs. C, C++, C#, Swift, Rust, PHP, Ruby and HTML have grammars in the modules but no query pack yet, so their files get a `no_query_pack` gap.
+- The other languages use `internal/syntaxwasm`: tree-sitter grammars compiled to WebAssembly and run under wazero. Java, JavaScript, TypeScript, TSX, Python and C have query packs. C++, C#, Swift, Rust, PHP, Ruby and HTML have grammars in the modules but no query pack yet, so their files get a `no_query_pack` gap.
 
 `syntaxanalysis.NewDispatcher` routes each file to the first analyzer that supports its language.
 
@@ -49,10 +49,22 @@ Captures:
 | `@export` | An export list entry; a top-level definition with its `@name` is exported. |
 | `@container` | The owner named in a definition's name, as in `Owner::name`, when it is not the lexical parent. |
 | `@opaque` | A span in which the pack drops type references, because the grammar reads values or macro arguments there as types. |
+| `@container` | The owner named in a definition's name, as in `Owner::name`, when it is not the lexical parent. |
+| `@opaque` | A span in which the pack drops type references, because the grammar reads values or macro arguments there as types. |
 | `@match.<word>` | Keeps the match only when the captured text is `<word>`, in place of `#eq?`. |
 | `@_<anything>` | A helper capture with no meaning. |
 
 Each match must have exactly one of `@definition.*`, `@reference.*`, `@import` or `@export`. When patterns overlap, the analysis merges definitions that share a name, keeping the widest range and the most specific kind, and drops an import or reference that another match describes more completely. A function directly inside a class, struct, interface or enum becomes a method.
+
+## C and C++
+
+C is analysed from syntax alone, with no preprocessing. Files ending in `.h` are read as C.
+
+- Definitions: functions and prototypes, structs, unions (as structs), enums and enumerators, typedefs, `#define` macros, file-scope variables and constants, and struct members. A variable is a constant when nothing can reassign it: `const` on the declared type or on a pointer.
+- Includes are imports. A system include keeps its angle brackets, `<stdio.h>`; a quoted one is the text inside the quotes.
+- References: calls (including macro invocations), type uses and attributes.
+- A function, variable or constant at file scope is exported unless it is `static`. A type or macro is exported when it is declared in a header.
+- Macros are not expanded. What a macro generates is not seen, and a macro invocation that parses as a declaration or a block gives no definition. Locals are never recorded.
 
 ## Rebuilding the modules
 

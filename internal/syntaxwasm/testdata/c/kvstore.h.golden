@@ -1,0 +1,45 @@
+# definitions
+2:1-3:1 macro "KVSTORE_H" exported
+12:1-13:1 macro "KV_API_VERSION" exported
+13:1-14:1 macro "KV_UNUSED" exported
+15:9-19:2 enum "kv_status" exported
+  16:5-16:14 constant "kv_status.KV_OK" exported
+  17:5-17:17 constant "kv_status.KV_NOT_FOUND" exported
+  18:5-18:17 constant "kv_status.KV_TOO_LARGE" exported
+19:3-19:12 type "kv_status" exported
+21:1-21:34 type "kv_store" exported
+22:1-22:68 type "kv_listener" exported
+23:1-23:33 type "kv_size_t" exported
+25:1-30:2 struct "kv_options" exported
+  26:5-26:21 field "kv_options.capacity" exported
+  27:5-27:26 field "kv_options.verbose" exported
+  28:5-28:25 field "kv_options.shared" exported
+  29:5-29:26 field "kv_options.on_event" exported
+32:1-32:23 variable "kv_verbose" exported
+33:1-33:37 constant "kv_version" exported
+34:1-34:27 constant "KV_LIMIT" exported
+36:1-36:36 function "kv_open" exported
+37:1-37:32 function "kv_close" exported
+38:1-38:72 function "kv_get" exported
+39:1-39:71 function "kv_put" exported
+40:1-43:2 function "kv_is_ok"
+46:1-46:46 function "kv_entry_count" exported
+47:1-47:30 variable "kv_hits" exported
+49:1-50:1 macro "kv_entry_count" exported
+# references
+21:16 type "kv_store" in "kv_store"
+29:5 type "kv_listener" in "kv_options.on_event"
+36:1 type "kv_store" in "kv_open"
+37:15 type "kv_store" in "kv_close"
+38:1 type "kv_status" in "kv_get"
+38:18 type "kv_store" in "kv_get"
+39:1 type "kv_status" in "kv_put"
+39:18 type "kv_store" in "kv_put"
+40:28 type "kv_status" in "kv_is_ok"
+46:29 type "kv_store" in "kv_entry_count"
+# imports
+4:1-5:1 source="<stddef.h>"
+5:1-6:1 source="<stdio.h>"
+6:1-7:1 source="kv_config.h"
+# gaps
+52:19-53:1 parse_error
