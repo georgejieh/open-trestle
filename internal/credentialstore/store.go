@@ -5,16 +5,17 @@
 // Threat model. Each key is a plaintext file protected only by file
 // permissions, like other command-line credential files: the folder is 0700,
 // each file 0600, and both must be owned by this account. On Windows the owner
-// and access-control list say the same: only this account, SYSTEM and
-// Administrators may have access, and the folder and files are created that
-// way rather than tightened afterwards. That keeps the key from other local
-// accounts, but not from anything that runs as this account, from the
-// administrator, or from a backup or disk image that copies the folder. The
-// store refuses a folder or file with broader permissions, another owner, or a
-// symbolic link instead of using it, and replaces a key through a protected
-// temporary file and a rename, so a reader sees the old key or the new one,
-// never part of either. An operating-system keyring is a possible later
-// backend; it is not used.
+// and access-control list say the same: only this account and the system's
+// own accounts (SYSTEM, Administrators and TrustedInstaller) may have
+// access, and the folder and files are created that way rather than
+// tightened afterwards. That keeps the key from other local accounts, but
+// not from anything that runs as this account, from the administrator, or
+// from a backup or disk image that copies the folder. The store refuses a
+// folder or file with broader permissions, another owner, or a symbolic link
+// instead of using it, and replaces a key through a protected temporary file
+// and a rename, so a reader sees the old key or the new one, never part of
+// either. An operating-system keyring is a possible later backend; it is not
+// used.
 //
 // Only the variable name (OPEN_TRESTLE_PROVIDER_...) names a key. The value is
 // never part of an error, a file name, or anything the package prints.
