@@ -179,6 +179,13 @@ func (w goWalker) fieldTypes(fields *ast.FieldList) {
 }
 
 func (w goWalker) collect(file *ast.File) {
+	// The package clause is a module definition, as a Java package is, so
+	// that an importer knows the name the package binds.
+	if file.Name != nil && file.Name.Name != "_" {
+		w.raw.Definitions = append(w.raw.Definitions, syntaxanalysis.RawDefinition{
+			Kind: syntaxanalysis.KindModule, Name: w.node(file.Name), Node: w.span(file.Package, file.Name.End()), Exported: true,
+		})
+	}
 	for _, spec := range file.Imports {
 		if spec.Path == nil {
 			continue

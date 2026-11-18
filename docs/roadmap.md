@@ -198,11 +198,13 @@ The release brings the whole loop to Windows and macOS:
 
 ### Codebase understanding
 
-- A repository index and a ranked repository map. The map gives the enclosing
-  definition for each changed hunk, ranks symbol tags within a token budget,
-  looks up callers and usages, and lists module boundaries and a feature map.
-  The analysis works on syntax trees for Java, JavaScript, TypeScript, Python,
-  HTML, C, C++, C#, Swift, Go, Rust, PHP and Ruby, all at the same depth.
+- Reviews that use the [repository index](repository-index.md), which exists
+  today as `trestle index`, through a ranked repository map. The map gives
+  the enclosing definition for each changed hunk, ranks symbol tags within a
+  token budget, looks up callers and usages, and lists module boundaries and
+  a feature map. The analysis works on syntax trees for Java, JavaScript,
+  TypeScript, Python, HTML, C, C++, C#, Swift, Go, Rust, PHP and Ruby, all at
+  the same depth.
 - A repository profile read from the existing tests and CI configuration,
   which records the project's conventions and the maintainers' priorities.
   Open Trestle parses this configuration and does not run it.

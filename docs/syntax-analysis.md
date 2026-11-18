@@ -15,7 +15,7 @@ Every name, qualifier and import path is repository text. It is carried as a `sy
 
 ## Supported languages
 
-- Go uses `semanticimpact.GoSyntaxAnalyzer`, built on `go/parser`.
+- Go uses `semanticimpact.GoSyntaxAnalyzer`, built on `go/parser`. The package clause is a module definition.
 - Java, JavaScript, TypeScript, TSX, Python, C, C++, C#, Rust, Swift, PHP, Ruby and HTML use `internal/syntaxwasm`: tree-sitter grammars compiled to WebAssembly and run under wazero, with a query pack per language.
 
 `syntaxanalysis.NewDispatcher` routes each file to the first analyzer that supports its language.

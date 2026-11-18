@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -139,6 +140,13 @@ func TestGolden(t *testing.T) {
 				t.Fatal(err)
 			}
 			analysis := analyze(t, a, filepath.ToSlash(fixture), content)
+			encoded, err := syntaxanalysis.EncodeBinary(analysis)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if decoded, err := syntaxanalysis.DecodeBinary(encoded, analysis.Path, syntaxanalysis.DefaultLimits()); err != nil || !reflect.DeepEqual(decoded, analysis) {
+				t.Fatalf("the binary encoding does not round-trip: %v", err)
+			}
 			got := renderGolden(analysis)
 			golden := fixture + ".golden"
 			if *update {

@@ -1,4 +1,4 @@
-//go:build !(aix || darwin || dragonfly || freebsd || illumos || linux || netbsd || openbsd || solaris)
+//go:build !(aix || darwin || dragonfly || freebsd || illumos || linux || netbsd || openbsd || solaris || windows)
 
 package scm
 
@@ -16,5 +16,5 @@ func nonblockingRegularFileOpenSupported() bool {
 }
 
 func confinedRootOpenSupported() bool {
-	return runtime.GOOS == "windows" || runtime.GOOS == "wasip1"
+	return runtime.GOOS == "wasip1"
 }

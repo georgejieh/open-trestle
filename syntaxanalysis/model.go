@@ -101,6 +101,9 @@ func (l Language) Valid() bool {
 // %p and %T, print an address or the type name rather than the text.
 type Text struct{ value *string }
 
+// NewText wraps repository text, such as a name joined from recorded names.
+func NewText(value string) Text { return newText(value) }
+
 func newText(value string) Text {
 	if value == "" {
 		return Text{}
@@ -397,6 +400,11 @@ func (s Source) Format(f fmt.State, verb rune) {
 	}
 	_, _ = f.Write([]byte(value))
 }
+
+// ValidPath reports whether a repository path is acceptable to the model:
+// relative, clean, valid UTF-8, without control characters and at most
+// 4096 bytes.
+func ValidPath(v string) bool { return validPath(v) }
 
 func validPath(v string) bool {
 	return v != "" && len(v) <= 4096 && utf8.ValidString(v) && !strings.ContainsFunc(v, unicode.IsControl) && !strings.HasPrefix(v, "/") && path.Clean(v) == v && v != "." && !strings.HasPrefix(v, "../")
