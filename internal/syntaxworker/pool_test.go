@@ -40,12 +40,12 @@ func (f fakeAnalyzer) Analyze(_ context.Context, source syntaxanalysis.Source) (
 	base := source.Path()[strings.LastIndex(source.Path(), "/")+1:]
 	switch base {
 	case "hang.go":
-		select {}
+		time.Sleep(time.Hour)
 	case "crash.go":
 		os.Exit(3)
 	case "garbage.go":
 		fmt.Fprint(os.Stdout, "\x05\x00\x00\x00junk!")
-		select {}
+		time.Sleep(time.Hour)
 	case "lie.go":
 		other, _ := syntaxanalysis.NewSource(source.Path(), source.Language(), []byte("other content"))
 		return syntaxanalysis.WholeFileGap(other, "fake", syntaxanalysis.GapParseError, ""), nil
