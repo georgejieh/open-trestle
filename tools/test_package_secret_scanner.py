@@ -660,7 +660,7 @@ class ReleaseContractTest(unittest.TestCase):
             "--entrypoint /usr/local/libexec/open-trestle/open-trestle-scan-helper",
             'test ! -s "$RUNNER_TEMP/scanner-stderr"',
             'doc["build_profile"]=="public_detect_run_re2_host_go1.26.11_wasip1_wasm_v1"',
-            "-run='^TestRemoteReviewScansThroughTheScanHelper' ./cmd/trestle/",
+            "-run='^(TestScanHelper|TestRemoteReviewScansThroughTheScanHelper)' ./internal/secretscan/ ./cmd/trestle/",
         ):
             with self.subTest(command=command):
                 self.assertIn(command, workflow)
