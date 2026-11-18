@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"unsafe"
@@ -17,6 +18,8 @@ const (
 	sidUsers              = "*S-1-5-32-545"
 	sidAuthenticatedUsers = "*S-1-5-11"
 	sidNetwork            = "*S-1-5-2"
+	icaclsCreatorOwner    = "*S-1-3-0"
+	icaclsCreatorGroup    = "*S-1-3-1"
 )
 
 var (
@@ -162,15 +165,65 @@ func TestInheritedGrantsAreChecked(t *testing.T) {
 	requireAccepted(t, privateFile(t, root, "explicit"), privateRule)
 }
 
-func TestInheritOnlyGrantsApplyOnlyToChildren(t *testing.T) {
-	root := privateRoot(t)
-	icacls(t, root, "/grant", sidEveryone+":(OI)(CI)(IO)(F)")
-	requireAccepted(t, root, privateRule)
-	child := filepath.Join(root, "child")
-	if err := os.WriteFile(child, []byte("content"), 0o600); err != nil {
+// TestInheritableGrantsOnAFinalDirectoryAreRefused checks that a directory
+// is not private while it would hand another principal access to entries
+// later created inside it, even though the grant does not apply to the
+// directory itself. A directory above another may carry such grants.
+func TestInheritableGrantsOnAFinalDirectoryAreRefused(t *testing.T) {
+	for _, test := range []struct {
+		ace      string
+		private  bool
+		readable bool
+	}{
+		{sidEveryone + ":(OI)(CI)(IO)(F)", false, false},
+		{sidUsers + ":(OI)(IO)(M)", false, false},
+		{sidUsers + ":(CI)(R)", false, true},
+		{icaclsCreatorGroup + ":(OI)(CI)(IO)(M)", false, false},
+		{icaclsCreatorOwner + ":(OI)(CI)(IO)(F)", true, true},
+	} {
+		t.Run(test.ace, func(t *testing.T) {
+			root := privateRoot(t)
+			icacls(t, root, "/grant", test.ace)
+			if test.private {
+				requireAccepted(t, root, privateRule)
+			} else {
+				requireRefused(t, root, privateRule)
+			}
+			if test.readable {
+				requireAccepted(t, root, Rule{OwnerTrusted, OthersRead})
+			} else {
+				requireRefused(t, root, Rule{OwnerTrusted, OthersRead})
+			}
+			requireAccepted(t, root, addableRule)
+			child := filepath.Join(root, "child")
+			if strings.Contains(test.ace, "(OI)") {
+				if err := os.WriteFile(child, []byte("content"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.Mkdir(child, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if test.private {
+				requireAccepted(t, child, privateRule)
+			} else {
+				requireRefused(t, child, privateRule)
+			}
+		})
+	}
+	// A directory created without its own descriptor below a parent whose
+	// grant only files inherit carries that grant on to its files.
+	parent := privateRoot(t)
+	icacls(t, parent, "/grant", sidUsers+":(OI)(IO)(M)")
+	plain := filepath.Join(parent, "plain")
+	if err := os.Mkdir(plain, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	requireRefused(t, child, readableRule)
+	requireRefused(t, plain, privateRule)
+	// Reading is what OthersRead permits, also for what is created inside.
+	readable := privateRoot(t)
+	icacls(t, readable, "/grant", sidUsers+":(OI)(CI)(RX)")
+	requireAccepted(t, readable, readableRule)
+	requireRefused(t, readable, privateRule)
 }
 
 func TestDenyDoesNotOffsetAGrant(t *testing.T) {
@@ -299,48 +352,169 @@ func TestCheckACLStructure(t *testing.T) {
 		t.Fatal(err)
 	}
 	everyone := []byte{1, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0}
-	check := func(buffer []byte, permitted uint32) error {
-		return checkACL((*byte)(unsafe.Pointer(&buffer[0])), id, permitted)
-	}
+	creatorOwner := []byte{1, 1, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0}
+	const objectContainer = aceObjectInherit | aceContainerInherit
 	for name, test := range map[string]struct {
-		acl  []byte
-		want bool
+		acl         []byte
+		inheritable uint32
+		want        bool
 	}{
-		"empty":                 {acl(), true},
-		"own full access":       {acl(ace(aceAllowed, 0, 0x1f01ff, id.user)), true},
-		"other read attributes": {acl(ace(aceAllowed, 0, fileReadAttributes|synchronize, everyone)), true},
-		"other read":            {acl(ace(aceAllowed, 0, fileReadData, everyone)), false},
-		"other generic read":    {acl(ace(aceAllowed, 0, genericRead, everyone)), false},
-		"other generic all":     {acl(ace(aceAllowed, 0, 0x10000000, everyone)), false},
-		"other maximum allowed": {acl(ace(aceAllowed, 0, 0x02000000, everyone)), false},
-		"undefined bit":         {acl(ace(aceAllowed, 0, 0x00000200, everyone)), false},
-		"inherit only":          {acl(ace(aceAllowed, aceInheritOnly, 0x10000000, everyone)), true},
-		"inherited":             {acl(ace(aceAllowed, 0x10, fileReadData, everyone)), false},
-		"deny":                  {acl(ace(aceDenied, 0, 0x10000000, everyone)), true},
-		"object allow":          {acl(ace(0x05, 0, fileReadAttributes, everyone)), false},
-		"callback allow":        {acl(ace(0x09, 0, fileReadAttributes, everyone)), false},
+		"empty":                       {acl(), 0, true},
+		"own full access":             {acl(ace(aceAllowed, 0, 0x1f01ff, id.user)), 0, true},
+		"other read attributes":       {acl(ace(aceAllowed, 0, fileReadAttributes|synchronize, everyone)), 0, true},
+		"other read":                  {acl(ace(aceAllowed, 0, fileReadData, everyone)), 0, false},
+		"other generic read":          {acl(ace(aceAllowed, 0, genericRead, everyone)), 0, false},
+		"other generic all":           {acl(ace(aceAllowed, 0, 0x10000000, everyone)), 0, false},
+		"other maximum allowed":       {acl(ace(aceAllowed, 0, 0x02000000, everyone)), 0, false},
+		"undefined bit":               {acl(ace(aceAllowed, 0, 0x00000200, everyone)), 0, false},
+		"inherit only, not judged":    {acl(ace(aceAllowed, aceInheritOnly|objectContainer, 0x10000000, everyone)), 0, true},
+		"inherit only, judged":        {acl(ace(aceAllowed, aceInheritOnly|objectContainer, 0x10000000, everyone)), othersNoneRights, false},
+		"container inherit, judged":   {acl(ace(aceAllowed, aceInheritOnly|aceContainerInherit, fileReadData, everyone)), othersNoneRights, false},
+		"inheritable read, read rule": {acl(ace(aceAllowed, aceInheritOnly|objectContainer, genericRead, everyone)), othersReadRights, true},
+		"inheritable creator owner":   {acl(ace(aceAllowed, aceInheritOnly|objectContainer, 0x10000000, creatorOwner)), othersNoneRights, true},
+		"effective creator owner":     {acl(ace(aceAllowed, 0, 0x10000000, creatorOwner)), othersNoneRights, false},
+		"inherited":                   {acl(ace(aceAllowed, 0x10, fileReadData, everyone)), 0, false},
+		"deny":                        {acl(ace(aceDenied, 0, 0x10000000, everyone)), 0, true},
+		"object deny":                 {acl(ace(0x06, 0, 0x10000000, everyone)), 0, false},
+		"object allow":                {acl(ace(0x05, 0, fileReadAttributes, everyone)), 0, false},
+		"callback allow":              {acl(ace(0x09, 0, fileReadAttributes, everyone)), 0, false},
 		"count beyond size": {func() []byte {
 			buffer := acl(ace(aceAllowed, 0, 0, everyone))
 			buffer[4] = 2
 			return buffer
-		}(), false},
-		"short ace": {acl([]byte{aceAllowed, 0, 2, 0}), false},
+		}(), 0, false},
+		"short allow":         {acl([]byte{aceAllowed, 0, 4, 0}), 0, false},
+		"short deny":          {acl([]byte{aceDenied, 0, 4, 0}), 0, false},
+		"short inherit only":  {acl([]byte{aceAllowed, aceInheritOnly, 4, 0}), 0, false},
+		"deny with a bad sid": {acl(ace(aceDenied, 0, 0, []byte{2, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0})), 0, false},
+		"unaligned ace": {func() []byte {
+			buffer := acl(append(ace(aceDenied, 0, 0, everyone), 0, 0))
+			buffer[aclHeaderBytes+2] = 22
+			return buffer
+		}(), 0, false},
+		"bad revision": {func() []byte {
+			buffer := acl()
+			buffer[0] = 3
+			return buffer
+		}(), 0, false},
 		"ace beyond acl": {func() []byte {
 			buffer := acl(ace(aceAllowed, 0, 0, everyone))
 			buffer[aclHeaderBytes+2] = 64
 			return buffer
-		}(), false},
+		}(), 0, false},
 		"sid beyond ace": {func() []byte {
 			buffer := acl(ace(aceAllowed, 0, 0, everyone))
 			buffer[aclHeaderBytes+8+1] = 9
 			return buffer
-		}(), false},
+		}(), 0, false},
+		"too many subauthorities": {acl(ace(aceDenied, 0, 0, append([]byte{1, 16, 0, 0, 0, 0, 0, 5}, make([]byte, 64)...))), 0, false},
 	} {
 		t.Run(name, func(t *testing.T) {
-			err := check(test.acl, othersNoneRights)
+			err := checkACL((*byte)(unsafe.Pointer(&test.acl[0])), id, othersNoneRights, test.inheritable)
 			if (err == nil) != test.want {
 				t.Fatalf("checkACL = %v, want accepted %v", err, test.want)
 			}
 		})
+	}
+	valid, _, _ := procIsValidAcl.Call(uintptr(unsafe.Pointer(&acl([]byte{aceDenied, 0, 4, 0})[0])))
+	if valid != 0 {
+		t.Fatal("IsValidAcl accepted a 4-byte ACE")
+	}
+}
+
+func TestCheckTree(t *testing.T) {
+	root := privateRoot(t)
+	if err := Mkdir(filepath.Join(root, "sub")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "sub", "inherited"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	privateFile(t, root, "file")
+	if err := CheckTree(root, OthersNone); err != nil {
+		t.Fatalf("an owner-only tree was refused: %v", err)
+	}
+	deep := filepath.Join(root, "sub", "inherited")
+	icacls(t, deep, "/grant", sidEveryone+":(M)")
+	if err := CheckTree(root, OthersNone); !errors.Is(err, ErrNotOwnerOnly) {
+		t.Fatalf("a writable entry deep in the tree was accepted: %v", err)
+	}
+	icacls(t, deep, "/remove:g", sidEveryone)
+	target := privateRoot(t)
+	Junction(t, filepath.Join(root, "sub", "junction"), target)
+	if err := CheckTree(root, OthersNone); !errors.Is(err, ErrNotOwnerOnly) {
+		t.Fatalf("a junction in the tree was accepted: %v", err)
+	}
+}
+
+func TestCheckAncestorsAndFinalPath(t *testing.T) {
+	root := privateRoot(t)
+	if err := CheckAncestors(root); err != nil {
+		t.Fatalf("a private chain was refused: %v", err)
+	}
+	icacls(t, root, "/grant", sidAuthenticatedUsers+":(AD,WD)")
+	if err := CheckAncestors(root); err != nil {
+		t.Fatalf("a directory others may only add to was refused as an ancestor: %v", err)
+	}
+	icacls(t, root, "/grant", sidAuthenticatedUsers+":(DC)")
+	if err := CheckAncestors(root); !errors.Is(err, ErrNotOwnerOnly) {
+		t.Fatalf("a directory others may delete children of was accepted: %v", err)
+	}
+	target := privateRoot(t)
+	link := filepath.Join(privateRoot(t), "junction")
+	Junction(t, link, target)
+	if err := Mkdir(filepath.Join(link, "created")); err != nil {
+		t.Fatal(err)
+	}
+	opened, err := Open(filepath.Join(link, "created"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer opened.Close()
+	if err := CheckFinalPath(opened, filepath.Join(link, "created")); !errors.Is(err, ErrNotOwnerOnly) {
+		t.Fatalf("a path through a junction passed the final path check: %v", err)
+	}
+	if err := CheckFinalPath(opened, filepath.Join(target, "created")); err != nil {
+		final, finalErr := FinalPath(opened)
+		t.Fatalf("the resolved path failed the final path check: %v (%q, %v)", err, final, finalErr)
+	}
+}
+
+func TestOpenOrCreateFile(t *testing.T) {
+	root := privateRoot(t)
+	icacls(t, root, "/grant", sidUsers+":(OI)(CI)(RX)")
+	path := filepath.Join(root, "lock")
+	created, err := OpenOrCreateFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckHandle(syscall.Handle(created.Fd()), privateRule); err != nil {
+		t.Fatalf("a created file inherited access: %v", err)
+	}
+	_ = created.Close()
+	existing, err := OpenOrCreateFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = existing.Close()
+	inherited := filepath.Join(root, "inherited")
+	if err := os.WriteFile(inherited, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	opened, err := OpenOrCreateFile(inherited)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer opened.Close()
+	if err := CheckHandle(syscall.Handle(opened.Fd()), privateRule); !errors.Is(err, ErrNotOwnerOnly) {
+		t.Fatalf("an existing file others can read was reported private: %v", err)
+	}
+}
+
+// Junction creates a directory junction at link that points at target.
+func Junction(t *testing.T, link, target string) {
+	t.Helper()
+	if output, err := exec.Command("cmd", "/c", "mklink", "/J", link, target).CombinedOutput(); err != nil {
+		t.Fatalf("mklink: %v\n%s", err, output)
 	}
 }
