@@ -114,6 +114,9 @@ func run(ctx context.Context, spec Spec) (Result, error) {
 		// clears these before it starts the command.
 		AmbientCaps: []uintptr{unix.CAP_SYS_ADMIN, unix.CAP_NET_ADMIN, unix.CAP_SETPCAP},
 		Pdeathsig:   syscall.SIGKILL,
+		// A new session has no controlling terminal, so nothing in the
+		// sandbox can read from or write to the user's terminal.
+		Setsid: true,
 	}
 	started := time.Now()
 	err = command.Start()

@@ -15,7 +15,8 @@ var seatbeltSystemPaths = []string{"/System", "/usr", "/bin", "/sbin", "/Library
 var seatbeltServices = []string{"com.apple.system.logger", "com.apple.system.opendirectoryd.libinfo", "com.apple.system.notification_center"}
 
 // seatbeltProfile returns a sandbox-exec profile that denies everything by
-// default, including all network access, and allows reading the system
+// default, including all network access and POSIX shared memory, whose
+// names are shared with the user's other processes, and allows reading the system
 // and toolchain folders, reading and writing scratch, and reading any
 // file's metadata (but not its content), which path resolution needs.
 func seatbeltProfile(scratch string, readOnly []string) string {
@@ -24,7 +25,7 @@ func seatbeltProfile(scratch string, readOnly []string) string {
 	var profile strings.Builder
 	profile.WriteString("(version 1)\n(deny default)\n")
 	profile.WriteString("(allow process-fork)\n(allow process-exec)\n(allow signal (target same-sandbox))\n")
-	profile.WriteString("(allow sysctl-read)\n(allow ipc-posix-shm)\n(allow file-read-metadata)\n")
+	profile.WriteString("(allow sysctl-read)\n(allow file-read-metadata)\n")
 	profile.WriteString("(allow mach-lookup")
 	for _, service := range seatbeltServices {
 		profile.WriteString(" (global-name " + seatbeltString(service) + ")")
@@ -34,7 +35,7 @@ func seatbeltProfile(scratch string, readOnly []string) string {
 		profile.WriteString(" (subpath " + seatbeltString(path) + ")")
 	}
 	profile.WriteString(")\n(allow file-read* file-write* (subpath " + seatbeltString(scratch) + "))\n")
-	profile.WriteString("(allow file-write-data (literal \"/dev/null\") (literal \"/dev/zero\") (literal \"/dev/tty\"))\n")
+	profile.WriteString("(allow file-write-data (literal \"/dev/null\") (literal \"/dev/zero\"))\n")
 	profile.WriteString("(deny network*)\n")
 	return profile.String()
 }

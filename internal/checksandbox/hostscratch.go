@@ -4,6 +4,7 @@ package checksandbox
 
 import (
 	"context"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -14,22 +15,31 @@ import (
 // readRegularFile reads the runner's report from the scratch after the run,
 // refusing a link or anything larger than the report limit.
 func readRegularFile(path string) []byte {
-	info, err := os.Lstat(path)
-	if err != nil || !info.Mode().IsRegular() || info.Size() > reportLimit {
+	link, err := os.Lstat(path)
+	if err != nil || !link.Mode().IsRegular() {
 		return nil
 	}
-	data, err := os.ReadFile(path)
+	file, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer file.Close()
+	// The file opened must be the one checked, not a link put in its place.
+	if opened, err := file.Stat(); err != nil || !os.SameFile(link, opened) {
+		return nil
+	}
+	data, err := io.ReadAll(io.LimitReader(file, reportLimit+1))
 	if err != nil || len(data) > reportLimit {
 		return nil
 	}
 	return data
 }
 
-// watchDisk measures the scratch every interval and calls exceeded once
-// when it holds more than limit bytes. Windows and macOS offer no size
+// watchDisk measures the folders the sandbox can write every interval and
+// calls exceeded once when together they hold more than limit bytes. Windows and macOS offer no size
 // bound for a folder without administrator rights, so a burst of writes
 // can pass the limit for up to one interval before the kill.
-func watchDisk(ctx context.Context, scratch string, limit int64, exceeded func()) *atomic.Bool {
+func watchDisk(ctx context.Context, folders []string, limit int64, exceeded func()) *atomic.Bool {
 	over := new(atomic.Bool)
 	go func() {
 		ticker := time.NewTicker(250 * time.Millisecond)
@@ -39,7 +49,7 @@ func watchDisk(ctx context.Context, scratch string, limit int64, exceeded func()
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				if folderSize(scratch, limit) > limit {
+				if foldersSize(folders, limit) > limit {
 					over.Store(true)
 					exceeded()
 					return
@@ -48,6 +58,19 @@ func watchDisk(ctx context.Context, scratch string, limit int64, exceeded func()
 		}
 	}()
 	return over
+}
+
+// foldersSize adds up file sizes below each folder, stopping once past
+// limit.
+func foldersSize(folders []string, limit int64) int64 {
+	var total int64
+	for _, folder := range folders {
+		total += folderSize(folder, limit-total)
+		if total > limit {
+			break
+		}
+	}
+	return total
 }
 
 // folderSize adds up file sizes below root, stopping once past limit.

@@ -16,6 +16,7 @@ var (
 	userenv                        = windows.NewLazySystemDLL("userenv.dll")
 	procCreateAppContainerProfile  = userenv.NewProc("CreateAppContainerProfile")
 	procDeleteAppContainerProfile  = userenv.NewProc("DeleteAppContainerProfile")
+	procGetAppContainerFolderPath  = userenv.NewProc("GetAppContainerFolderPath")
 	kernelbase                     = windows.NewLazySystemDLL("kernelbase.dll")
 	procDeriveCapabilitySidsByName = kernelbase.NewProc("DeriveCapabilitySidsFromName")
 )
@@ -41,6 +42,8 @@ type appContainer struct {
 	name       string
 	sid        *windows.SID
 	capability *windows.SID
+	// folder is the profile's own storage, which the sandbox may write.
+	folder string
 }
 
 func newAppContainer() (*appContainer, error) {
@@ -69,7 +72,26 @@ func newAppContainer() (*appContainer, error) {
 		deleteProfile(name16)
 		return nil, err
 	}
-	return &appContainer{name: name, sid: copied, capability: capability}, nil
+	folder, err := profileFolder(copied)
+	if err != nil {
+		deleteProfile(name16)
+		return nil, err
+	}
+	return &appContainer{name: name, sid: copied, capability: capability, folder: folder}, nil
+}
+
+// profileFolder is the storage Windows gives the AppContainer profile.
+func profileFolder(sid *windows.SID) (string, error) {
+	sid16, err := windows.UTF16PtrFromString(sid.String())
+	if err != nil {
+		return "", err
+	}
+	var path *uint16
+	if result, _, _ := procGetAppContainerFolderPath.Call(uintptr(unsafe.Pointer(sid16)), uintptr(unsafe.Pointer(&path))); result != 0 {
+		return "", fmt.Errorf("GetAppContainerFolderPath failed with 0x%08x", uint32(result))
+	}
+	defer windows.CoTaskMemFree(unsafe.Pointer(path))
+	return windows.UTF16PtrToString(path), nil
 }
 
 func (container *appContainer) close() {

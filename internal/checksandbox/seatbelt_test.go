@@ -19,7 +19,7 @@ func TestSeatbeltProfileDeniesByDefault(t *testing.T) {
 			t.Errorf("profile lacks %q:\n%s", want, profile)
 		}
 	}
-	for _, refused := range []string{"(allow network", "(allow file-write* (subpath \"/usr", "(allow mach-lookup)", "securityd", "/Users"} {
+	for _, refused := range []string{"(allow network", "ipc-posix", "/dev/tty", "(allow file-write* (subpath \"/usr", "(allow mach-lookup)", "securityd", "/Users"} {
 		if strings.Contains(profile, refused) {
 			t.Errorf("profile contains %q:\n%s", refused, profile)
 		}

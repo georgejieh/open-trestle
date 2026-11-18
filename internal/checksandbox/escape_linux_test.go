@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"golang.org/x/sys/unix"
@@ -36,6 +37,24 @@ func platformProbe(mode string, _ []string) int {
 		}
 		if unix.Mount("/", target, "", unix.MS_BIND, "") == nil {
 			return probeEscaped
+		}
+	case "terminal":
+		if file, err := os.OpenFile("/dev/tty", os.O_RDWR, 0); err == nil {
+			file.Close()
+			return probeEscaped
+		}
+		if sid, err := unix.Getsid(0); err != nil || sid == unix.Getpid() {
+			return 1
+		}
+	case "capabilities":
+		status, err := os.ReadFile("/proc/self/status")
+		if err != nil {
+			return 1
+		}
+		for _, line := range strings.Split(string(status), "\n") {
+			if name, value, ok := strings.Cut(line, ":\t"); ok && strings.HasPrefix(name, "Cap") && strings.Trim(value, "0") != "" {
+				return probeEscaped
+			}
 		}
 	case "descriptors":
 		// Only standard input, output and error may reach the command; a
@@ -109,6 +128,14 @@ func TestEscapeMount(t *testing.T) {
 
 func TestEscapeNestedNamespace(t *testing.T) {
 	requireBlocked(t, runProbe(t, probeSpec(t, "unshare")))
+}
+
+func TestEscapeTerminal(t *testing.T) {
+	requireBlocked(t, runProbe(t, probeSpec(t, "terminal")))
+}
+
+func TestEscapeCapabilities(t *testing.T) {
+	requireBlocked(t, runProbe(t, probeSpec(t, "capabilities")))
 }
 
 func TestEscapeInheritedDescriptors(t *testing.T) {

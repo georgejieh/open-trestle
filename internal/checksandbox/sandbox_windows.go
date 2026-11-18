@@ -126,7 +126,8 @@ func runContained(ctx context.Context, spec Spec, container *appContainer, appli
 			_, _ = io.Copy(pair.to, pair.from)
 		}()
 	}
-	diskOver := watchDisk(ctx, scratch, spec.Limits.DiskBytes, cancel)
+	writable := []string{scratch, container.folder}
+	diskOver := watchDisk(ctx, writable, spec.Limits.DiskBytes, cancel)
 	exited := make(chan struct{})
 	go func() {
 		_, _ = windows.WaitForSingleObject(information.Process, windows.INFINITE)
@@ -149,7 +150,7 @@ func runContained(ctx context.Context, spec Spec, container *appContainer, appli
 		Duration: time.Since(started), OutputExceeded: outputExceeded, DiskExceeded: diskOver.Load(),
 	}
 	result.TimedOut = !outputExceeded && !result.DiskExceeded && errors.Is(ctx.Err(), context.DeadlineExceeded)
-	if !result.DiskExceeded && folderSize(scratch, spec.Limits.DiskBytes) > spec.Limits.DiskBytes {
+	if !result.DiskExceeded && foldersSize(writable, spec.Limits.DiskBytes) > spec.Limits.DiskBytes {
 		result.DiskExceeded = true
 	}
 	if spec.Report != "" {

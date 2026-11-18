@@ -16,8 +16,10 @@ const sandboxExec = "/usr/bin/sandbox-exec"
 
 // run starts the command under sandbox-exec with a deny-by-default profile
 // in its own process group. macOS has no unprivileged per-tree process or
-// memory limit, so those rely on the system's per-user limits; file size,
-// open files, time, output and scratch size are bounded here.
+// memory limit, so those rely on the system's per-user limits, and a
+// process that starts a new session escapes the group kill, though not the
+// sandbox; file size, open files, time, output and scratch size are bounded
+// here.
 func available() error {
 	if _, err := os.Stat(sandboxExec); err != nil {
 		return unavailable("sandbox-exec is missing")
@@ -73,7 +75,13 @@ func run(ctx context.Context, spec Spec) (Result, error) {
 		"HOME=" + home, "TMPDIR=" + temporary, "USER=sandbox", "LANG=en_US.UTF-8", "TZ=UTC",
 	}, paths.env(spec.Env)...)
 	command.Stdout, command.Stderr = stdout, stderr
-	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// A new session has no controlling terminal and leads its own process
+	// group, which the kill below targets.
+	command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	// A descendant that left the process group with setsid survives the
+	// group kill, still inside the sandbox; it must not keep the run open
+	// by holding the output pipes.
+	command.WaitDelay = time.Second
 	started := time.Now()
 	if err := command.Start(); err != nil {
 		return Result{}, unavailable("%s could not be started (%v)", spec.Args[0], err)
@@ -83,7 +91,7 @@ func run(ctx context.Context, spec Spec) (Result, error) {
 		<-ctx.Done()
 		_ = syscall.Kill(-group, syscall.SIGKILL)
 	}()
-	diskOver := watchDisk(ctx, scratch, spec.Limits.DiskBytes, cancel)
+	diskOver := watchDisk(ctx, []string{scratch}, spec.Limits.DiskBytes, cancel)
 	err = command.Wait()
 	_ = syscall.Kill(-group, syscall.SIGKILL)
 	outputExceeded := stdout.exceededLimit() || stderr.exceededLimit()

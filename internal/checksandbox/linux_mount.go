@@ -17,7 +17,9 @@ import (
 // them, as on merged-/usr systems, is recreated rather than mounted.
 var systemPaths = []string{"/usr", "/etc", "/bin", "/sbin", "/lib", "/lib32", "/lib64", "/libx32"}
 
-var devices = []string{"null", "zero", "full", "random", "urandom", "tty"}
+// devices are the character devices shown in the sandbox. /dev/tty is
+// absent: the sandbox has no controlling terminal to reach.
+var devices = []string{"null", "zero", "full", "random", "urandom"}
 
 // buildRoot mounts a size-bounded tmpfs on config.Root, fills it with
 // read-only views of the system and toolchain folders, a copy of the tree,
@@ -28,7 +30,7 @@ func buildRoot(config childConfig) error {
 		return fmt.Errorf("mount propagation: %w", err)
 	}
 	root := config.Root
-	options := "mode=0755,size=" + strconv.FormatInt(config.Limits.DiskBytes, 10)
+	options := "mode=0755,nr_inodes=262144,size=" + strconv.FormatInt(config.Limits.DiskBytes, 10)
 	if err := unix.Mount("tmpfs", root, "tmpfs", unix.MS_NOSUID|unix.MS_NODEV, options); err != nil {
 		return fmt.Errorf("scratch: %w", err)
 	}

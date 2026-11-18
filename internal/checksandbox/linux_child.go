@@ -187,12 +187,21 @@ func setLimits(limits Limits) error {
 	return nil
 }
 
-// lockDown clears this thread's ambient capabilities and capability
-// bounding set, so the command starts with no capability even inside the
+// lockDown clears this thread's ambient and inheritable capabilities and
+// capability bounding set, so the command starts with no capability even inside the
 // namespaces, sets no_new_privs and installs the system call filter on
 // every thread.
 func lockDown() error {
 	if err := unix.Prctl(unix.PR_CAP_AMBIENT, unix.PR_CAP_AMBIENT_CLEAR_ALL, 0, 0, 0); err != nil {
+		return err
+	}
+	header := unix.CapUserHeader{Version: unix.LINUX_CAPABILITY_VERSION_3}
+	var data [2]unix.CapUserData
+	if err := unix.Capget(&header, &data[0]); err != nil {
+		return err
+	}
+	data[0].Inheritable, data[1].Inheritable = 0, 0
+	if err := unix.Capset(&header, &data[0]); err != nil {
 		return err
 	}
 	for capability := 0; ; capability++ {
