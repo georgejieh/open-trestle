@@ -23,28 +23,30 @@ A reference is a candidate for a definition when it has the definition's exact n
 | --- | --- | --- |
 | `file` | the same file | all |
 | `package` | the same package: the directory for Go and Swift, the declared package or namespace for Java, C# and PHP | Go, Java, C#, Swift, PHP |
-| `import` | the file imports the definition's file or package, as resolved from the import text, and the definition is exported | all |
+| `import` | the file imports the definition's file, or its package for a Go or C# import or a Java wildcard, as resolved from the import text, and the definition is exported | all |
 | `name` | the definition is exported and the language makes it visible without an import of its file | C, C++, C#, Swift, PHP, Ruby |
 
-In Go, a reference qualified by an imported package's name matches only that package's top-level definitions, and a method or field of another package matches only a selector in a file that imports that package.
+In Go, a reference qualified by the name an import binds (its alias, or the package's declared name) matches only that package's top-level definitions, and a method or field of another package matches only a selector in a file that imports that package.
 
-Imports resolve by path rules: Go import paths through the module paths of the commit's `go.mod` files, or else to the directory they end with, Java class names to their file, relative JavaScript and TypeScript imports with the usual extensions and `index` files, HTML `src`, `href` and `action` values relative to the page, Python modules to `.py`, `.pyi` or `__init__.py`, C and C++ includes, Rust `use` paths, Ruby and PHP required paths and PHP namespaced names to files, and C# `using` to the files declaring the namespace. An import of a package outside the repository is unresolved and counted.
+Imports resolve by path rules: Go import paths through the module paths of the commit's `go.mod` files (an import outside them stays unresolved; only a file under no known module falls back to the directory the path ends with), Java class names to their file, relative JavaScript and TypeScript imports with the usual extensions and `index` files, HTML `src`, `href` and `action` values relative to the page, Python modules to `.py`, `.pyi` or `__init__.py`, C and C++ includes, Rust `use` paths, Ruby and PHP required paths and PHP namespaced names to files, and C# `using` to the files declaring the namespace. An import of a package outside the repository is unresolved and counted.
 
 Names are not resolved to declarations, so a candidate can belong to another definition with the same name, and a use through a variable, an alias or reflection can be missed.
 
 ## Dependents
 
-The dependents of a change start from its changed definitions: each definition, in the head or the base commit, that holds a changed line outside its child definitions. The closure then follows reference candidates backwards, breadth first: the definitions holding candidates of a changed definition have depth 1, those holding candidates of a depth-1 dependent depth 2, and so on. It stops at depth 3, 1,000 dependents and 2,000 candidates per definition, and records what each limit cut. Changed files without a complete analysis are listed as gaps. A definition of a file the head no longer has is still matched in the files that imported that file in the base.
+The dependents of a change start from its changed definitions: each definition, in the head or the base commit, that holds a changed line outside its child definitions. The closure then follows reference candidates backwards, breadth first: the definitions holding candidates of a changed definition have depth 1, those holding candidates of a depth-1 dependent depth 2, and so on. It stops at depth 3, 1,000 dependents, 2,000 candidates per definition and 2,000,000 references checked, and records what each limit cut. Changed files without a complete analysis are listed as gaps. A definition of a file the head no longer has is still matched in its package and in the files that imported that file in the base, and a definition that lost its export is still matched in the files that imported it.
+
+`trestle index query dependents` finds the changed files by comparing the two snapshots. A deleted and an added file with the same blob are a move without a change, matched one to one; a deleted and an added file with the same base name, when no other deleted or added file has it, are a move with an edit. Any other deletion while an addition is left is recorded as a possible move (`unmatched_move`). Each modified file's base and head blobs are diffed, up to 256 MiB in all, to find the changed lines; a file past that budget (`diff_budget`) or that the diff cannot represent (`diff_unavailable`) counts as changed throughout.
 
 ## Where it lives
 
-The index lives in the setup folder (see [environment variables and files](environment-and-files.md)), under `index/`: a `0700` folder of `0600` files.
+The index lives in the setup folder (see [environment variables and files](environment-and-files.md)), under `index/`: a folder and files that only your account can use (mode `0700` and `0600` on Unix, an owner-only access list on Windows).
 
 - `seg-*.otx` files hold one analysis per blob and language. A blob analysed once is never analysed again for that program build, so a build of a new commit analyses only new blobs, and files with the same content share one analysis.
 - `snap-*.otx` files hold one commit's file list and coverage.
 - `compiled/` holds compiled grammar modules on Linux.
 
-Every file starts with the format and the analysis identity, the SHA-256 of the `trestle` program file. A different build removes the files of another one when it opens the index. One process uses the index at a time. The index is not available on Windows yet, because its protected-file checks need owner and mode bits.
+Every file starts with the format and the analysis identity, the SHA-256 of the `trestle` program file. A different build removes the files of another one when it opens the index. A record that is missing or fails its check removes its segment, and the next query or build indexes the commit again. One process uses the index at a time.
 
 ## Limits
 
@@ -73,4 +75,4 @@ trestle index query imports PATH [--commit REF]
 trestle index query dependents --base REF [--commit REF]
 ```
 
-`--commit` defaults to `HEAD`; `--directory` names the setup folder. `build` and `status` print counts only. Queries print JSON, in which every name and path is a JSON string, with a `coverage` object: the build's coverage, the files by status, and `complete`, which is false when the tree was cut or a file that should have an analysis has none, so that a reference in it is not seen. A query indexes the commits it needs first, and indexes a commit again when a damaged index file was removed. `dependents` diffs each modified file's base and head blobs, up to 256 MiB in all, to find the changed lines; a file past that counts as changed throughout, and a file that only moved is not a change.
+`--commit` defaults to `HEAD`; `--directory` names the setup folder. `build` and `status` print counts only. Queries print JSON, in which every name and path is a JSON string, with control, format and bidirectional characters escaped. Each answer has a `coverage` object: the build's coverage, the files by status, the files with each kind of analysis gap, and `complete`. `complete` is false when the tree was cut, a path or a `go.mod` file was left out, a file that should have an analysis has none or an analysis has a gap, and for `dependents` also when a change was approximated or a limit cut the closure: a reference in such a place is not seen. A query indexes the commits it needs first.
