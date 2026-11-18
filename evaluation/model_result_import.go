@@ -54,15 +54,14 @@ type modelResultImportReport struct {
 
 // ImportModelResult binds a captured completed review to exact existing corpus sources.
 // It supplies no human labels, model-quality scores, thresholds or approval.
+// It observes the result (localreview.ObserveCompletedResult): a run whose
+// disposition its recorded pre-existing class relaxed imports, and the
+// import never trusts that relaxation for a gate.
 func ImportModelResult(encoded []byte, expectedSHA256, caseID string, source scm.LocalGitChangeExecution) ([]byte, error) {
 	if !validCorpusDigest(expectedSHA256) || digestBytes(encoded) != expectedSHA256 || !validCorpusDigest(source.Identity()) {
 		return nil, ErrInvalidModelResultImport
 	}
-	parsed, err := localreview.ParseCompletedResult(encoded)
-	if err != nil {
-		return nil, ErrInvalidModelResultImport
-	}
-	metadata, err := parsed.CompletedMetadata()
+	metadata, err := localreview.ObserveCompletedResult(encoded)
 	if err != nil {
 		return nil, ErrInvalidModelResultImport
 	}

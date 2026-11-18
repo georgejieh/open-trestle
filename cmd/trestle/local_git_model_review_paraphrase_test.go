@@ -48,13 +48,43 @@ func TestReviewSetMergesAParaphraseInTheSameDeclaration(t *testing.T) {
 		t.Fatalf("merged finding = %+v", finding)
 	}
 	merged := finding.Merged[0]
-	if merged.Member != "bug_hunter" || merged.Title != "Changed panics on a zero divisor" || !strings.Contains(merged.Claim, "without a zero check") || merged.Rule != localreview.MergeRuleSameDeclaration || merged.FindingIdentity == finding.FindingIdentity {
+	if merged.Member != "bug_hunter" || merged.Title != "Changed panics on a zero divisor" || !strings.Contains(merged.Claim, "missing division guard") || merged.Rule != localreview.MergeRuleSameDeclaration || merged.FindingIdentity == finding.FindingIdentity {
 		t.Fatalf("merged wording = %+v", merged)
 	}
 	text := runModelReviewOutput(t, f, []string{"--specialists", "bug_hunter", "--format", "text"}, 4)
 	requireInOrder(t, text, "confirmed findings (ranked): 1\n", "finding: error Zero-valued caller now panics\n", "also reported as: Changed panics on a zero divisor (bug_hunter)\n")
 	markdown := runModelReviewOutput(t, f, []string{"--specialists", "bug_hunter", "--format", "markdown"}, 4)
 	requireInOrder(t, markdown, "1. **High or critical: Zero-valued caller now panics**", "   Also reported as: Changed panics on a zero divisor (`bug_hunter`)\n")
+}
+
+// A specialist's different defect at the same lines, in the same changed
+// function and category family, is a second finding: the set lists both,
+// each confirmed by its own member, and neither is shown as the other's
+// wording.
+func TestReviewSetKeepsADifferentDefectAtTheSameLinesApart(t *testing.T) {
+	f := newLocalModelFixture(t, localModelFixtureOptions{chatCompletions: true, specialist: true, generationMode: "distinct_specialist"})
+	_, stdout := runLocalModelSet(t, f, []string{"--specialists", "bug_hunter"}, 4)
+	var receipt paraphraseSetReceipt
+	if err := json.Unmarshal([]byte(stdout), &receipt); err != nil {
+		t.Fatal(err)
+	}
+	if len(receipt.Findings) != 2 || receipt.Summary.DuplicatesMerged != 0 {
+		t.Fatalf("distinct defects merged: findings=%d duplicates=%d", len(receipt.Findings), receipt.Summary.DuplicatesMerged)
+	}
+	members := map[string]string{}
+	for _, finding := range receipt.Findings {
+		if len(finding.Contributors) != 1 || len(finding.Merged) != 0 {
+			t.Fatalf("finding %q: contributors=%+v merged=%+v", finding.Title, finding.Contributors, finding.Merged)
+		}
+		members[finding.Title] = finding.Contributors[0].Member
+	}
+	if members["Zero-valued caller now panics"] != "general" || members["Changed truncates the quotient"] != "bug_hunter" {
+		t.Fatalf("findings by member = %v", members)
+	}
+	text := runModelReviewOutput(t, f, []string{"--specialists", "bug_hunter", "--format", "text"}, 4)
+	if !strings.Contains(text, "confirmed findings (ranked): 2\n") || strings.Contains(text, "also reported as:") {
+		t.Fatalf("text output:\n%s", text)
+	}
 }
 
 // A direct result records which findings a changed declaration holds; the

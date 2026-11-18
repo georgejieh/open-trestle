@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"encoding/json"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -31,7 +32,34 @@ type CompletedResultMetadata struct {
 // diagnostics, and an advisory pre_existing list) and a walkthrough, not
 // candidate or diagnostic JSON.
 // Structural consistency and a capture hash do not authenticate its producer.
+//
+// It is the strict reader: the CI disposition must be the one the recorded
+// findings re-derive, so a disposition relaxed by the recorded pre-existing
+// class, which a reader cannot re-derive, is refused. ObserveCompletedResult
+// reads such a result for evaluation without trusting the relaxation.
 func ParseCompletedResult(encoded []byte) (Result, error) {
+	return parseCompletedResult(encoded, false)
+}
+
+// ObserveCompletedResult reads a completed result as ParseCompletedResult
+// does, and also accepts a version 6 result whose CI disposition its recorded
+// pre_existing list relaxed: status findings, ci_disposition inconclusive, and
+// every medium, high or critical finding listed as pre-existing. That is what
+// a run records when it proved its blocking findings pre-existing, and the
+// reader can observe it but cannot prove it again. So it returns only the
+// metadata that evaluation records, never a Result, and nothing it returns can
+// set an exit code or relax a gate.
+func ObserveCompletedResult(encoded []byte) (CompletedResultMetadata, error) {
+	result, err := parseCompletedResult(encoded, true)
+	if err != nil {
+		return CompletedResultMetadata{}, err
+	}
+	return result.CompletedMetadata()
+}
+
+// parseCompletedResult is ParseCompletedResult; observe also accepts a
+// disposition that the recorded pre_existing list relaxed.
+func parseCompletedResult(encoded []byte, observe bool) (Result, error) {
 	if len(encoded) == 0 || len(encoded) > MaxResultJSONBytes || encoded[len(encoded)-1] != '\n' {
 		return Result{}, ErrInvalidResult
 	}
@@ -77,8 +105,9 @@ func ParseCompletedResult(encoded []byte) (Result, error) {
 	// recorded pre_existing list is advisory: the reader cannot re-derive it
 	// without the change, so a result that relaxed its disposition by it
 	// (inconclusive although a medium, high or critical finding is recorded)
-	// is refused.
-	if wire.Status != status || wire.CI != expectedImportedCI(wire.Version, set.Findings(), ci) || !wire.UsageKnown && wire.ActualCostMicroUSD != 0 {
+	// is refused. Only an observing read accepts that relaxation
+	// (recordedRelaxation).
+	if wire.Status != status || wire.CI != expectedImportedCI(wire.Version, set.Findings(), ci) && !(observe && recordedRelaxation(wire, set.Findings(), ci)) || !wire.UsageKnown && wire.ActualCostMicroUSD != 0 {
 		return Result{}, ErrInvalidResult
 	}
 	if wire.TokenUsage != nil && !validCompletedTokenUsage(*wire.TokenUsage, wire.UsageKnown) {
@@ -129,6 +158,23 @@ func ParseCompletedResult(encoded []byte) (Result, error) {
 		return Result{}, ErrInvalidResult
 	}
 	return result, nil
+}
+
+// recordedRelaxation reports a version 6 result whose findings status and
+// inconclusive disposition its recorded pre_existing list explains: the
+// readiness disposition is blocked, and every finding that would block (see
+// BlocksCI) is listed as pre-existing. validRecordedJudgement still checks
+// the list itself.
+func recordedRelaxation(wire resultWire, findings []diagnostics.Finding, readinessCI string) bool {
+	if wire.Version != tokenUsageResultVersion || wire.Status != "findings" || readinessCI != "blocked" || wire.CI != "inconclusive" || len(findings) == 0 {
+		return false
+	}
+	for _, finding := range findings {
+		if BlocksCI(finding.Severity(), false) && !slices.Contains(wire.PreExisting, finding.Identity()) {
+			return false
+		}
+	}
+	return true
 }
 
 func (r Result) CompletedMetadata() (CompletedResultMetadata, error) {

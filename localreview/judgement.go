@@ -8,10 +8,11 @@ import (
 )
 
 // The deterministic judgement of a completed review: after independent
-// verification, the host classifies each verified finding as introduced or
-// pre-existing, merges duplicates (DeduplicateFindings) and ranks the result
-// (RankFindings). It is recorded in schema version 6 results as rank and
-// pre_existing, in place, and never changes which findings were verified.
+// verification, the host classifies each verified finding as introduced,
+// pre-existing or of unproven origin, merges duplicates (DeduplicateFindings)
+// and ranks the result (RankFindings). It is recorded in schema version 6
+// results as rank, pre_existing and unproven_origin, in place, and never
+// changes which findings were verified.
 
 // rankWire is one distinct finding of a version 6 result, in rank order: the
 // representative's diagnostic finding identity and the identities of the
@@ -80,8 +81,9 @@ func (m MergedFinding) Blocking() bool {
 }
 
 // judgeResult records the judgement of a completed run that has diagnostics.
-// A verified finding is pre-existing when lines classify it so (see
-// changeLines.preExisting); lines without change evidence classify none. When
+// A verified finding is pre-existing or of unproven origin when lines
+// classify it so (see changeLines.origin); lines without change evidence
+// classify none. When
 // no verified finding blocks CI (each is low severity or pre-existing, see
 // BlocksCI), the result keeps status findings and its CI disposition becomes
 // inconclusive: the run is advisory. Only this function marks a result
@@ -99,19 +101,23 @@ func judgeResult(result Result, lines changeLines, declarations []semanticimpact
 	if err != nil {
 		return Result{}, err
 	}
-	var preExisting []string
+	var preExisting, unproven []string
 	var anchors []anchorWire
 	for index := range report.Findings {
 		finding := &report.Findings[index]
-		finding.PreExisting = lines.preExisting(*finding)
-		if finding.PreExisting {
+		switch lines.origin(*finding) {
+		case originPreExisting:
+			finding.PreExisting = true
 			preExisting = append(preExisting, finding.Identity)
+		case originUnproven:
+			finding.UnprovenOrigin = true
+			unproven = append(unproven, finding.Identity)
 		}
 		if finding.Anchor = declarationAnchor(*finding, declarations); finding.Anchor.set() {
 			anchors = append(anchors, anchorWire{FindingIdentity: finding.Identity, StartLine: finding.Anchor.StartLine, EndLine: finding.Anchor.EndLine})
 		}
 	}
-	result.wire.PreExisting, result.wire.Anchors = preExisting, anchors
+	result.wire.PreExisting, result.wire.UnprovenOrigin, result.wire.Anchors = preExisting, unproven, anchors
 	result.wire.Rank = rankEntries(report.Findings, singleRunOrigin(result.wire), report.Independence)
 	if result.wire.Status == "findings" && len(report.Findings) > 0 && !slices.ContainsFunc(report.Findings, func(finding ReportFinding) bool { return BlocksCI(finding.Severity, finding.PreExisting) }) {
 		result.wire.CI = "inconclusive"
@@ -141,10 +147,16 @@ func expectedImportedCI(version int, findings []diagnostics.Finding, readinessCI
 
 // rankEntries merges and ranks one run's findings into rank wire entries.
 func rankEntries(findings []ReportFinding, origin, independence string) []rankWire {
+	return rankEntriesBy(findings, origin, independence, false)
+}
+
+// rankEntriesBy is rankEntries; locationOnly merges by the location-only
+// rule of earlier results (see deduplicateFindings).
+func rankEntriesBy(findings []ReportFinding, origin, independence string, locationOnly bool) []rankWire {
 	if len(findings) == 0 {
 		return nil
 	}
-	ranked := RankFindings(DeduplicateFindings([]FindingOrigin{{Label: origin, Independence: independence, Findings: findings}}))
+	ranked := RankFindings(deduplicateFindings([]FindingOrigin{{Label: origin, Independence: independence, Findings: findings}}, locationOnly))
 	entries := make([]rankWire, 0, len(ranked))
 	for _, group := range ranked {
 		entry := rankWire{Rank: group.Rank, FindingIdentity: group.Finding.Identity}
@@ -176,6 +188,17 @@ func (report *Report) applyJudgement(wire resultWire, trusted bool) error {
 		}
 		listed[identity] = true
 		report.Findings[index].PreExisting = trusted
+	}
+	// The unproven_origin list only labels findings that block anyway, so a
+	// parsed result's list is shown as recorded. A finding is in at most one
+	// of the two lists.
+	for _, identity := range wire.UnprovenOrigin {
+		index, ok := byIdentity[identity]
+		if !ok || listed[identity] {
+			return ErrInvalidResult
+		}
+		listed[identity] = true
+		report.Findings[index].UnprovenOrigin = true
 	}
 	anchored := make(map[string]bool, len(wire.Anchors))
 	for _, anchor := range wire.Anchors {
@@ -224,33 +247,35 @@ func (report *Report) applyJudgement(wire resultWire, trusted bool) error {
 }
 
 func contributorOf(finding ReportFinding, origin string) FindingContributor {
-	return FindingContributor{Origin: origin, Identity: finding.Identity, Severity: finding.Severity, StartLine: finding.StartLine, EndLine: finding.EndLine, Side: finding.Side, PreExisting: finding.PreExisting, Title: finding.Title, Claim: finding.Claim}
+	return FindingContributor{Origin: origin, Identity: finding.Identity, Severity: finding.Severity, StartLine: finding.StartLine, EndLine: finding.EndLine, Side: finding.Side, PreExisting: finding.PreExisting, UnprovenOrigin: finding.UnprovenOrigin, Title: finding.Title, Claim: finding.Claim}
 }
 
 // validRecordedJudgement checks a parsed version 6 result's rank,
-// pre_existing and declaration_anchors against the judgement its own
-// diagnostics and guidance produce: pre_existing and the anchors list
-// distinct diagnostic findings in diagnostic order, and rank is exactly the
+// pre_existing, unproven_origin and declaration_anchors against the judgement
+// its own diagnostics and guidance produce: pre_existing, unproven_origin and
+// the anchors list distinct diagnostic findings in diagnostic order (no
+// finding in both classes), and rank is exactly the
 // merge and rank of those findings, with the recorded list and anchors as the
 // only pre-existing and declaration inputs. Neither can be re-derived without
 // the change, so both stay advisory: the parsed result is not judged, the
 // list never relaxes the CI disposition, and the anchors only decide merges.
 func validRecordedJudgement(result Result) bool {
 	wire := result.wire
+	unjudged := wire.PreExisting == nil && wire.UnprovenOrigin == nil && wire.Anchors == nil
 	if wire.Version != tokenUsageResultVersion {
 		// Only version 6 records a judgement or a walkthrough.
-		return wire.Rank == nil && wire.PreExisting == nil && wire.Anchors == nil && wire.Walkthrough == nil
+		return wire.Rank == nil && unjudged && wire.Walkthrough == nil
 	}
 	if wire.Walkthrough.validate() != nil {
 		return false
 	}
 	findings := result.diagnostics.Findings()
 	if len(findings) == 0 {
-		return wire.Rank == nil && wire.PreExisting == nil && wire.Anchors == nil
+		return wire.Rank == nil && unjudged
 	}
 	if len(wire.Rank) == 0 {
 		// A version 6 result written before ranking was recorded.
-		return wire.PreExisting == nil && wire.Anchors == nil
+		return unjudged
 	}
 	order := make(map[string]int, len(findings))
 	for index, finding := range findings {
@@ -271,18 +296,25 @@ func validRecordedJudgement(result Result) bool {
 	for _, anchor := range wire.Anchors {
 		anchored = append(anchored, anchor.FindingIdentity)
 	}
-	if !inOrder(wire.PreExisting) || !inOrder(anchored) {
+	if !inOrder(wire.PreExisting) || !inOrder(wire.UnprovenOrigin) || !inOrder(anchored) {
 		return false
 	}
 	// The recorded rank was computed with the recorded classification and
-	// anchors as its inputs, so it is recomputed the same way.
+	// anchors as its inputs, so it is recomputed the same way: by the current
+	// merge rule, or by the location-only rule of results recorded before
+	// paraphrases at one place needed related wording to merge. A rank only
+	// orders and groups findings; it never changes a disposition.
 	recomputed := result
 	recomputed.judged = true
 	report, err := recomputed.Report()
 	if err != nil {
 		return false
 	}
-	return slices.EqualFunc(wire.Rank, rankEntries(report.Findings, singleRunOrigin(wire), report.Independence), func(a, b rankWire) bool {
-		return a.Rank == b.Rank && a.FindingIdentity == b.FindingIdentity && slices.Equal(a.Merged, b.Merged)
-	})
+	same := func(entries []rankWire) bool {
+		return slices.EqualFunc(wire.Rank, entries, func(a, b rankWire) bool {
+			return a.Rank == b.Rank && a.FindingIdentity == b.FindingIdentity && slices.Equal(a.Merged, b.Merged)
+		})
+	}
+	origin := singleRunOrigin(wire)
+	return same(rankEntriesBy(report.Findings, origin, report.Independence, false)) || same(rankEntriesBy(report.Findings, origin, report.Independence, true))
 }

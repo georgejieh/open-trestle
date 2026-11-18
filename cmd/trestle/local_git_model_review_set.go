@@ -374,9 +374,13 @@ type setFindingWire struct {
 	// Rank is the finding's 1-based position (localreview.RankFindings);
 	// findings are listed in rank order.
 	Rank int `json:"rank"`
-	// PreExisting is set when every contributor is located only on unchanged
-	// lines the change did not touch. Such a finding never blocks CI.
-	PreExisting bool `json:"pre_existing,omitempty"`
+	// PreExisting is set when every contributor is pre-existing: on unchanged
+	// lines the change provably cannot reach. Such a finding never blocks CI.
+	// UnprovenOrigin is set when every contributor is on unchanged lines but
+	// the change may have caused at least one of them; such a finding blocks
+	// like an introduced one.
+	PreExisting    bool `json:"pre_existing,omitempty"`
+	UnprovenOrigin bool `json:"unproven_origin,omitempty"`
 	// Merged lists every contributor other than the representative with its
 	// own verified statement and the rule that merged it (near_identical,
 	// same_declaration or same_lines), in contributor order; omitted when
@@ -858,7 +862,7 @@ func mergeVerifiedFindingsWithIndependence(labels, independence []string, findin
 	out := make([]setFindingWire, 0, len(ranked))
 	for _, group := range ranked {
 		value := setFindingFromReport(group.Finding)
-		value.Rank, value.PreExisting, value.merged = group.Rank, group.PreExisting(), group
+		value.Rank, value.PreExisting, value.UnprovenOrigin, value.merged = group.Rank, group.PreExisting(), group.UnprovenOrigin(), group
 		value.Contributors = make([]setContributorWire, 0, len(group.Contributors))
 		for _, contributor := range group.Contributors {
 			value.Contributors = append(value.Contributors, setContributorWire{Member: contributor.Origin, FindingIdentity: contributor.Identity, Severity: contributor.Severity.String(), StartLine: contributor.StartLine, EndLine: contributor.EndLine, Side: recordedSetSide(contributor.Side)})
@@ -1195,9 +1199,9 @@ func encodeModelReviewSetSARIF(set modelReviewSetWire) ([]byte, error) {
 	}
 	contributors := map[string][]string{}
 	for _, finding := range set.Findings {
-		// The set's merge decides rank, representative and pre-existing class.
+		// The set's merge decides rank, representative and origin class.
 		value := finding.report
-		value.Rank, value.DuplicateOf, value.PreExisting = finding.Rank, "", finding.PreExisting
+		value.Rank, value.DuplicateOf, value.PreExisting, value.UnprovenOrigin = finding.Rank, "", finding.PreExisting, finding.UnprovenOrigin
 		report.Findings = append(report.Findings, value)
 		contributors[finding.FindingIdentity] = finding.contributorLabels()
 	}

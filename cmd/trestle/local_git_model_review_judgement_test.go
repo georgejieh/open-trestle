@@ -25,8 +25,9 @@ type judgementReceipt struct {
 		FindingIdentity string   `json:"finding_identity"`
 		Merged          []string `json:"merged_finding_identities"`
 	} `json:"rank"`
-	PreExisting []string `json:"pre_existing"`
-	Diagnostics struct {
+	PreExisting    []string `json:"pre_existing"`
+	UnprovenOrigin []string `json:"unproven_origin"`
+	Diagnostics    struct {
 		Findings []struct {
 			Identity string `json:"identity"`
 		} `json:"findings"`
@@ -44,41 +45,46 @@ func runJudgement(t *testing.T, f *localModelFixture, extra []string, wantCode i
 	return receipt, []byte(stdout)
 }
 
-// A confirmed finding anchored only on an unchanged caller line,
-// citing no change evidence, is pre-existing: the result lists it under
-// pre_existing and in rank, keeps status findings, and is not blocked.
-func TestRunLocalGitModelReviewClassifiesPreExistingFinding(t *testing.T) {
+// A confirmed finding anchored only on an unchanged caller line, citing no
+// change evidence, is still a dependent of the changed function: the change
+// may have broken it. Its origin is unproven, so the result lists it under
+// unproven_origin and in rank, and it blocks like an introduced finding.
+func TestRunLocalGitModelReviewMarksACallerOfTheChangeOfUnprovenOrigin(t *testing.T) {
 	f := oldFunctionFixture(t, "pre_existing")
-	receipt, stdout := runJudgement(t, f, nil, 3)
-	if receipt.Status != "findings" || receipt.CI != "inconclusive" || len(receipt.Diagnostics.Findings) != 1 {
+	receipt, stdout := runJudgement(t, f, nil, 4)
+	if receipt.Status != "findings" || receipt.CI != "blocked" || len(receipt.Diagnostics.Findings) != 1 {
 		t.Fatalf("status=%s ci=%s findings=%d", receipt.Status, receipt.CI, len(receipt.Diagnostics.Findings))
 	}
 	identity := receipt.Diagnostics.Findings[0].Identity
-	if len(receipt.PreExisting) != 1 || receipt.PreExisting[0] != identity || len(receipt.Rank) != 1 || receipt.Rank[0].Rank != 1 || receipt.Rank[0].FindingIdentity != identity {
-		t.Fatalf("pre_existing=%v rank=%+v", receipt.PreExisting, receipt.Rank)
+	if len(receipt.PreExisting) != 0 || len(receipt.UnprovenOrigin) != 1 || receipt.UnprovenOrigin[0] != identity || len(receipt.Rank) != 1 || receipt.Rank[0].Rank != 1 || receipt.Rank[0].FindingIdentity != identity {
+		t.Fatalf("pre_existing=%v unproven_origin=%v rank=%+v", receipt.PreExisting, receipt.UnprovenOrigin, receipt.Rank)
 	}
-	// The strict reader cannot re-derive the class without the change, so it
-	// refuses a result whose CI disposition the class relaxed. With the
-	// readiness disposition the list is advisory and the result imports; a
-	// rank its own findings do not produce is refused.
-	if _, err := localreview.ParseCompletedResult(stdout); err == nil {
-		t.Fatal("ParseCompletedResult accepted a CI disposition relaxed by an unverifiable pre-existing class")
+	imported, err := localreview.ParseCompletedResult(stdout)
+	if err != nil {
+		t.Fatalf("ParseCompletedResult refused an unproven_origin list: %v", err)
 	}
-	readiness := bytes.Replace(stdout, []byte(`"ci_disposition":"inconclusive"`), []byte(`"ci_disposition":"blocked"`), 1)
-	if _, err := localreview.ParseCompletedResult(readiness); err != nil {
-		t.Fatalf("ParseCompletedResult refused an advisory pre_existing list: %v", err)
+	if code := imported.ExitCodeFor(localreview.ExitPolicyFindings); code != 4 {
+		t.Fatalf("an imported finding of unproven origin did not block the findings policy: exit %d", code)
 	}
-	for _, tampered := range [][]byte{
-		bytes.Replace(readiness, []byte(`"rank":1,`), []byte(`"rank":2,`), 1),
-		bytes.Replace(readiness, []byte(`"pre_existing":["`+identity+`"]`), []byte(`"pre_existing":["`+identity+`","`+identity+`"]`), 1),
-		bytes.Replace(readiness, []byte(`"pre_existing":["`+identity+`"]`), []byte(`"pre_existing":["`+strings.Repeat("a", 64)+`"]`), 1),
+	for name, tampered := range map[string][]byte{
+		"rank":     bytes.Replace(stdout, []byte(`"rank":1,`), []byte(`"rank":2,`), 1),
+		"repeated": bytes.Replace(stdout, []byte(`"unproven_origin":["`+identity+`"]`), []byte(`"unproven_origin":["`+identity+`","`+identity+`"]`), 1),
+		"unknown":  bytes.Replace(stdout, []byte(`"unproven_origin":["`+identity+`"]`), []byte(`"unproven_origin":["`+strings.Repeat("a", 64)+`"]`), 1),
+		"both":     bytes.Replace(stdout, []byte(`"unproven_origin":["`+identity+`"]`), []byte(`"pre_existing":["`+identity+`"],"unproven_origin":["`+identity+`"]`), 1),
 	} {
 		if bytes.Equal(tampered, stdout) {
-			t.Fatal("tampering did not change the result")
+			t.Fatalf("%s: tampering did not change the result", name)
 		}
 		if _, err := localreview.ParseCompletedResult(tampered); err == nil {
-			t.Fatal("ParseCompletedResult accepted an inconsistent judgement")
+			t.Fatalf("%s: ParseCompletedResult accepted an inconsistent judgement", name)
 		}
+	}
+	// A pre_existing list in place of the unproven one keeps the readiness
+	// disposition and is advisory: the result imports, and no exit policy
+	// trusts it.
+	advisory := bytes.Replace(stdout, []byte(`"unproven_origin":["`+identity+`"]`), []byte(`"pre_existing":["`+identity+`"]`), 1)
+	if imported, err := localreview.ParseCompletedResult(advisory); err != nil || imported.ExitCodeFor(localreview.ExitPolicyFindings) != 4 {
+		t.Fatalf("an advisory pre_existing list: err=%v", err)
 	}
 }
 
@@ -117,16 +123,15 @@ func TestParseCompletedResultRefusesSelfAssertedPreExistingRelaxation(t *testing
 	}
 }
 
-// Pre-existing findings never block CI, and every exit-code policy keeps its
-// meaning: default stays non-zero (3, inconclusive), findings exits 0 (no
-// introduced high or critical finding), strict stays non-zero (there were
-// candidates), and always-zero exits 0.
-func TestPreExistingFindingsUnderEachExitCodePolicy(t *testing.T) {
-	for policy, want := range map[string]int{"default": 3, "findings": 0, "strict": 3, "always-zero": 0} {
+// A high finding of unproven origin blocks under every exit-code policy that
+// an introduced one blocks: default, findings and strict exit 4, and only
+// always-zero exits 0.
+func TestUnprovenOriginFindingsUnderEachExitCodePolicy(t *testing.T) {
+	for policy, want := range map[string]int{"default": 4, "findings": 4, "strict": 4, "always-zero": 0} {
 		f := oldFunctionFixture(t, "pre_existing")
 		receipt, _ := runJudgement(t, f, []string{"--exit-code-policy", policy}, want)
-		if receipt.CI != "inconclusive" || len(receipt.PreExisting) != 1 {
-			t.Fatalf("policy %s: ci=%s pre_existing=%v", policy, receipt.CI, receipt.PreExisting)
+		if receipt.CI != "blocked" || len(receipt.PreExisting) != 0 || len(receipt.UnprovenOrigin) != 1 {
+			t.Fatalf("policy %s: ci=%s pre_existing=%v unproven_origin=%v", policy, receipt.CI, receipt.PreExisting, receipt.UnprovenOrigin)
 		}
 	}
 }
@@ -137,26 +142,30 @@ func TestFindingCitingChangeEvidenceIsNotPreExisting(t *testing.T) {
 	for policy, want := range map[string]int{"default": 4, "findings": 4} {
 		f := oldFunctionFixture(t, "pre_existing_cited_change")
 		receipt, _ := runJudgement(t, f, []string{"--exit-code-policy", policy}, want)
-		if receipt.Status != "findings" || receipt.CI != "blocked" || len(receipt.PreExisting) != 0 || len(receipt.Rank) != 1 {
-			t.Fatalf("policy %s: status=%s ci=%s pre_existing=%v rank=%d", policy, receipt.Status, receipt.CI, receipt.PreExisting, len(receipt.Rank))
+		if receipt.Status != "findings" || receipt.CI != "blocked" || len(receipt.PreExisting) != 0 || len(receipt.UnprovenOrigin) != 0 || len(receipt.Rank) != 1 {
+			t.Fatalf("policy %s: status=%s ci=%s pre_existing=%v unproven_origin=%v rank=%d", policy, receipt.Status, receipt.CI, receipt.PreExisting, receipt.UnprovenOrigin, len(receipt.Rank))
 		}
 	}
 	// The ordinary fixture's finding is on the changed line and cites its
 	// caller: introduced, ranked first, never pre-existing.
 	f := newLocalModelFixture(t, localModelFixtureOptions{chatCompletions: true})
 	receipt, stdout := runJudgement(t, f, nil, 4)
-	if receipt.CI != "blocked" || len(receipt.PreExisting) != 0 || len(receipt.Rank) != 1 || strings.Contains(string(stdout), `"pre_existing"`) {
+	if receipt.CI != "blocked" || len(receipt.PreExisting) != 0 || len(receipt.Rank) != 1 || strings.Contains(string(stdout), `"pre_existing"`) || strings.Contains(string(stdout), `"unproven_origin"`) {
 		t.Fatalf("ordinary finding: ci=%s pre_existing=%v rank=%+v", receipt.CI, receipt.PreExisting, receipt.Rank)
 	}
 }
 
-// A review set whose merged findings are all pre-existing keeps status
-// findings and is inconclusive, not blocked; the findings policy exits 0.
-func TestReviewSetPreExistingFindingsNeverBlock(t *testing.T) {
+// A review set whose merged findings are all on unchanged lines that the
+// change may affect marks them unproven_origin and blocks; the findings
+// policy keeps exit 4.
+func TestReviewSetUnprovenOriginFindingsBlock(t *testing.T) {
 	f := oldFunctionFixture(t, "pre_existing")
-	receipt, _ := runLocalModelSet(t, f, []string{"--specialists", "bug_hunter"}, 3)
-	if receipt.Status != "findings" || receipt.CI != "inconclusive" || !receipt.Complete || len(receipt.Findings) != 1 {
+	receipt, stdout := runLocalModelSet(t, f, []string{"--specialists", "bug_hunter"}, 4)
+	if receipt.Status != "findings" || receipt.CI != "blocked" || !receipt.Complete || len(receipt.Findings) != 1 {
 		t.Fatalf("set status=%s ci=%s complete=%t findings=%d", receipt.Status, receipt.CI, receipt.Complete, len(receipt.Findings))
 	}
-	runLocalModelSet(t, f, []string{"--specialists", "bug_hunter", "--exit-code-policy", "findings"}, 0)
+	if !strings.Contains(stdout, `"unproven_origin":true`) || strings.Contains(stdout, `"pre_existing":true`) {
+		t.Fatalf("set finding origin class:\n%s", stdout)
+	}
+	runLocalModelSet(t, f, []string{"--specialists", "bug_hunter", "--exit-code-policy", "findings"}, 4)
 }

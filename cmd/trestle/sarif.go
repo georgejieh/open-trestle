@@ -187,9 +187,12 @@ type sarifResultProperties struct {
 	Contributors []string `json:"trestleContributors,omitempty"`
 	// Rank is the finding's 1-based rank (results are listed in rank order,
 	// a merged duplicate after its representative); PreExisting marks a
-	// finding on unchanged lines that never blocks CI.
-	Rank        int  `json:"trestleRank,omitempty"`
-	PreExisting bool `json:"trestlePreExisting,omitempty"`
+	// finding on unchanged lines that never blocks CI, and UnprovenOrigin a
+	// finding on unchanged lines that the change may have caused, which
+	// blocks like an introduced one.
+	Rank           int  `json:"trestleRank,omitempty"`
+	PreExisting    bool `json:"trestlePreExisting,omitempty"`
+	UnprovenOrigin bool `json:"trestleUnprovenOrigin,omitempty"`
 	// Side is "base" for a finding on removed base lines. Its region is then
 	// the head line beside the deletion, and BaseStartLine and BaseEndLine
 	// name the removed base lines.

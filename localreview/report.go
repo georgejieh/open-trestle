@@ -104,10 +104,13 @@ type ReportFinding struct {
 	// when none remains, such as for a removed file.
 	Side     diagnostics.LineSide
 	HeadLine uint32
-	// PreExisting marks a finding located only on unchanged lines that the
-	// change did not touch (see the result's pre_existing list). It never
-	// blocks CI.
-	PreExisting bool
+	// PreExisting marks a finding on unchanged lines whose pre-existing
+	// origin the run proved (see the result's pre_existing list). It never
+	// blocks CI. UnprovenOrigin marks a finding on unchanged lines that the
+	// change may still have caused (the result's unproven_origin list); it
+	// blocks like an introduced finding.
+	PreExisting    bool
+	UnprovenOrigin bool
 	// Anchor is the changed declaration of the run's semantic-impact profile
 	// that holds the finding (the result's declaration_anchors), or zero. It
 	// only lets DeduplicateFindings merge paraphrases of one defect.
