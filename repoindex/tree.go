@@ -37,14 +37,20 @@ type Tree interface {
 	Commit() string
 	// Walk visits at most maxEntries entries in tree order.
 	Walk(ctx context.Context, maxEntries int, visit func(TreeEntry) error) (TreeWalk, error)
-	// ReadBlob returns a verified blob.
-	ReadBlob(ctx context.Context, object string) ([]byte, error)
+	// ReadBlobs reads blobs one after another: it asks next for each object
+	// ID until next reports none, and passes each blob, or the error of
+	// reading it, to deliver. An error of deliver ends the reading and is
+	// returned.
+	ReadBlobs(ctx context.Context, next func() (string, bool), deliver func([]byte, error) error) error
 }
 
 // GitTree reads a commit from the verified object store reviews use.
 type GitTree struct {
 	store    *scm.LocalGitObjectStore
 	revision evidence.RevisionIdentity
+	// acquisitionBytes is how many blob bytes one acquisition of the
+	// object store reads before the next starts.
+	acquisitionBytes int64
 }
 
 // NewGitTree returns the tree of a commit in the store.
@@ -52,7 +58,7 @@ func NewGitTree(store *scm.LocalGitObjectStore, revision evidence.RevisionIdenti
 	if store == nil || revision.Kind() != evidence.RevisionKindGitCommit {
 		return nil, errors.New("a Git commit in a local object store is required")
 	}
-	return &GitTree{store: store, revision: revision}, nil
+	return &GitTree{store: store, revision: revision, acquisitionBytes: acquisitionBytes}, nil
 }
 
 func (t *GitTree) Algorithm() string { return string(t.revision.Algorithm()) }
@@ -72,6 +78,45 @@ func (t *GitTree) Walk(ctx context.Context, maxEntries int, visit func(TreeEntry
 	return TreeWalk{Entries: walk.Entries, Truncated: walk.Truncated, InvalidPaths: walk.InvalidPaths}, err
 }
 
-func (t *GitTree) ReadBlob(ctx context.Context, object string) ([]byte, error) {
-	return t.store.ReadBlob(ctx, t.revision.Algorithm(), object)
+// acquisitionBytes keeps an acquisition well inside its work budget. Each
+// acquisition ends with a check of the packs, so fewer are faster.
+const acquisitionBytes = 64 << 20
+
+var errNextAcquisition = errors.New("next acquisition")
+
+// ReadBlobs implements Tree. A blob past an acquisition's work budget is
+// read again in a fresh acquisition before it counts as unreadable.
+func (t *GitTree) ReadBlobs(ctx context.Context, next func() (string, bool), deliver func([]byte, error) error) error {
+	carry, more := "", true
+	for more {
+		err := t.store.WithObjectReader(ctx, func(reader scm.LocalGitObjectReader) error {
+			var read int64
+			fresh := true
+			for {
+				object := carry
+				if carry == "" {
+					if object, more = next(); !more {
+						return nil
+					}
+				}
+				carry = ""
+				content, err := reader.ReadBlob(ctx, t.revision.Algorithm(), object)
+				if errors.Is(err, scm.LocalGitRevisionResourceLimit) && !fresh {
+					carry = object
+					return errNextAcquisition
+				}
+				fresh = false
+				if err := deliver(content, err); err != nil {
+					return err
+				}
+				if read += int64(len(content)); read >= t.acquisitionBytes {
+					return errNextAcquisition
+				}
+			}
+		})
+		if err != nil && !errors.Is(err, errNextAcquisition) {
+			return err
+		}
+	}
+	return nil
 }

@@ -62,13 +62,19 @@ func (t *memoryTree) Walk(ctx context.Context, maxEntries int, visit func(TreeEn
 	return walk, nil
 }
 
-func (t *memoryTree) ReadBlob(_ context.Context, object string) ([]byte, error) {
-	t.reads.Add(1)
-	content, ok := t.objects[object]
-	if !ok {
-		return nil, errors.New("missing object")
+func (t *memoryTree) ReadBlobs(_ context.Context, next func() (string, bool), deliver func([]byte, error) error) error {
+	for object, ok := next(); ok; object, ok = next() {
+		t.reads.Add(1)
+		var err error
+		content, found := t.objects[object]
+		if !found {
+			err = errors.New("missing object")
+		}
+		if err := deliver(content, err); err != nil {
+			return err
+		}
 	}
-	return content, nil
+	return nil
 }
 
 // fakeAnalyzer records one definition per file without parsing; a file
@@ -202,7 +208,7 @@ func TestBuildClassifiesBinaryOversizedGeneratedAndFailedFiles(t *testing.T) {
 		}
 	}
 	g := loadGraph(t, store, s)
-	gaps, _ := g.FileGaps("big/huge.py")
+	gaps := g.files[g.byPath["big/huge.py"]].gaps
 	if len(gaps) != 1 || gaps[0].Limit != syntaxanalysis.LimitFileSize {
 		t.Fatalf("oversized file gaps = %v", gaps)
 	}
@@ -241,7 +247,7 @@ func TestStoreLimitsEvictSnapshotsAndRecords(t *testing.T) {
 	if names["snap"] != 2 {
 		t.Fatalf("snapshots kept: %v", names)
 	}
-	if _, err := store.Load(context.Background(), "sha1", fmt.Sprintf("%040x", 1), nil); !errors.Is(err, ErrNotIndexed) {
+	if _, err := store.Load(context.Background(), "sha1", fmt.Sprintf("%040x", 1)); !errors.Is(err, ErrNotIndexed) {
 		t.Fatalf("evicted snapshot loaded: %v", err)
 	}
 	g := loadGraph(t, store, last)
@@ -293,7 +299,7 @@ func TestStoreDropsStaleAndCorruptFilesAndRefusesUnprotectedOnes(t *testing.T) {
 	build(t, store, analyzer, tree, DefaultBuildLimits(), nil)
 
 	other, _ := NewStore(store.Directory(), [32]byte{9}, DefaultStoreLimits())
-	if _, err := other.Load(context.Background(), "sha1", tree.commit, nil); !errors.Is(err, ErrNotIndexed) {
+	if _, err := other.Load(context.Background(), "sha1", tree.commit); !errors.Is(err, ErrNotIndexed) {
 		t.Fatalf("another analysis identity loaded the snapshot: %v", err)
 	}
 	if got := indexFiles(t, store); got["seg"] != 0 || got["snap"] != 0 {
@@ -320,7 +326,7 @@ func TestStoreDropsStaleAndCorruptFilesAndRefusesUnprotectedOnes(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(store.Directory(), "seg-intruder.otx"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Load(context.Background(), "sha1", tree.commit, nil); !errors.Is(err, ErrUnavailable) {
+	if _, err := store.Load(context.Background(), "sha1", tree.commit); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("an unprotected file was accepted: %v", err)
 	}
 }
@@ -338,7 +344,7 @@ func TestStoreAllowsOneProcessAtATime(t *testing.T) {
 	for slow.calls.Load() == 0 {
 		time.Sleep(5 * time.Millisecond)
 	}
-	if _, err := store.Load(context.Background(), "sha1", tree.commit, nil); !errors.Is(err, ErrBusy) {
+	if _, err := store.Load(context.Background(), "sha1", tree.commit); !errors.Is(err, ErrBusy) {
 		t.Fatalf("load during a build = %v", err)
 	}
 	if err := <-done; err != nil {
@@ -362,7 +368,7 @@ func TestBuildAnalysesConcurrentlyAndCancels(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			g, err := store.Load(context.Background(), s.Algorithm, s.Commit, nil)
+			g, err := store.Load(context.Background(), s.Algorithm, s.Commit)
 			if err == nil && len(g.Files()) != 400 {
 				t.Error("partial graph")
 			}

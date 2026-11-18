@@ -42,9 +42,8 @@ type Use struct {
 	Range     syntaxanalysis.Range         `json:"range"`
 	// Enclosing is the qualified name of the innermost definition around
 	// the reference; it is empty at the top level of a file.
-	Enclosing   syntaxanalysis.Text `json:"enclosing,omitzero"`
-	EnclosingID SymbolID            `json:"-"`
-	Scope       Scope               `json:"scope"`
+	Enclosing syntaxanalysis.Text `json:"enclosing,omitzero"`
+	Scope     Scope               `json:"scope"`
 }
 
 // target is what candidates are matched against: a definition of the graph,
@@ -135,9 +134,9 @@ func (g *Graph) candidates(t target, fn func(int32, Scope) bool) {
 func (g *Graph) use(i int32, s Scope) Use {
 	r := g.refs[i]
 	f := g.files[r.file]
-	u := Use{Path: f.entry.Path, Role: f.entry.Role, Language: f.entry.Language, Kind: r.kind, Name: g.names[r.name], Qualifier: g.names[r.qualifier], Range: r.rng.Range(), EnclosingID: -1, Scope: s}
+	u := Use{Path: f.entry.Path, Role: f.entry.Role, Language: f.entry.Language, Kind: r.kind, Name: g.names[r.name], Qualifier: g.names[r.qualifier], Range: r.rng.Range(), Scope: s}
 	if r.enclosing >= 0 {
-		u.Enclosing, u.EnclosingID = g.qualifiedName(r.enclosing), SymbolID(r.enclosing)
+		u.Enclosing = g.qualifiedName(r.enclosing)
 	}
 	return u
 }

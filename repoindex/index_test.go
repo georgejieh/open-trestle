@@ -24,7 +24,7 @@ func buildCommit(t *testing.T, store *Store, analyzer *countingAnalyzer, tree Tr
 
 func loadGraph(t *testing.T, store *Store, s Snapshot) *Graph {
 	t.Helper()
-	g, err := store.Load(context.Background(), s.Algorithm, s.Commit, nil)
+	g, err := store.Load(context.Background(), s.Algorithm, s.Commit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +118,10 @@ func TestIncrementalBuildAnalysesOnlyNewBlobs(t *testing.T) {
 	repo.write(fixtureFiles)
 	first := repo.commit("first")
 	store := newTestStore(t, DefaultStoreLimits())
-	a := buildCommit(t, store, analyzer, repo.tree(first))
+	tree := repo.tree(first)
+	// A small acquisition makes the reads span many acquisitions.
+	tree.acquisitionBytes = 100
+	a := buildCommit(t, store, analyzer, tree)
 	analysedFirst := analyzer.calls.Load()
 
 	repo.git("mv", "calc/calc.go", "calc/arith.go")

@@ -13,14 +13,13 @@ import (
 // thousand files fits: every name is interned once, records refer to names
 // and files by number, and the name indexes are flat posting lists.
 type Graph struct {
-	snapshot Snapshot
-	files    []graphFile
-	byPath   map[string]int32
-	names    []syntaxanalysis.Text
-	nameIDs  map[string]int32
-	defs     []graphDef
-	refs     []graphRef
-	imports  []graphImport
+	files   []graphFile
+	byPath  map[string]int32
+	names   []syntaxanalysis.Text
+	nameIDs map[string]int32
+	defs    []graphDef
+	refs    []graphRef
+	imports []graphImport
 	// defsByName and refsByName list definitions and references by name.
 	defsByName, refsByName postings
 	// units group files that see each other's definitions without an
@@ -130,26 +129,37 @@ func (g *Graph) intern(t syntaxanalysis.Text) int32 {
 	return id
 }
 
-// Load builds the graph of an indexed commit. With a filter, only the files
-// it accepts are loaded.
-func (s *Store) Load(ctx context.Context, algorithm, commit string, filter func(path string) bool) (*Graph, error) {
+// Snapshot returns the snapshot of an indexed commit.
+func (s *Store) Snapshot(ctx context.Context, algorithm, commit string) (Snapshot, error) {
+	sess, err := s.open(ctx, false)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	defer sess.close()
+	return sess.snapshot(algorithm, commit)
+}
+
+func (sess *session) snapshot(algorithm, commit string) (Snapshot, error) {
+	snapshot, ok, err := sess.readSnapshot(snapshotName(algorithm, commit))
+	if err == nil && !ok {
+		err = ErrNotIndexed
+	}
+	return snapshot, err
+}
+
+// Load builds the graph of an indexed commit.
+func (s *Store) Load(ctx context.Context, algorithm, commit string) (*Graph, error) {
 	sess, err := s.open(ctx, false)
 	if err != nil {
 		return nil, err
 	}
 	defer sess.close()
-	snapshot, ok, err := sess.readSnapshot(snapshotName(algorithm, commit))
+	snapshot, err := sess.snapshot(algorithm, commit)
 	if err != nil {
 		return nil, err
 	}
-	if !ok {
-		return nil, ErrNotIndexed
-	}
-	g := newGraph(snapshot)
+	g := newGraph()
 	for i, f := range snapshot.Files {
-		if filter != nil && !filter(f.Path) {
-			continue
-		}
 		if i%1024 == 0 && ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
@@ -172,10 +182,8 @@ func (s *Store) Load(ctx context.Context, algorithm, commit string, filter func(
 	return g, nil
 }
 
-func newGraph(s Snapshot) *Graph {
-	g := &Graph{snapshot: s, byPath: map[string]int32{}, nameIDs: map[string]int32{}, names: []syntaxanalysis.Text{{}}}
-	g.snapshot.Files = nil
-	return g
+func newGraph() *Graph {
+	return &Graph{byPath: map[string]int32{}, nameIDs: map[string]int32{}, names: []syntaxanalysis.Text{{}}}
 }
 
 // add appends a file and its analysis. Record indices of the analysis
@@ -250,10 +258,6 @@ func (g *Graph) packageScope(file int32) string {
 	return "dir:" + path.Dir(f.entry.Path)
 }
 
-// Snapshot returns the snapshot the graph was built from, without its file
-// list; Files lists the files.
-func (g *Graph) Snapshot() Snapshot { return g.snapshot }
-
 // Files returns every file of the graph in tree order.
 func (g *Graph) Files() []FileEntry {
 	out := make([]FileEntry, len(g.files))
@@ -261,16 +265,6 @@ func (g *Graph) Files() []FileEntry {
 		out[i] = f.entry
 	}
 	return out
-}
-
-// FileGaps returns the coverage gaps of a file's analysis, and false when
-// the file is not in the graph.
-func (g *Graph) FileGaps(filePath string) ([]syntaxanalysis.Gap, bool) {
-	id, ok := g.byPath[filePath]
-	if !ok {
-		return nil, false
-	}
-	return append([]syntaxanalysis.Gap(nil), g.files[id].gaps...), true
 }
 
 // Symbol is a definition. ID identifies it within its graph.
@@ -324,27 +318,6 @@ func (g *Graph) Definitions(name string) []Symbol {
 	return out
 }
 
-// Symbol returns a definition by ID.
-func (g *Graph) Symbol(id SymbolID) (Symbol, bool) {
-	if id < 0 || int(id) >= len(g.defs) {
-		return Symbol{}, false
-	}
-	return g.symbol(int32(id)), true
-}
-
-// EnclosingDefinition returns the innermost definition of a file that
-// contains the 1-based line, and false when none does.
-func (g *Graph) EnclosingDefinition(filePath string, line int) (Symbol, bool) {
-	id, ok := g.byPath[filePath]
-	if !ok {
-		return Symbol{}, false
-	}
-	if i := g.innermost(g.files[id].defs, int32(line)); i >= 0 {
-		return g.symbol(i), true
-	}
-	return Symbol{}, false
-}
-
 // lines returns the first and last line of a range. A range that ends at
 // column 1 ends on the line before, after its final newline.
 func (r range32) lines() (int32, int32) {
@@ -353,17 +326,4 @@ func (r range32) lines() (int32, int32) {
 		end--
 	}
 	return r.startLine, end
-}
-
-// innermost finds the narrowest definition whose lines contain line.
-func (g *Graph) innermost(defs span, line int32) int32 {
-	best := int32(-1)
-	for i := defs.start; i < defs.end; i++ {
-		d := g.defs[i]
-		start, end := d.rng.lines()
-		if start <= line && line <= end && (best < 0 || d.rng.endByte-d.rng.startByte < g.defs[best].rng.endByte-g.defs[best].rng.startByte) {
-			best = i
-		}
-	}
-	return best
 }

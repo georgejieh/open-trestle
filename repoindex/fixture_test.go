@@ -100,8 +100,11 @@ func (r *gitRepository) commit(message string) string {
 	return r.git("rev-parse", "HEAD")
 }
 
+// tree packs the repository's objects, as a clone has them, and returns a
+// commit's tree from the packed object store.
 func (r *gitRepository) tree(commit string) *GitTree {
 	r.t.Helper()
+	r.git("repack", "-adq")
 	root, err := os.OpenRoot(filepath.Join(r.dir, ".git", "objects"))
 	if err != nil {
 		r.t.Fatal(err)
@@ -111,10 +114,11 @@ func (r *gitRepository) tree(commit string) *GitTree {
 	if err != nil {
 		r.t.Fatal(err)
 	}
-	store, err := scm.NewLocalGitObjectStore(root, repository)
+	store, err := scm.NewLocalGitObjectStoreWithOptions(scm.LocalGitObjectStoreOptions{ObjectsRoot: root, Repository: repository, Profile: scm.LocalGitObjectStoreProfileLooseAndPackIndexV1, ObjectAlgorithm: evidence.RevisionAlgorithmSHA1})
 	if err != nil {
 		r.t.Fatal(err)
 	}
+	r.t.Cleanup(func() { _ = store.Close(context.Background()) })
 	revision, err := evidence.NewRevisionIdentity(evidence.RevisionKindGitCommit, evidence.RevisionAlgorithmSHA1, commit)
 	if err != nil {
 		r.t.Fatal(err)

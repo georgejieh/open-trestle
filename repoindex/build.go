@@ -241,53 +241,64 @@ func (b Builder) analyse(parent context.Context, tree Tree, s *Snapshot, pending
 			close(outcomes)
 		}()
 		files, bytes, stopped := 0, int64(0), Status("")
-		for _, i := range pending {
-			f := s.Files[i]
-			switch {
-			case stopped != "":
-			case ctx.Err() != nil:
-				return
-			case files >= limits.MaxFiles:
-				stopped = StatusFileLimit
-			case now().Sub(started) >= limits.MaxDuration:
-				stopped = StatusTimeLimit
-			}
-			if stopped != "" {
-				outcomes <- outcome{index: i, status: stopped}
-				continue
-			}
-			content, err := tree.ReadBlob(ctx, f.Object)
-			if err != nil {
-				if ctx.Err() != nil {
-					fail(ctx.Err())
-					return
+		position, current := 0, -1
+		// next skips the files a limit leaves out and returns the next blob
+		// to read.
+		next := func() (string, bool) {
+			for ; position < len(pending) && ctx.Err() == nil; position++ {
+				i := pending[position]
+				switch {
+				case stopped != "":
+				case files >= limits.MaxFiles:
+					stopped = StatusFileLimit
+				case now().Sub(started) >= limits.MaxDuration:
+					stopped = StatusTimeLimit
 				}
-				outcomes <- outcome{index: i, status: StatusUnavailable}
-				continue
+				if stopped != "" {
+					outcomes <- outcome{index: i, status: stopped}
+					continue
+				}
+				current = i
+				position++
+				return s.Files[i].Object, true
 			}
-			if bytes+int64(len(content)) > limits.MaxBytes {
+			return "", false
+		}
+		deliver := func(content []byte, err error) error {
+			i, f := current, s.Files[current]
+			switch {
+			case ctx.Err() != nil:
+				return ctx.Err()
+			case err != nil:
+				outcomes <- outcome{index: i, status: StatusUnavailable}
+				return nil
+			case bytes+int64(len(content)) > limits.MaxBytes:
 				stopped = StatusByteLimit
 				outcomes <- outcome{index: i, status: stopped}
-				continue
+				return nil
 			}
 			record := blobRecord{size: int64(len(content)), generated: isGeneratedContent(content)}
 			if isBinaryContent(content) {
 				record.binary = true
 				outcomes <- outcome{index: i, record: &record}
-				continue
+				return nil
 			}
 			source, err := syntaxanalysis.NewSource(f.Path, f.Language, content)
 			if err != nil {
 				outcomes <- outcome{index: i, status: StatusUnavailable}
-				continue
+				return nil
 			}
 			files++
 			bytes += int64(len(content))
 			select {
 			case jobs <- job{index: i, source: source, record: record}:
+				return nil
 			case <-ctx.Done():
-				return
+				return ctx.Err()
 			}
+		}
+		if err := tree.ReadBlobs(ctx, next, deliver); err != nil {
+			fail(err)
 		}
 	}()
 	wait := func(abort bool) error {
