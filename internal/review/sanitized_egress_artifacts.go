@@ -8,7 +8,7 @@ import (
 )
 
 func NewSanitizedEgressArtifacts(raw artifact.Artifact, request SanitizedModelRequest, receipt SanitizedEgressReceipt, expected ScannerBinaryDigests, createdAt time.Time) (artifact.Artifact, artifact.Artifact, error) {
-	if !validRawSanitizedEgressArtifact(raw) || request.Validate() != nil || receipt.Validate() != nil || !expected.validate() || receipt.Scanner().LauncherSHA256 != expected.LauncherSHA256 || receipt.Scanner().WorkerSHA256 != expected.WorkerSHA256 || createdAt.Before(raw.CreatedAt()) || !createdAt.Before(raw.ExpiresAt()) {
+	if !validRawSanitizedEgressArtifact(raw) || request.Validate() != nil || receipt.Validate() != nil || !expected.validate() || receipt.Scanner().HelperSHA256 != expected.HelperSHA256 || createdAt.Before(raw.CreatedAt()) || !createdAt.Before(raw.ExpiresAt()) {
 		return artifact.Artifact{}, artifact.Artifact{}, ErrInvalidSanitizedEgressArtifacts
 	}
 	rawRequest, err := provider.NewRequest(provider.CapabilityReviewV1, raw.MediaType(), raw.Payload())
@@ -49,7 +49,7 @@ func ValidateSanitizedEgressArtifacts(raw, requestArtifact, receiptArtifact arti
 		return ErrInvalidSanitizedEgressArtifacts
 	}
 	receipt, err := ParseSanitizedEgressReceipt(receiptArtifact.Payload())
-	if err != nil || receipt.Scanner().LauncherSHA256 != expected.LauncherSHA256 || receipt.Scanner().WorkerSHA256 != expected.WorkerSHA256 {
+	if err != nil || receipt.Scanner().HelperSHA256 != expected.HelperSHA256 {
 		return ErrInvalidSanitizedEgressArtifacts
 	}
 	rawRequest, err := provider.NewRequest(provider.CapabilityReviewV1, raw.MediaType(), raw.Payload())

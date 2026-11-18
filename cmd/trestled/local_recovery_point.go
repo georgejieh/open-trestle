@@ -63,10 +63,10 @@ func (point localRecoveryPoint) validate() error {
 	if point.SetupPath != filepath.Join(point.StatePath, "setup", "plan.json") {
 		return errInvalidRecoveryPoint
 	}
-	if len(point.Assets) != 5 {
+	if len(point.Assets) != len(localRecoveryAssetRoles) {
 		return errInvalidRecoveryPoint
 	}
-	for i, role := range []string{"binary", "scanner", "scanner-worker", "route-inventory", "runtime-policy"} {
+	for i, role := range localRecoveryAssetRoles {
 		asset := point.Assets[i]
 		if asset.Role != role || !validLocalOwnerPath(asset.Path) || !daemonNonzeroDigest(asset.SHA256) {
 			return errInvalidRecoveryPoint

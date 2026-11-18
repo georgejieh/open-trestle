@@ -141,7 +141,8 @@ type daemonCloserFunc func() error
 func (f daemonCloserFunc) Close() error { return f() }
 
 func buildDaemon(ctx context.Context, args []string, getenv func(string) string, stderr io.Writer) (*daemon, error) {
-	return buildDaemonWithDependencies(ctx, args, getenv, stderr, daemonDependencies{openPostgres: postgresstore.Open, clock: httpapi.SystemClock{}, generationSanitizer: reviewcore.NewFixedGenerationRequestSanitizer(), verificationSanitizer: reviewcore.NewFixedVerificationRequestSanitizer()})
+	scanner := daemonSecretScanner(ctx, stderr)
+	return buildDaemonWithDependencies(ctx, args, getenv, stderr, daemonDependencies{openPostgres: postgresstore.Open, clock: httpapi.SystemClock{}, generationSanitizer: reviewcore.NewFixedGenerationRequestSanitizer(scanner), verificationSanitizer: reviewcore.NewFixedVerificationRequestSanitizer(scanner)})
 }
 func publicationContentScannerFromGenerationSanitizer(sanitizer reviewcore.GenerationRequestSanitizer) reviewcore.PublicationContentScanner {
 	if provider, ok := sanitizer.(interface {
@@ -149,7 +150,7 @@ func publicationContentScannerFromGenerationSanitizer(sanitizer reviewcore.Gener
 	}); ok {
 		return provider.PublicationContentScanner()
 	}
-	return reviewcore.NewFixedPublicationContentScanner()
+	return reviewcore.NewFixedPublicationContentScanner(nil)
 }
 
 func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func(string) string, stderr io.Writer, deps daemonDependencies) (result *daemon, err error) {
@@ -160,10 +161,10 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 		return nil, err
 	}
 	if daemonNilDependency(deps.generationSanitizer) {
-		deps.generationSanitizer = reviewcore.NewFixedGenerationRequestSanitizer()
+		deps.generationSanitizer = reviewcore.NewFixedGenerationRequestSanitizer(nil)
 	}
 	if daemonNilDependency(deps.verificationSanitizer) {
-		deps.verificationSanitizer = reviewcore.NewFixedVerificationRequestSanitizer()
+		deps.verificationSanitizer = reviewcore.NewFixedVerificationRequestSanitizer(nil)
 	}
 	flags := flag.NewFlagSet("trestled", flag.ContinueOnError)
 	flags.SetOutput(stderr)

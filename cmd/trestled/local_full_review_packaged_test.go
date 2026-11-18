@@ -63,7 +63,7 @@ func testPackagedLocalFullReview(t *testing.T, modelWorkers, development bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("packaged staging: path=%s release_sha256=%s launcher_sha256=%s worker_sha256=%s", staging.root, staging.releaseSHA256, staging.launcherSHA256, staging.workerSHA256)
+	t.Logf("packaged staging: path=%s release_sha256=%s helper_sha256=%s", staging.root, staging.releaseSHA256, staging.helperSHA256)
 	if _, err := os.Stat("/dev/shm"); err != nil {
 		t.Fatal(err)
 	}
@@ -416,7 +416,7 @@ func testPackagedLocalFullReview(t *testing.T, modelWorkers, development bool) {
 				}
 				return ""
 			}(),
-			recoveryArgs: []string{"--state-dir", state, "--repository-authority", "local.test", "--repository-namespace", "team", "--repository-name", "repository", "--binary", daemon, "--scanner", filepath.Join(dest, "usr/local/libexec/open-trestle/open-trestle-secret-scanner"), "--scanner-worker", filepath.Join(dest, "usr/local/libexec/open-trestle/open-trestle-secret-scanner-worker"), "--route-inventory", inventoryPath, "--runtime-policy", policyPath},
+			recoveryArgs: []string{"--state-dir", state, "--repository-authority", "local.test", "--repository-namespace", "team", "--repository-name", "repository", "--binary", daemon, "--scan-helper", filepath.Join(dest, "usr/local/libexec/open-trestle/open-trestle-scan-helper"), "--route-inventory", inventoryPath, "--runtime-policy", policyPath},
 		})
 		return
 	}

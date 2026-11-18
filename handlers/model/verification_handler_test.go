@@ -29,7 +29,7 @@ type failingVerificationSanitizer struct{}
 
 func (failingVerificationSanitizer) Identity() string { return strings.Repeat("8", 64) }
 func (failingVerificationSanitizer) ExpectedBinaryDigests() review.ScannerBinaryDigests {
-	return review.ScannerBinaryDigests{LauncherSHA256: strings.Repeat("b", 64), WorkerSHA256: strings.Repeat("c", 64)}
+	return review.ScannerBinaryDigests{HelperSHA256: strings.Repeat("b", 64)}
 }
 func (failingVerificationSanitizer) SanitizeVerification(context.Context, provider.Request, string) (review.SanitizedModelRequest, review.SanitizedEgressReceipt, error) {
 	return review.SanitizedModelRequest{}, review.SanitizedEgressReceipt{}, review.ErrSanitizedEgressUnavailable

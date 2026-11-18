@@ -20,7 +20,11 @@ const (
 	ScannerCommit    = "5eab48332cc48565864514e3bc6de89df091a7c4"
 	RulesetIdentity  = "27ded783c81940d13c22cc46556a3f8184baf397bff08a69fcfae87991925f42"
 	RulesetRuleCount = 417
-	BuildProfile     = "public_detect_run_re2_purego_go1.26.11_linux_amd64_v1"
+	// BuildProfile is the profile of scans that run Betterleaks in the
+	// wasip1 WebAssembly guest of the scan helper, with RE2 evaluated by the
+	// helper through the host regex interface. It is the same on every
+	// system the helper runs on.
+	BuildProfile = "public_detect_run_re2_host_go1.26.11_wasip1_wasm_v1"
 
 	StatusComplete          = "complete"
 	StatusInputRejected     = "input_rejected"
@@ -37,19 +41,7 @@ const (
 	maxRuleIDBytes          = 256
 )
 
-// HostRE2BuildProfile is the profile of scans that run Betterleaks in the
-// wasip1 WebAssembly guest of the scan helper, with RE2 evaluated by the
-// helper through the host regex interface.
-const HostRE2BuildProfile = "public_detect_run_re2_host_go1.26.11_wasip1_wasm_v1"
-
 var ErrInvalidProtocol = errors.New("invalid secret scan protocol")
-
-// KnownBuildProfile reports whether profile is BuildProfile, the profile of
-// the native reference adapter that tests compare the scan helper against,
-// or HostRE2BuildProfile, the profile the scan helper emits.
-func KnownBuildProfile(profile string) bool {
-	return profile == BuildProfile || profile == HostRE2BuildProfile
-}
 
 type Source struct {
 	Ordinal int    `json:"ordinal"`
@@ -218,7 +210,7 @@ func validateResponse(response Response, expectation ResponseExpectation) error 
 		return ErrInvalidProtocol
 	}
 	if response.SchemaVersion != 1 || response.RequestID != expectation.Request.RequestID || response.Status != StatusComplete && response.Status != StatusInputRejected && response.Status != StatusScanFailed && response.Status != StatusResourceExhausted ||
-		response.Scanner != ScannerName || response.ScannerVersion != ScannerVersion || response.ScannerCommit != ScannerCommit || response.RulesetIdentity != expectation.RulesetIdentity || !KnownBuildProfile(response.BuildProfile) ||
+		response.Scanner != ScannerName || response.ScannerVersion != ScannerVersion || response.ScannerCommit != ScannerCommit || response.RulesetIdentity != expectation.RulesetIdentity || response.BuildProfile != BuildProfile ||
 		response.Matches == nil || len(response.Matches) > maxMatches || response.Status != StatusComplete && len(response.Matches) != 0 {
 		return ErrInvalidProtocol
 	}

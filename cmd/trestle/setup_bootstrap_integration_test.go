@@ -236,8 +236,8 @@ func TestSetupBootstrapDevelopmentDaemonFirstReview(t *testing.T) {
 		"--repository-namespace", flagValue("--local-git-repository-namespace"),
 		"--repository-name", flagValue("--local-git-repository-name"),
 		"--binary", binary}
-	// Offline comparison retains inert scanner assets; this is not scanner execution.
-	for _, role := range []string{"scanner", "scanner-worker"} {
+	// Offline comparison retains an inert helper asset; this is not a scan.
+	for _, role := range []string{"scan-helper"} {
 		path := filepath.Join(build, role)
 		if err := os.WriteFile(path, []byte("retained development fixture "+role), 0500); err != nil {
 			t.Fatal(err)

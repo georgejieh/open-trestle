@@ -18,10 +18,14 @@ type localRecoveryAsset struct {
 	SHA256 string `json:"sha256"`
 }
 
+// localRecoveryAssetRoles are the operator-retained runtime inputs of a
+// recovery point, in order.
+var localRecoveryAssetRoles = []string{"binary", "scan-helper", "route-inventory", "runtime-policy"}
+
 // observeRecoveryAssets pins operator-retained runtime inputs without executing
-// a scanner, loading credentials, or contacting a model route.
+// the scan helper, loading credentials, or contacting a model route.
 func observeRecoveryAssets(ctx context.Context, assets []localRecoveryAsset) ([]localRecoveryAsset, error) {
-	roles := []string{"binary", "scanner", "scanner-worker", "route-inventory", "runtime-policy"}
+	roles := localRecoveryAssetRoles
 	if len(assets) != len(roles) {
 		return nil, errInvalidRecoveryPoint
 	}
@@ -55,7 +59,7 @@ func observeRecoveryAssets(ctx context.Context, assets []localRecoveryAsset) ([]
 		observed[i] = localRecoveryAsset{Role: asset.Role, Path: asset.Path, SHA256: hex.EncodeToString(hash.Sum(nil))}
 	}
 	// Decode the pinned operator configuration with canonical policy/inventory codecs.
-	if _, _, err := runtimeconfig.LoadProtectedConfiguration(ctx, assets[3].Path, assets[4].Path); err != nil {
+	if _, _, err := runtimeconfig.LoadProtectedConfiguration(ctx, assets[2].Path, assets[3].Path); err != nil {
 		return nil, err
 	}
 	return observed, nil

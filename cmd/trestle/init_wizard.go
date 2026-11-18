@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -204,7 +205,7 @@ func (w *initWizard) complain(message string) {
 // full length so the command still works when pasted.
 func initCommandLine(line string) bool {
 	trimmed := strings.TrimSpace(line)
-	for _, prefix := range []string{"trestle ", "--", "python3 ", "sudo ", "./", "sha256sum ", "REVISION=", "CREATED=", "git clone ", "read -rs ", "export ", "/usr/local/bin/trestle", "ollama ", "chmod "} {
+	for _, prefix := range []string{"trestle ", "--", "python3 ", "sudo ", "./", "sha256sum ", "REVISION=", "CREATED=", "git clone ", "read -rs ", "export ", "/usr/local/bin/trestle", "DIR/bin/trestle", "ollama ", "chmod "} {
 		if strings.HasPrefix(trimmed, prefix) {
 			return true
 		}
@@ -633,11 +634,11 @@ func (w *initWizard) sourcePreflight() error {
 }
 
 // initScannerBlock reports why this binary cannot send source to a remote
-// provider at all, or "" when remote review is possible (an installed-scanner
-// problem is reported later by the setup check, with its fix).
+// provider at all, or "" when remote review is possible (a missing helper is
+// reported later by the setup check, with its fix).
 func initScannerBlock() string {
 	switch err := setupBootstrapScannerPrerequisite(); {
-	case errors.Is(err, secretscan.ErrScannerDigestsMissing):
+	case errors.Is(err, secretscan.ErrHelperNotPinned):
 		return "development"
 	case errors.Is(err, secretscan.ErrScannerUnsupportedPlatform):
 		return "platform"
@@ -647,13 +648,27 @@ func initScannerBlock() string {
 
 func (w *initWizard) explainScannerBlock(block string) {
 	if block == "platform" {
-		w.say("  Note: remote models need the sandboxed secret scanner, which runs only on Linux, so this build cannot send source to a remote provider. A model server on this machine works.")
+		w.say("  Note: the secret scanner does not run on this system, so this build cannot send source to a model.")
 		return
 	}
-	w.say("  Note: remote models need the packaged build. Your source is secret-scanned before it leaves this machine, and this development build lacks the scanner fingerprints, so it refuses.")
-	w.say("  To build and install it from a clean checkout (docs/operations.md):")
-	w.sayPackagingSteps()
-	w.say("  Then run /usr/local/bin/trestle init. A model server on this machine works with this build.")
+	w.say("  Note: your source is secret-scanned before it reaches a model, and this development build has no secret scanner of its own, so it refuses.")
+	w.sayBuildWithScanner("init")
+}
+
+// sayBuildWithScanner shows how to get a trestle with its secret scanner: the
+// packaged install on Linux, or a development build with its helper, and the
+// trestle command to run next.
+func (w *initWizard) sayBuildWithScanner(next string) {
+	if runtime.GOOS == "linux" {
+		w.say("  To build and install the packaged trestle from a clean checkout (docs/operations.md):")
+		w.sayPackagingSteps()
+		w.say("  Or build trestle with its scanner in a folder (docs/remote-model-review.md):")
+	} else {
+		w.say("  Build trestle with its scanner in a folder (docs/remote-model-review.md):")
+	}
+	w.sayVerbatim("    python3 tools/package_secret_scanner.py --development DIR")
+	w.say("  Then run this in the repository:")
+	w.sayVerbatim("    DIR/bin/trestle " + next)
 }
 
 // initPackagingSteps is the packaged-build sequence of docs/operations.md, each

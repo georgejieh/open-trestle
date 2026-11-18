@@ -41,7 +41,7 @@ func TestInitDevelopmentBuildReportsSavedRemoteSetup(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			previous := setupBootstrapScannerPrerequisite
-			setupBootstrapScannerPrerequisite = func() error { return secretscan.ErrScannerDigestsMissing }
+			setupBootstrapScannerPrerequisite = func() error { return secretscan.ErrHelperNotPinned }
 			t.Cleanup(func() { setupBootstrapScannerPrerequisite = previous })
 			initFakeModelList(t, "gemma4:31b", "qwen3.5:397b")
 			t.Setenv("OPEN_TRESTLE_PROVIDER_OLLAMA_CLOUD", remoteTestKey)
@@ -59,8 +59,9 @@ func TestInitDevelopmentBuildReportsSavedRemoteSetup(t *testing.T) {
 				"✗ The secret scanner is installed",
 				"Your setup is saved, but this development build cannot send source to Ollama Cloud.",
 				"python3 tools/vulnerability_gate.py --staging .container",
-				"/usr/local/bin/trestle init --directory " + initShellQuote(dir),
-				"it finds this setup and re-checks it",
+				"python3 tools/package_secret_scanner.py --development DIR",
+				"DIR/bin/trestle init --directory " + initShellQuote(dir),
+				"It finds this setup and re-checks it",
 			} {
 				if !initHas(first.stdout, want) {
 					t.Fatalf("output lacks %q:\n%s", want, first.stdout)

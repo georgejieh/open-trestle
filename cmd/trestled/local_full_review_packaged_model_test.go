@@ -752,7 +752,7 @@ func packagedAssertResultParity(t *testing.T, command func([]string) []byte, arg
 }
 
 type packagedStaging struct {
-	root, scannerFlags, releaseSHA256, launcherSHA256, workerSHA256 string
+	root, scannerFlags, releaseSHA256, helperSHA256 string
 }
 
 func readPackagedStaging() (packagedStaging, error) {
@@ -785,40 +785,32 @@ func readPackagedStaging() (packagedStaging, error) {
 	var manifest struct {
 		SchemaVersion int    `json:"schema_version"`
 		Scanner       string `json:"scanner"`
-		Launcher      struct {
+		Helper        struct {
 			SHA256 string `json:"sha256"`
-		} `json:"launcher"`
-		Worker struct {
-			SHA256 string `json:"sha256"`
-		} `json:"worker"`
+		} `json:"helper"`
 		RootClient struct {
-			Launcher string `json:"launcher_sha256"`
-			Worker   string `json:"worker_sha256"`
+			Helper string `json:"helper_sha256"`
 		} `json:"root_client"`
 	}
 	if err := json.Unmarshal(encoded, &manifest); err != nil {
 		return packagedStaging{}, err
 	}
-	if manifest.SchemaVersion != 1 || manifest.Scanner != "betterleaks" || manifest.Launcher.SHA256 != manifest.RootClient.Launcher || manifest.Worker.SHA256 != manifest.RootClient.Worker {
+	if manifest.SchemaVersion != 1 || manifest.Scanner != "betterleaks" || len(manifest.Helper.SHA256) != 64 || manifest.Helper.SHA256 != manifest.RootClient.Helper {
 		return packagedStaging{}, fmt.Errorf("invalid staged scanner release manifest: %s", root)
 	}
-	for _, item := range []struct{ name, digest string }{{"open-trestle-secret-scanner", manifest.RootClient.Launcher}, {"open-trestle-secret-scanner-worker", manifest.RootClient.Worker}} {
-		body, err := os.ReadFile(filepath.Join(root, "libexec/open-trestle", item.name))
-		if err != nil {
-			return packagedStaging{}, err
-		}
-		digest := sha256.Sum256(body)
-		if len(item.digest) != 64 || hex.EncodeToString(digest[:]) != item.digest {
-			return packagedStaging{}, fmt.Errorf("staged %s differs from release digest: %s", item.name, root)
-		}
+	body, err := os.ReadFile(filepath.Join(root, "libexec/open-trestle/open-trestle-scan-helper"))
+	if err != nil {
+		return packagedStaging{}, err
+	}
+	if digest := sha256.Sum256(body); hex.EncodeToString(digest[:]) != manifest.Helper.SHA256 {
+		return packagedStaging{}, fmt.Errorf("staged open-trestle-scan-helper differs from release digest: %s", root)
 	}
 	releaseDigest := sha256.Sum256(encoded)
 	return packagedStaging{
-		root:           root,
-		scannerFlags:   "-s -w -buildid= -X github.com/georgejieh/open-trestle/internal/secretscan.expectedSecretScannerLauncherSHA256=" + manifest.RootClient.Launcher + " -X github.com/georgejieh/open-trestle/internal/secretscan.expectedSecretScannerWorkerSHA256=" + manifest.RootClient.Worker,
-		releaseSHA256:  hex.EncodeToString(releaseDigest[:]),
-		launcherSHA256: manifest.RootClient.Launcher,
-		workerSHA256:   manifest.RootClient.Worker,
+		root:          root,
+		scannerFlags:  "-s -w -buildid= -X github.com/georgejieh/open-trestle/internal/secretscan.expectedHelperSHA256=" + manifest.Helper.SHA256,
+		releaseSHA256: hex.EncodeToString(releaseDigest[:]),
+		helperSHA256:  manifest.Helper.SHA256,
 	}, nil
 }
 
@@ -838,7 +830,7 @@ func copyPackagedFile(t *testing.T, source, target string, mode os.FileMode) {
 
 func (staging packagedStaging) copyRuntimeMembers(t *testing.T, destination string) {
 	t.Helper()
-	for _, name := range []string{"LICENSE", "NOTICE", "ca-certificates.crt", "release/secret-scanner-release.json", "release/secret-scanner.spdx.json", "release/vulnerability-scan.json", "libexec/open-trestle/open-trestle-secret-scanner", "libexec/open-trestle/open-trestle-secret-scanner-worker"} {
+	for _, name := range []string{"LICENSE", "NOTICE", "ca-certificates.crt", "release/secret-scanner-release.json", "release/secret-scanner.spdx.json", "release/vulnerability-scan.json", "libexec/open-trestle/open-trestle-scan-helper"} {
 		mode := os.FileMode(0444)
 		if strings.HasPrefix(name, "libexec/") {
 			mode = 0555

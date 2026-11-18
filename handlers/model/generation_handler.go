@@ -105,13 +105,12 @@ func deriveGenerationHandlerIdentity(catalogIdentity string, expected review.Sca
 		Contract           string `json:"contract"`
 		SchemaVersion      int    `json:"schema_version"`
 		DispatcherCatalog  string `json:"dispatcher_catalog"`
-		LauncherSHA256     string `json:"launcher_sha256,omitempty"`
-		WorkerSHA256       string `json:"worker_sha256,omitempty"`
+		HelperSHA256       string `json:"helper_sha256,omitempty"`
 		RequiresSanitized  bool   `json:"requires_sanitized"`
 		SanitizationPolicy string `json:"sanitization_policy"`
 		Scanner            string `json:"scanner"`
 		BuildProfile       string `json:"build_profile"`
-	}{"open-trestle/model-generation-handler", schemaVersion, catalogIdentity, expected.LauncherSHA256, expected.WorkerSHA256, requiresSanitized, review.SanitizationPolicyIdentity, secretscan.ScannerName, secretscan.BuildProfile})
+	}{"open-trestle/model-generation-handler", schemaVersion, catalogIdentity, expected.HelperSHA256, requiresSanitized, review.SanitizationPolicyIdentity, secretscan.ScannerName, secretscan.BuildProfile})
 	if err != nil {
 		return ""
 	}

@@ -16,7 +16,7 @@ func initHintedCommands(t *testing.T) []string {
 	(&initWizard{out: &out}).explainScannerBlock("development")
 	text := out.String()
 	start := strings.Index(text, "(docs/operations.md):\n")
-	end := strings.Index(text, "  Then run /usr/local/bin/trestle init.")
+	end := strings.Index(text, "  Or build trestle with its scanner in a folder")
 	if start < 0 || end < start {
 		t.Fatalf("the note lost its introduction or closing line:\n%s", text)
 	}

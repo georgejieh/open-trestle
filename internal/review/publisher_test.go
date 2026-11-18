@@ -115,7 +115,7 @@ func TestDispatchClaimedPublicationNeverReleasesInvalidContentScanToPublisher(t 
 		"instruction risk": func(receipt *PublicationContentScanReceipt) {
 			receipt.instructionRiskFields = []PublicationRiskField{{Kind: receipt.fields[0].Kind, Ordinal: 0, FindingIdentity: receipt.fields[0].FindingIdentity}}
 		},
-		"cross digest": func(receipt *PublicationContentScanReceipt) { receipt.scanner.WorkerSHA256 = strings.Repeat("e", 64) },
+		"cross digest": func(receipt *PublicationContentScanReceipt) { receipt.scanner.HelperSHA256 = strings.Repeat("e", 64) },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {

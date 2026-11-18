@@ -17,8 +17,7 @@ type publicationContentScannerWire struct {
 	RulesetIdentity  string `json:"ruleset_identity"`
 	RulesetRuleCount int    `json:"ruleset_rule_count"`
 	BuildProfile     string `json:"build_profile"`
-	LauncherSHA256   string `json:"launcher_sha256"`
-	WorkerSHA256     string `json:"worker_sha256"`
+	HelperSHA256     string `json:"helper_sha256"`
 }
 type publicationScanCompletionWire struct {
 	Complete         bool `json:"complete"`
@@ -101,7 +100,7 @@ func ParsePublicationContentScanReceipt(encoded []byte) (PublicationContentScanR
 	receipt := PublicationContentScanReceipt{
 		identity: wire.Identity, reviewScopeIdentity: wire.ReviewScopeIdentity,
 		verifiedFindingSetIdentity: wire.VerifiedFindingSetIdentity, selectionIdentity: wire.SelectionIdentity, publicationPolicyIdentity: wire.PublicationPolicyIdentity, verificationContextIdentity: wire.VerificationContextIdentity, scannerAuthorityIdentity: wire.ScannerAuthorityIdentity,
-		scanner:  ScannerProfile{WorkerProtocol: scanner.WorkerProtocol, Scanner: scanner.Scanner, ScannerVersion: scanner.ScannerVersion, ScannerCommit: scanner.ScannerCommit, RulesetIdentity: scanner.RulesetIdentity, RulesetRuleCount: scanner.RulesetRuleCount, BuildProfile: scanner.BuildProfile, LauncherSHA256: scanner.LauncherSHA256, WorkerSHA256: scanner.WorkerSHA256},
+		scanner:  ScannerProfile{WorkerProtocol: scanner.WorkerProtocol, Scanner: scanner.Scanner, ScannerVersion: scanner.ScannerVersion, ScannerCommit: scanner.ScannerCommit, RulesetIdentity: scanner.RulesetIdentity, RulesetRuleCount: scanner.RulesetRuleCount, BuildProfile: scanner.BuildProfile, HelperSHA256: scanner.HelperSHA256},
 		initial:  ScanCompletion{Complete: initial.Complete, FieldCount: initial.FieldCount, ScannedByteCount: initial.ScannedByteCount, MatchCount: initial.MatchCount},
 		residual: ScanCompletion{Complete: residual.Complete, FieldCount: residual.FieldCount, ScannedByteCount: residual.ScannedByteCount, MatchCount: residual.MatchCount},
 		fields:   fields, instructionRiskEvidence: append([]string(nil), wire.InstructionRiskEvidence...), instructionRiskFields: riskFields,
@@ -139,7 +138,7 @@ func publicationContentScanReceiptWireValue(receipt PublicationContentScanReceip
 	return publicationContentScanReceiptWire{
 		Contract: "open-trestle/publication-content-scan-receipt", SchemaVersion: 1, Identity: receipt.Identity(),
 		ReviewScopeIdentity: receipt.ReviewScopeIdentity(), VerifiedFindingSetIdentity: receipt.VerifiedFindingSetIdentity(), SelectionIdentity: receipt.SelectionIdentity(), PublicationPolicyIdentity: receipt.PolicyIdentity(), VerificationContextIdentity: receipt.VerificationContextIdentity(), ScannerAuthorityIdentity: receipt.ScannerAuthorityIdentity(),
-		Scanner: publicationContentScannerWire{scanner.WorkerProtocol, scanner.Scanner, scanner.ScannerVersion, scanner.ScannerCommit, scanner.RulesetIdentity, scanner.RulesetRuleCount, scanner.BuildProfile, scanner.LauncherSHA256, scanner.WorkerSHA256},
+		Scanner: publicationContentScannerWire{scanner.WorkerProtocol, scanner.Scanner, scanner.ScannerVersion, scanner.ScannerCommit, scanner.RulesetIdentity, scanner.RulesetRuleCount, scanner.BuildProfile, scanner.HelperSHA256},
 		Initial: publicationScanCompletionWire{initial.Complete, initial.FieldCount, initial.ScannedByteCount, initial.MatchCount}, Residual: publicationScanCompletionWire{residual.Complete, residual.FieldCount, residual.ScannedByteCount, residual.MatchCount},
 		Fields: fields, InstructionRiskEvidence: receipt.InstructionRiskEvidence(), InstructionRiskFields: riskFields,
 	}

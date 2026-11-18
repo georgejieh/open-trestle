@@ -399,14 +399,12 @@ func (w *initWizard) rerunCommand(program string) string {
 // this trestle cannot send source at all, and how a re-run continues it.
 func (w *initWizard) explainSavedWithoutScanner(setup initSetup, block string) {
 	if block == "platform" {
-		w.say("  Your setup is saved, but this machine cannot send source to %s: the sandboxed secret scanner that checks every request runs only on Linux.", setup.provider.short)
+		w.say("  Your setup is saved, but this machine cannot send source to %s: the secret scanner that checks every request does not run on this system.", setup.provider.short)
 		return
 	}
 	w.say("  Your setup is saved, but this development build cannot send source to %s.", setup.provider.short)
-	w.say("  Build and install the packaged trestle from a clean checkout (docs/operations.md):")
-	w.sayPackagingSteps()
-	w.say("  Then run this in the repository; it finds this setup and re-checks it:")
-	w.sayVerbatim("    " + w.rerunCommand("/usr/local/bin/trestle"))
+	w.sayBuildWithScanner(strings.TrimPrefix(w.rerunCommand(""), " "))
+	w.say("  It finds this setup and re-checks it.")
 }
 
 func (w *initWizard) refusalReason(out []byte, errText string) string {
@@ -556,8 +554,8 @@ func (w *initWizard) renderRemote(result remoteBootstrapResult, setup initSetup)
 		"credential_environment_present/pending": "Save the key once (the input is hidden), or export it in this shell without showing it, then run `trestle init` again in this repository:",
 		"ollama_cloud_models_listed/pending":     "Start Ollama on this machine (`ollama serve`, or the Ollama app), then run `trestle init` again in this repository.",
 		"ollama_cloud_models_listed/refused":     "A chosen model is no longer listed as an Ollama Cloud model by your local Ollama. Set up again with trestle init --directory NEW_FOLDER.",
-		"sanitized_egress_scanner/pending":       "Install the scanner from a packaged release: sudo ./open-trestle-linux-amd64.pyz install (docs/remote-model-review.md#prerequisite-1-a-scanner-bound-binary-and-installed-scanner).",
-		"sanitized_egress_scanner/refused":       "This trestle is a development build without the scanner fingerprints, so it refuses to send source. Build and install the packaged binary: python3 tools/package_secret_scanner.py --output .container, then follow docs/remote-model-review.md#prerequisite-1-a-scanner-bound-binary-and-installed-scanner." + scannerDetail,
+		"sanitized_egress_scanner/pending":       "The scanner helper next to this trestle is missing or does not match it. Install the packaged release, or build trestle with its helper: python3 tools/package_secret_scanner.py --development DIR (docs/remote-model-review.md).",
+		"sanitized_egress_scanner/refused":       "This trestle is a development build without a secret scanner, so it refuses to send source. Build trestle with its helper: python3 tools/package_secret_scanner.py --development DIR (docs/remote-model-review.md)." + scannerDetail,
 	}
 	for _, key := range keys {
 		current := state(key)

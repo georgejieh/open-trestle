@@ -43,7 +43,7 @@ func validateTerminalExpiryGeneration(ctx context.Context, events []audit.Event,
 	descriptor := linked.InputDescriptor()
 	packet, requestArtifact, receiptArtifact, inputArtifact, candidate := values[7], values[8], values[9], values[10], values[11]
 	input, err := modelhandler.ParseGenerationInput(inputArtifact.Payload())
-	if err != nil || !input.IsSanitized() || descriptor.ScannerLauncherDigest != scanner.LauncherSHA256 || descriptor.ScannerWorkerDigest != scanner.WorkerSHA256 || review.ValidateSanitizedEgressArtifacts(packet, requestArtifact, receiptArtifact, scanner) != nil {
+	if err != nil || !input.IsSanitized() || descriptor.ScannerHelperDigest != scanner.HelperSHA256 || review.ValidateSanitizedEgressArtifacts(packet, requestArtifact, receiptArtifact, scanner) != nil {
 		return fail()
 	}
 	result, err := modelhandler.ParseGenerationResultArtifact(candidate, inputArtifact, packet)

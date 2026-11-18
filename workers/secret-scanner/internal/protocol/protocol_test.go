@@ -52,33 +52,15 @@ func TestFrozenBetterleaksIdentity(t *testing.T) {
 	if RulesetIdentity != "27ded783c81940d13c22cc46556a3f8184baf397bff08a69fcfae87991925f42" || RulesetRuleCount != 417 {
 		t.Fatal("unexpected ruleset identity")
 	}
-	if BuildProfile != "public_detect_run_re2_purego_go1.26.11_linux_amd64_v1" {
+	if BuildProfile != "public_detect_run_re2_host_go1.26.11_wasip1_wasm_v1" {
 		t.Fatal("unexpected build profile")
+	}
+	if !bytes.Contains(readFixture(t, "response-v1.json"), []byte(`"build_profile":"`+BuildProfile+`"`)) {
+		t.Fatal("canonical response fixture does not carry the build profile")
 	}
 	match := Match{SourceOrdinal: 0, RuleID: "github-pat", StartByte: 7, EndByteExclusive: 12}
 	if got := OccurrenceID(match); got != "cc35a127e9e7243eb1e2d31391846f5e9288155b136915656fffce5caf594fd4" {
 		t.Fatalf("unexpected occurrence ID: %s", got)
-	}
-}
-
-func TestKnownBuildProfilesAreExactlyNativeReferenceAndHost(t *testing.T) {
-	if HostRE2BuildProfile != "public_detect_run_re2_host_go1.26.11_wasip1_wasm_v1" {
-		t.Fatal("unexpected host build profile")
-	}
-	for profile, want := range map[string]bool{
-		"public_detect_run_re2_purego_go1.26.11_linux_amd64_v1": true,
-		"public_detect_run_re2_host_go1.26.11_wasip1_wasm_v1":   true,
-		"public_detect_run_re2_purego_go1.26.10_linux_amd64_v1": false,
-		"public_detect_run_re2_host_go1.26.10_wasip1_wasm_v1":   false,
-		"public_detect_run_re2_host_go1.26.11_linux_amd64_v1":   false,
-		"": false,
-	} {
-		if got := KnownBuildProfile(profile); got != want {
-			t.Fatalf("KnownBuildProfile(%q) = %v, want %v", profile, got, want)
-		}
-	}
-	if !bytes.Contains(readFixture(t, "response-v1.json"), []byte(`"build_profile":"`+BuildProfile+`"`)) {
-		t.Fatal("canonical response fixture does not carry the native reference build profile")
 	}
 }
 

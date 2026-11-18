@@ -356,10 +356,6 @@ func TestDenseAndLimitRequestsEndAsTheNativeScannerDoes(t *testing.T) {
 		if nativeResponse.Status != test.status {
 			t.Fatalf("%s: native status %s, want %s", test.name, nativeResponse.Status, test.status)
 		}
-		if helperResponse.BuildProfile != protocol.HostRE2BuildProfile {
-			t.Fatalf("%s: helper build profile %q", test.name, helperResponse.BuildProfile)
-		}
-		helperResponse.BuildProfile = nativeResponse.BuildProfile
 		if !reflect.DeepEqual(helperResponse, nativeResponse) {
 			t.Fatalf("%s: helper %s with %d matches, native %s with %d matches", test.name, helperResponse.Status, len(helperResponse.Matches), nativeResponse.Status, len(nativeResponse.Matches))
 		}
@@ -827,47 +823,6 @@ func BenchmarkReviewOfFourScansNativeInProcess(b *testing.B) {
 	}
 }
 
-// BenchmarkReviewOfFourScansNativeWorkerProcesses measures the same four
-// scans as four native worker processes behind a test build of the launcher,
-// the shape of a native review today.
-func BenchmarkReviewOfFourScansNativeWorkerProcesses(b *testing.B) {
-	if _, err := os.Stat("/usr/bin/gcc"); err != nil {
-		b.Skip("the test launcher needs /usr/bin/gcc")
-	}
-	directory := b.TempDir()
-	worker := filepath.Join(directory, "worker")
-	build := exec.Command("go", "build", "-trimpath", "-buildvcs=false", "-ldflags=-s -w -buildid=", "-o", worker, "../open-trestle-secret-scanner")
-	build.Env = append(os.Environ(), "GOWORK=off", "CGO_ENABLED=0")
-	if output, err := build.CombinedOutput(); err != nil {
-		b.Fatalf("worker build: %v: %s", err, output)
-	}
-	launcher := filepath.Join(directory, "launcher")
-	compile := exec.Command("/usr/bin/gcc", "-DOPEN_TRESTLE_TEST_WORKER_PATH="+strconvQuote(worker), "-std=c17", "-O2", "-static-pie", "-o", launcher, filepath.Join("..", "..", "launcher", "launcher.c"))
-	if output, err := compile.CombinedOutput(); err != nil {
-		b.Fatalf("launcher build: %v: %s", err, output)
-	}
-	var frames [][]byte
-	for _, scan := range reviewRequests(b) {
-		frames = append(frames, encodeRequest(b, scan))
-	}
-	b.ResetTimer()
-	for range b.N {
-		for _, frame := range frames {
-			command := exec.Command(launcher, "--stdio-v1")
-			command.Env = []string{}
-			command.Stdin = bytes.NewReader(frame)
-			if err := command.Run(); err != nil {
-				b.Fatal(err)
-			}
-		}
-	}
-}
-
-func strconvQuote(value string) string {
-	encoded, _ := json.Marshal(value)
-	return string(encoded)
-}
-
 func reviewRequests(b *testing.B) []protocol.Request {
 	fixtures := readFixturesForBenchmark(b)
 	requests := make([]protocol.Request, 4)
@@ -1045,7 +1000,7 @@ func nativeAdapter(t *testing.T) *adapter.Adapter {
 }
 
 // nativeScan scans in this process with the native adapter and round-trips
-// the response through the protocol encoding, as the native worker does.
+// the response through the protocol encoding, as the scan helper does.
 func nativeScan(t *testing.T, native *adapter.Adapter, scan protocol.Request) protocol.Response {
 	t.Helper()
 	frame, err := protocol.EncodeResponseFrame(native.Scan(context.Background(), scan), expectation(scan))
@@ -1055,17 +1010,13 @@ func nativeScan(t *testing.T, native *adapter.Adapter, scan protocol.Request) pr
 	return parseResponse(t, scan, frame)
 }
 
-// requireSameScan requires identical responses except for the build profile,
-// which names the scanner that ran.
+// requireSameScan requires a complete helper response identical to the
+// native reference adapter's.
 func requireSameScan(t *testing.T, name string, helperResponse, nativeResponse protocol.Response) {
 	t.Helper()
-	if helperResponse.BuildProfile != protocol.HostRE2BuildProfile || nativeResponse.BuildProfile != protocol.BuildProfile {
-		t.Fatalf("%s: build profiles %q and %q", name, helperResponse.BuildProfile, nativeResponse.BuildProfile)
-	}
 	if helperResponse.Status != protocol.StatusComplete {
 		t.Fatalf("%s: helper scan status %s", name, helperResponse.Status)
 	}
-	helperResponse.BuildProfile = nativeResponse.BuildProfile
 	if !reflect.DeepEqual(helperResponse, nativeResponse) {
 		t.Fatalf("%s: helper response differs from the native scanner:\n%+v\n%+v", name, helperResponse, nativeResponse)
 	}

@@ -67,14 +67,13 @@ func deriveVerificationHandlerIdentity(catalog, authorizer, sanitizer string, ex
 		return ""
 	}
 	encoded, err := json.Marshal(struct {
-		Contract       string `json:"contract"`
-		SchemaVersion  int    `json:"schema_version"`
-		Catalog        string `json:"catalog"`
-		Authorizer     string `json:"authorizer"`
-		Sanitizer      string `json:"sanitizer"`
-		LauncherSHA256 string `json:"launcher_sha256"`
-		WorkerSHA256   string `json:"worker_sha256"`
-	}{"open-trestle/model-verification-handler", 4, catalog, authorizer, sanitizer, expected.LauncherSHA256, expected.WorkerSHA256})
+		Contract      string `json:"contract"`
+		SchemaVersion int    `json:"schema_version"`
+		Catalog       string `json:"catalog"`
+		Authorizer    string `json:"authorizer"`
+		Sanitizer     string `json:"sanitizer"`
+		HelperSHA256  string `json:"helper_sha256"`
+	}{"open-trestle/model-verification-handler", 4, catalog, authorizer, sanitizer, expected.HelperSHA256})
 	if err != nil {
 		return ""
 	}

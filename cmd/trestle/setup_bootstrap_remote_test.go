@@ -339,7 +339,7 @@ func TestSetupBootstrapRemoteScannerPrerequisite(t *testing.T) {
 		t.Fatalf("missing scanner digests were not a clear refused prerequisite: %+v", result)
 	}
 	previous := setupBootstrapScannerPrerequisite
-	setupBootstrapScannerPrerequisite = func() error { return secretscan.ErrScannerNotInstalled }
+	setupBootstrapScannerPrerequisite = func() error { return secretscan.ErrHelperNotInstalled }
 	t.Cleanup(func() { setupBootstrapScannerPrerequisite = previous })
 	pending, _ := remoteBootstrapInvoke(t, []string{"inspect", "--directory", dir}, 3)
 	if !slices.Equal(pending.Pending, []string{"sanitized_egress_scanner"}) || !strings.Contains(strings.Join(pending.Messages, " "), "install") {

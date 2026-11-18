@@ -11,7 +11,7 @@ func NewSanitizedVerificationEgressArtifacts(raw provider.Request, generationCon
 	if !validVerificationEgressEvidence(raw, generationContextIdentity, candidateBatchIdentity, generation, generationInput, generationContext) || request.Validate() != nil || receipt.Validate() != nil || !expected.validate() || createdAt.Before(generation.CreatedAt()) || !createdAt.Before(generationContext.ExpiresAt()) {
 		return artifact.Artifact{}, artifact.Artifact{}, ErrInvalidSanitizedEgressArtifacts
 	}
-	if request.ReviewScopeIdentity() != generation.Scope().Identity() || request.RawRequestIdentity() != raw.Identity() || receipt.ReviewScopeIdentity() != generation.Scope().Identity() || receipt.RawRequestIdentity() != raw.Identity() || receipt.SanitizedRequestIdentity() != request.SanitizedRequestIdentity() || receipt.Scanner().LauncherSHA256 != expected.LauncherSHA256 || receipt.Scanner().WorkerSHA256 != expected.WorkerSHA256 || validateSanitizedRequestProjection(raw, request, receipt) != nil {
+	if request.ReviewScopeIdentity() != generation.Scope().Identity() || request.RawRequestIdentity() != raw.Identity() || receipt.ReviewScopeIdentity() != generation.Scope().Identity() || receipt.RawRequestIdentity() != raw.Identity() || receipt.SanitizedRequestIdentity() != request.SanitizedRequestIdentity() || receipt.Scanner().HelperSHA256 != expected.HelperSHA256 || validateSanitizedRequestProjection(raw, request, receipt) != nil {
 		return artifact.Artifact{}, artifact.Artifact{}, ErrInvalidSanitizedEgressArtifacts
 	}
 	requestPayload, err := EncodeSanitizedModelRequest(request)
@@ -47,7 +47,7 @@ func ValidateSanitizedVerificationEgressArtifacts(raw provider.Request, generati
 		return ErrInvalidSanitizedEgressArtifacts
 	}
 	receipt, err := ParseSanitizedEgressReceipt(receiptArtifact.Payload())
-	if err != nil || receipt.Scanner().LauncherSHA256 != expected.LauncherSHA256 || receipt.Scanner().WorkerSHA256 != expected.WorkerSHA256 || request.ReviewScopeIdentity() != generation.Scope().Identity() || receipt.ReviewScopeIdentity() != generation.Scope().Identity() || request.RawRequestIdentity() != raw.Identity() || receipt.RawRequestIdentity() != raw.Identity() || request.SanitizedRequestIdentity() != receipt.SanitizedRequestIdentity() {
+	if err != nil || receipt.Scanner().HelperSHA256 != expected.HelperSHA256 || request.ReviewScopeIdentity() != generation.Scope().Identity() || receipt.ReviewScopeIdentity() != generation.Scope().Identity() || request.RawRequestIdentity() != raw.Identity() || receipt.RawRequestIdentity() != raw.Identity() || request.SanitizedRequestIdentity() != receipt.SanitizedRequestIdentity() {
 		return ErrInvalidSanitizedEgressArtifacts
 	}
 	rebuilt, err := request.ProviderRequest()

@@ -148,7 +148,6 @@ func runHelperParentForTest(t *testing.T, pidPath string) {
 		config: SessionConfig{
 			HelperPath:     os.Getenv("SECRETSCAN_HELPER_PARENT_PATH"),
 			HelperSHA256:   os.Getenv("SECRETSCAN_HELPER_PARENT_DIGEST"),
-			BuildProfile:   HostRE2BuildProfile,
 			CacheDirectory: os.Getenv("SECRETSCAN_HELPER_PARENT_CACHE"),
 		},
 		scanWatchdog:   time.Minute,
