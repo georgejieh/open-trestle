@@ -139,7 +139,7 @@ func readSegmentDirectory(file *os.File, size int64, identity [32]byte, segment 
 		key := Key(raw)
 		flags := r.Byte()
 		l := location{segment: segment, offset: int64(r.Uvarint()), length: int64(r.Uvarint()), crc: r.Uint32(), flags: flags}
-		if r.Err() != nil || flags > recordFlags || l.offset < int64(segmentHeader) || l.length < 1 || l.offset+l.length > int64(at) {
+		if r.Err() != nil || flags > recordFlags || l.offset < int64(segmentHeader) || l.offset > int64(at) || l.length < 1 || l.length > int64(at)-l.offset {
 			return nil, errCorrupt
 		}
 		entries[key] = l

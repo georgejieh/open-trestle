@@ -22,7 +22,9 @@ type LocalGitTreeWalk struct {
 	// Entries is the number of entries passed to the visitor.
 	Entries int
 	// Truncated reports that the walk stopped at its entry limit, so later
-	// entries in tree order were not visited.
+	// entries in tree order were not visited. Every entry walked counts
+	// toward the limit, directories and invalid paths included, so that a
+	// tree of nested shared subtrees cannot make the walk unbounded.
 	Truncated bool
 	// InvalidPaths counts entries skipped because their path is not valid
 	// UTF-8 or is longer than the path limit.
@@ -50,8 +52,8 @@ func (s *LocalGitObjectStore) WithObjectReader(ctx context.Context, fn func(Loca
 
 // WalkTree reads a commit and visits every non-directory entry of its tree
 // in Git tree order, without reading any blob, in one acquisition. Every
-// object read is verified against its ID. It stops after maxEntries entries
-// and reports that the walk was truncated; a malformed graph or a missing
+// object read is verified against its ID. It stops after walking maxEntries
+// entries and reports that the walk was truncated; a malformed graph or a missing
 // object is an error. A visitor error ends the walk and is returned.
 func (s *LocalGitObjectStore) WalkTree(ctx context.Context, revision evidence.RevisionIdentity, maxEntries int, visit func(LocalGitTreeEntry) error) (LocalGitTreeWalk, error) {
 	canonical, err := evidence.NewRevisionIdentity(revision.Kind(), revision.Algorithm(), revision.Digest())
@@ -98,6 +100,7 @@ type treeWalker struct {
 	visit     func(LocalGitTreeEntry) error
 	cache     map[string][]localGitTreeEntry
 	active    map[string]bool
+	walked    int
 	result    LocalGitTreeWalk
 }
 
@@ -133,15 +136,16 @@ func (w *treeWalker) walk(digest string, prefix []byte, depth int) error {
 	w.active[digest] = true
 	defer delete(w.active, digest)
 	for _, entry := range entries {
+		if w.walked >= w.max {
+			return errWalkTruncated
+		}
+		w.walked++
 		path := append(append([]byte{}, prefix...), entry.name...)
 		if entry.mode == evidence.GitTreeModeDirectory {
 			if err := w.walk(entry.digest, append(path, '/'), depth+1); err != nil {
 				return err
 			}
 			continue
-		}
-		if w.result.Entries >= w.max {
-			return errWalkTruncated
 		}
 		if !utf8.Valid(path) || len(path) > maxLocalGitRevisionPathBytes {
 			w.result.InvalidPaths++

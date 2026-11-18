@@ -370,11 +370,15 @@ func (g *Graph) Importers(filePath string) ([]string, bool) {
 	if !ok {
 		return nil, false
 	}
+	return g.importersOf(id), true
+}
+
+func (g *Graph) importersOf(file int32) []string {
 	out := []string{}
-	for _, f := range g.importers.get(g.files[id].unit) {
+	for _, f := range g.importers.get(g.files[file].unit) {
 		out = append(out, g.files[f].entry.Path)
 	}
-	return out, true
+	return out
 }
 
 // importsUnit reports whether a file imports a unit.

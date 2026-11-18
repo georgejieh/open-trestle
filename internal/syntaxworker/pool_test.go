@@ -121,6 +121,14 @@ func TestPoolReplacesHostileWorkers(t *testing.T) {
 	}
 }
 
+func TestPoolGivesAnOversizedFileItsGapWithoutAWorker(t *testing.T) {
+	pool := newTestPool(t, "fake", 1)
+	got := analyzeFile(t, pool, "big.go", strings.Repeat("x", syntaxanalysis.DefaultLimits().MaxFileBytes+1))
+	if len(got.Gaps) != 1 || got.Gaps[0].Limit != syntaxanalysis.LimitFileSize || pool.Stats().Started != 0 {
+		t.Fatalf("gaps %v, stats %+v", got.Gaps, pool.Stats())
+	}
+}
+
 func TestPoolReportsUnavailableWhenWorkersCannotStart(t *testing.T) {
 	pool, err := NewPool(Config{Command: []string{"/nonexistent/open-trestle-worker"}, Workers: 1})
 	if err != nil {

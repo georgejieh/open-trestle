@@ -54,13 +54,19 @@ type target struct {
 	family   family
 	name     int32
 	exported bool
+	// topLevel is a definition at the top level of its file that is not a
+	// method or field of a type, which Go reaches only through a package.
 	topLevel bool
+	// importers are the files that imported the definition's file in the
+	// base, for a definition whose file the head no longer has.
+	importers map[int32]bool
 }
 
 func (g *Graph) targetOf(i int32) target {
 	d := g.defs[i]
 	f := g.files[d.file]
-	return target{file: d.file, dir: path.Dir(f.entry.Path), family: f.family, name: d.name, exported: d.exported, topLevel: d.parent < 0}
+	member := d.kind == syntaxanalysis.KindMethod || d.kind == syntaxanalysis.KindField || d.container != 0
+	return target{file: d.file, dir: path.Dir(f.entry.Path), family: f.family, name: d.name, exported: d.exported, topLevel: d.parent < 0 && !member}
 }
 
 func (g *Graph) unitOf(t target) int32 {
@@ -78,6 +84,9 @@ func (g *Graph) scope(t target, unit int32, r graphRef) Scope {
 	from := g.files[r.file]
 	if from.family.name != t.family.name || t.family.name == "" {
 		return ""
+	}
+	if t.importers[r.file] && t.exported {
+		return ScopeImport
 	}
 	if t.family.name == "go" {
 		return g.goScope(t, unit, r)

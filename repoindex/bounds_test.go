@@ -3,9 +3,12 @@ package repoindex
 import (
 	"context"
 	"crypto/sha1"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash/crc32"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/georgejieh/open-trestle/internal/varcodec"
 	"github.com/georgejieh/open-trestle/syntaxanalysis"
 )
 
@@ -150,6 +154,9 @@ func TestBuildBoundsEntriesFilesAndBytes(t *testing.T) {
 	if got := statuses(s); got[StatusIndexed] != 500 || got[StatusFileLimit] != 19500 || analyzer.calls.Load() != 500 {
 		t.Fatalf("file limit: %v, %d calls", got, analyzer.calls.Load())
 	}
+	if c := loadGraph(t, store, s).Coverage(); c.Complete || c.Statuses[StatusFileLimit] != 19500 || !c.Coverage.TreeTruncated {
+		t.Fatalf("a limited graph claims coverage: %+v", c)
+	}
 	// The next build of the same commit continues where the limit stopped.
 	s = build(t, store, analyzer, tree, BuildLimits{MaxEntries: 20000, MaxFiles: 500, MaxBytes: 1 << 30, MaxDuration: time.Hour}, nil)
 	if got := statuses(s); got[StatusIndexed] != 1000 || s.Coverage.Reused != 500 || s.Coverage.Analysed != 500 {
@@ -173,6 +180,62 @@ func TestBuildAnalysesASharedBlobOnce(t *testing.T) {
 	}
 	if g := loadGraph(t, store, s); len(g.Files()) != 3 {
 		t.Fatal("a file sharing a blob was lost")
+	}
+}
+
+func TestCompactionKeepsBinaryRecords(t *testing.T) {
+	store := newTestStore(t, DefaultStoreLimits())
+	tree := newMemoryTree(1, map[string]string{"a.go": "package a\n", "b.js": "x\x00"}, nil)
+	build(t, store, &fakeAnalyzer{}, tree, DefaultBuildLimits(), nil)
+	sess, err := store.open(context.Background(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshots, err := sess.allSnapshots()
+	if err != nil {
+		t.Fatal(err)
+	}
+	live, _ := sess.liveRecords(snapshots)
+	if err := sess.compact(live); err != nil {
+		t.Fatal(err)
+	}
+	sess.close()
+	reads := tree.reads.Load()
+	if s := build(t, store, &fakeAnalyzer{}, tree, DefaultBuildLimits(), nil); tree.reads.Load() != reads || statuses(s)[StatusBinary] != 1 {
+		t.Fatal("a binary record was lost by compaction")
+	}
+}
+
+func TestSegmentDirectoryRejectsCraftedLocations(t *testing.T) {
+	store := newTestStore(t, DefaultStoreLimits())
+	build(t, store, &fakeAnalyzer{}, newMemoryTree(1, map[string]string{"a.go": "package a\n"}, nil), DefaultBuildLimits(), nil)
+	segments, _ := filepath.Glob(filepath.Join(store.Directory(), "seg-*"))
+	data, err := os.ReadFile(segments[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	trailer := data[len(data)-segmentTrailer:]
+	at := int(binary.LittleEndian.Uint64(trailer))
+	length := int(binary.LittleEndian.Uint64(trailer[8:]))
+	directory := varcodec.AppendUvarint(nil, 1)
+	directory = append(directory, data[at+1:at+1+32+1]...)
+	directory = varcodec.AppendUvarint(directory, uint64(segmentHeader))
+	directory = varcodec.AppendUvarint(directory, math.MaxInt64)
+	directory = binary.LittleEndian.AppendUint32(directory, 0)
+	crafted := append(append([]byte{}, data[:at]...), directory...)
+	crafted = binary.LittleEndian.AppendUint64(crafted, uint64(at))
+	crafted = binary.LittleEndian.AppendUint64(crafted, uint64(len(directory)))
+	crafted = binary.LittleEndian.AppendUint32(crafted, crc32.Checksum(directory, crcTable))
+	crafted = append(crafted, segmentEnd...)
+	_ = length
+	path := filepath.Join(t.TempDir(), "seg")
+	if err := os.WriteFile(path, crafted, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	file, _ := os.Open(path)
+	defer file.Close()
+	if _, err := readSegmentDirectory(file, int64(len(crafted)), testIdentity, 0); !errors.Is(err, errCorrupt) {
+		t.Fatalf("a crafted location was accepted: %v", err)
 	}
 }
 
@@ -269,12 +332,12 @@ func TestStoreLimitsEvictSnapshotsAndRecords(t *testing.T) {
 	}
 
 	files, order := manyFiles(200, ".go")
-	tight := newTestStore(t, StoreLimits{MaxBytes: 200*snapshotEntryBytes + 2000, MaxSnapshots: 8})
+	tight := newTestStore(t, StoreLimits{MaxBytes: 20000, MaxSnapshots: 8})
 	s := build(t, tight, analyzer, newMemoryTree(9, files, order), DefaultBuildLimits(), nil)
 	if got := statuses(s); got[StatusStoreLimit] == 0 || got[StatusIndexed] == 0 {
 		t.Fatalf("store limit: %v", got)
 	}
-	if total := folderBytes(t, tight); total > 200*snapshotEntryBytes+2000 {
+	if total := folderBytes(t, tight); total > 20000 {
 		t.Fatalf("store holds %d bytes, over its limit", total)
 	}
 }
@@ -342,7 +405,7 @@ func TestStoreDropsStaleAndCorruptFilesAndRefusesUnprotectedOnes(t *testing.T) {
 	if err := os.WriteFile(segments[0], data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Load(context.Background(), "sha1", tree.commit); !errors.Is(err, ErrUnavailable) {
+	if _, err := store.Load(context.Background(), "sha1", tree.commit); !errors.Is(err, ErrDamaged) {
 		t.Fatalf("a damaged record loaded: %v", err)
 	}
 	calls = analyzer.calls.Load()

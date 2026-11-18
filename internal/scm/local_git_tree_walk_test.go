@@ -35,11 +35,12 @@ func TestWalkTreeVisitsEntriesInTreeOrderWithoutBlobs(t *testing.T) {
 	}
 
 	got = nil
-	walk, err = store.WalkTree(context.Background(), revision, 3, func(e LocalGitTreeEntry) error {
+	walk, err = store.WalkTree(context.Background(), revision, 4, func(e LocalGitTreeEntry) error {
 		got = append(got, e.Path)
 		return nil
 	})
-	if err != nil || !walk.Truncated || walk.Entries != 3 || len(got) != 3 {
+	// The limit counts the directory d as well as d/a.go, d/link and e.
+	if err != nil || !walk.Truncated || walk.Entries != 2 || len(got) != 2 {
 		t.Fatalf("limited walk = %v %+v %v", got, walk, err)
 	}
 
@@ -61,5 +62,20 @@ func TestWalkTreeRejectsMissingTrees(t *testing.T) {
 	revision := writeLocalRevision(t, directory, algorithm, root)
 	if _, err := store.WalkTree(context.Background(), revision, 100, func(LocalGitTreeEntry) error { return nil }); !errors.Is(err, LocalGitRevisionObjectUnavailable) {
 		t.Fatalf("missing subtree = %v", err)
+	}
+}
+
+func TestWalkTreeBoundsNestedSharedSubtrees(t *testing.T) {
+	directory, store := newLocalGitObjectStoreFixture(t)
+	algorithm := evidence.RevisionAlgorithmSHA1
+	blob := writeLooseObject(t, directory, algorithm, "blob", []byte("x"))
+	tree := writeLooseObject(t, directory, algorithm, "tree", localTreeEntry(t, algorithm, evidence.GitTreeModeRegular, []byte("f\xff"), blob))
+	for level := 0; level < 40; level++ {
+		tree = writeLooseObject(t, directory, algorithm, "tree", append(localTreeEntry(t, algorithm, evidence.GitTreeModeDirectory, []byte("a"), tree), localTreeEntry(t, algorithm, evidence.GitTreeModeDirectory, []byte("b"), tree)...))
+	}
+	revision := writeLocalRevision(t, directory, algorithm, localTreeEntry(t, algorithm, evidence.GitTreeModeDirectory, []byte("root"), tree))
+	walk, err := store.WalkTree(context.Background(), revision, 1000, func(LocalGitTreeEntry) error { return nil })
+	if err != nil || !walk.Truncated || walk.Entries != 0 || walk.InvalidPaths > 1000 {
+		t.Fatalf("walk = %+v, %v", walk, err)
 	}
 }

@@ -94,6 +94,9 @@ type ChangeGap struct {
 
 // DependentsResult is the reverse closure of a change.
 type DependentsResult struct {
+	// Coverage is the head graph's: a dependent in a file it does not
+	// cover is not found.
+	Coverage   GraphCoverage       `json:"coverage"`
 	Changed    []ChangedDefinition `json:"changed"`
 	Dependents []Dependent         `json:"dependents"`
 	Files      []DependentFile     `json:"files"`
@@ -162,10 +165,17 @@ type seed struct {
 // candidates of them, breadth first, within the limits. base, which may be
 // nil, supplies the definitions the change removed or replaced.
 func Dependents(head, base *Graph, changes []Change, limits DependentsLimits) DependentsResult {
-	if limits.MaxDepth <= 0 || limits.MaxDependents <= 0 || limits.MaxCandidates <= 0 {
-		limits = DefaultDependentsLimits()
+	defaults := DefaultDependentsLimits()
+	if limits.MaxDepth <= 0 {
+		limits.MaxDepth = defaults.MaxDepth
 	}
-	result := DependentsResult{Changed: []ChangedDefinition{}, Dependents: []Dependent{}, Files: []DependentFile{}, TestFiles: []string{}, Gaps: []ChangeGap{}}
+	if limits.MaxDependents <= 0 {
+		limits.MaxDependents = defaults.MaxDependents
+	}
+	if limits.MaxCandidates <= 0 {
+		limits.MaxCandidates = defaults.MaxCandidates
+	}
+	result := DependentsResult{Coverage: head.Coverage(), Changed: []ChangedDefinition{}, Dependents: []Dependent{}, Files: []DependentFile{}, TestFiles: []string{}, Gaps: []ChangeGap{}}
 	visited := map[int32]bool{}
 	fileDepth := map[string]int{}
 	roles := map[string]Role{}
@@ -213,6 +223,13 @@ func Dependents(head, base *Graph, changes []Change, limits DependentsLimits) De
 			t.file, t.name = -1, -1
 			if hid, ok := head.byPath[c.BasePath]; ok {
 				t.file = hid
+			} else {
+				t.importers = map[int32]bool{}
+				for _, p := range base.importersOf(id) {
+					if hid, ok := head.byPath[p]; ok {
+						t.importers[hid] = true
+					}
+				}
 			}
 			t.dir = path.Dir(c.BasePath)
 			if n, ok := head.nameIDs[s.Name.Untrusted()]; ok {

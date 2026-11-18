@@ -3,6 +3,7 @@ README.md role=docs status=not_analysed language=
 assets/blob.js role=source status=binary language=javascript
 calc/calc.go role=source status=indexed language=go
 calc/calc_test.go role=test status=indexed language=go
+cmd/app/acc.go role=source status=indexed language=go
 cmd/app/main.go role=source status=indexed language=go
 gen/api.pb.go role=generated status=indexed language=go
 gen/zz.go role=generated status=indexed language=go
@@ -38,6 +39,7 @@ other/other.go:5 function "Add" exported=true
 # definitions "Push"
 calc/calc.go:8 method "Push" exported=true
   ref calc/calc_test.go:10:4 call scope=package in="TestAdd"
+  ref cmd/app/acc.go:7:4 call scope=import in="push"
   test calc/calc_test.go:10
 # definitions "helper"
 pkg/util.py:1 function "helper" exported=true
@@ -63,8 +65,9 @@ src/main/java/com/ex/Box.java:4 method "Box.size" exported=true
 # definitions "Generated"
 gen/zz.go:5 function "Generated" exported=true
 # imports
-calc/calc.go -> [] unresolved=0 <- [cmd/app/main.go]
-calc/calc_test.go -> [] unresolved=1 <- [cmd/app/main.go]
+calc/calc.go -> [] unresolved=0 <- [cmd/app/acc.go cmd/app/main.go]
+calc/calc_test.go -> [] unresolved=1 <- [cmd/app/acc.go cmd/app/main.go]
+cmd/app/acc.go -> [calc/calc.go] unresolved=0 <- []
 cmd/app/main.go -> [calc/calc.go] unresolved=0 <- []
 native/kv.c -> [native/kv.h] unresolved=0 <- []
 native/kv.h -> [] unresolved=0 <- [native/kv.c native/main.c]

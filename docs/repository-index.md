@@ -34,7 +34,7 @@ Names are not resolved to declarations, so a candidate can belong to another def
 
 ## Dependents
 
-The dependents of a change start from its changed definitions: each definition, in the head or the base commit, that holds a changed line outside its child definitions. The closure then follows reference candidates backwards, breadth first: the definitions holding candidates of a changed definition have depth 1, those holding candidates of a depth-1 dependent depth 2, and so on. It stops at depth 3, 1,000 dependents and 2,000 candidates per definition, and records what each limit cut. Changed files without a complete analysis are listed as gaps.
+The dependents of a change start from its changed definitions: each definition, in the head or the base commit, that holds a changed line outside its child definitions. The closure then follows reference candidates backwards, breadth first: the definitions holding candidates of a changed definition have depth 1, those holding candidates of a depth-1 dependent depth 2, and so on. It stops at depth 3, 1,000 dependents and 2,000 candidates per definition, and records what each limit cut. Changed files without a complete analysis are listed as gaps. A definition of a file the head no longer has is still matched in the files that imported that file in the base.
 
 ## Where it lives
 
@@ -50,7 +50,7 @@ Every file starts with the format and the analysis identity, the SHA-256 of the 
 
 | Limit | Default |
 | --- | --- |
-| Tree entries listed | 1,000,000 |
+| Tree entries walked, directories included | 1,000,000 |
 | Files analysed per build | 200,000 |
 | Bytes analysed per build | 2 GiB |
 | Analysis time per build | 30 minutes |
@@ -73,4 +73,4 @@ trestle index query imports PATH [--commit REF]
 trestle index query dependents --base REF [--commit REF]
 ```
 
-`--commit` defaults to `HEAD`; `--directory` names the setup folder. `build` and `status` print counts only. Queries print JSON, in which every name and path is a JSON string; a query indexes the commits it needs first. `dependents` diffs each changed file's base and head blobs to find the changed lines.
+`--commit` defaults to `HEAD`; `--directory` names the setup folder. `build` and `status` print counts only. Queries print JSON, in which every name and path is a JSON string, with a `coverage` object: the build's coverage, the files by status, and `complete`, which is false when the tree was cut or a file that should have an analysis has none, so that a reference in it is not seen. A query indexes the commits it needs first, and indexes a commit again when a damaged index file was removed. `dependents` diffs each modified file's base and head blobs, up to 256 MiB in all, to find the changed lines; a file past that counts as changed throughout, and a file that only moved is not a change.

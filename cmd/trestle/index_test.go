@@ -37,7 +37,8 @@ func TestIndexBuildsAndAnswersQueries(t *testing.T) {
 	checkoutGit(t, checkout, "add", ".")
 	checkoutGit(t, checkout, "commit", "-q", "-m", "base")
 	write("p/a.go", "package p\n\nfunc Changed(x int) int { return x + 1 }\n")
-	checkoutGit(t, checkout, "commit", "-q", "-am", "change")
+	checkoutGit(t, checkout, "mv", "p/caller.go", "p/consumer.go")
+	checkoutGit(t, checkout, "commit", "-q", "-am", "change and rename")
 	t.Chdir(checkout)
 	directory := filepath.Join(t.TempDir(), "setup")
 
@@ -56,17 +57,21 @@ func TestIndexBuildsAndAnswersQueries(t *testing.T) {
 
 	code, stdout, stderr = runIndexCommand(t, "query", "tests", "Changed", "--directory", directory)
 	var tests struct {
+		Coverage struct {
+			Complete bool
+		}
 		Definitions []struct {
 			Definition struct{ Path, Name string }
 			Tests      []struct{ Path, Scope string }
 		}
 	}
-	if code != 0 || json.Unmarshal([]byte(stdout), &tests) != nil || len(tests.Definitions) != 1 || tests.Definitions[0].Definition.Name != "Changed" || len(tests.Definitions[0].Tests) != 1 || tests.Definitions[0].Tests[0].Path != "p/a_test.go" {
+	if code != 0 || json.Unmarshal([]byte(stdout), &tests) != nil || !tests.Coverage.Complete || len(tests.Definitions) != 1 || tests.Definitions[0].Definition.Name != "Changed" || len(tests.Definitions[0].Tests) != 1 || tests.Definitions[0].Tests[0].Path != "p/a_test.go" {
 		t.Fatalf("tests query: exit=%d\n%s\n%s", code, stdout, stderr)
 	}
 
 	code, stdout, stderr = runIndexCommand(t, "query", "dependents", "--base", "HEAD~1", "--directory", directory)
 	var dependents struct {
+		Gaps       []struct{ Path string }
 		Changed    []struct{ Name, Side string }
 		Dependents []struct {
 			Path  string
@@ -74,7 +79,7 @@ func TestIndexBuildsAndAnswersQueries(t *testing.T) {
 		}
 		TestFiles []string `json:"test_files"`
 	}
-	if code != 0 || json.Unmarshal([]byte(stdout), &dependents) != nil || len(dependents.Changed) != 1 || dependents.Changed[0].Name != "Changed" || len(dependents.Dependents) != 2 || len(dependents.TestFiles) != 1 || !strings.Contains(stderr, "Indexing") {
+	if code != 0 || json.Unmarshal([]byte(stdout), &dependents) != nil || len(dependents.Changed) != 1 || dependents.Changed[0].Name != "Changed" || len(dependents.Dependents) != 2 || len(dependents.TestFiles) != 1 || len(dependents.Gaps) != 0 || !strings.Contains(stderr, "Indexing") {
 		t.Fatalf("dependents query: exit=%d\n%s\n%s", code, stdout, stderr)
 	}
 

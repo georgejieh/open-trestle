@@ -142,6 +142,7 @@ func newTestStore(t *testing.T, limits StoreLimits) *Store {
 // fixtureFiles is a small repository in several languages, with tests that
 // reference source symbols, vendored, generated, binary and docs files.
 var fixtureFiles = map[string]string{
+	"cmd/app/acc.go":                    "package main\n\nimport \"example.com/m/calc\"\n\nfunc push() {\n\tvar a calc.Acc\n\ta.Push(1)\n}\n",
 	"go.mod":                            "module example.com/m\n\ngo 1.22\n",
 	"README.md":                         "# Fixture\n",
 	"calc/calc.go":                      "package calc\n\n// Add adds.\nfunc Add(a, b int) int { return a + b }\n\ntype Acc struct{ total int }\n\nfunc (a *Acc) Push(v int) { a.total = Add(a.total, v) }\n\nfunc unexported() int { return Add(1, 2) }\n",

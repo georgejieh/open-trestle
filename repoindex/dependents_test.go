@@ -39,12 +39,13 @@ func TestDependentsFollowReferenceCandidatesBackwards(t *testing.T) {
 		"1 calc/calc.go Push via Add file",
 		"1 calc/calc_test.go TestAdd via Add package",
 		"1 cmd/app/main.go run via Add import",
+		"2 cmd/app/acc.go push via Push import",
 		"2 cmd/app/main.go main via run file",
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("dependents:\n%s", strings.Join(got, "\n"))
 	}
-	if fmt.Sprint(result.TestFiles) != "[calc/calc_test.go]" || len(result.Files) != 3 || result.Cut != (DependentsCut{}) {
+	if fmt.Sprint(result.TestFiles) != "[calc/calc_test.go]" || len(result.Files) != 4 || result.Cut != (DependentsCut{}) {
 		t.Fatalf("files %v tests %v cut %+v", result.Files, result.TestFiles, result.Cut)
 	}
 
@@ -56,6 +57,25 @@ func TestDependentsFollowReferenceCandidatesBackwards(t *testing.T) {
 	missing := Dependents(headGraph, nil, []Change{{Path: "README.md", HeadLines: []LineRange{{1, 1}}}, {Path: "gone.go", BasePath: "gone.go", BaseLines: []LineRange{{1, 1}}}}, DefaultDependentsLimits())
 	if len(missing.Gaps) != 2 || missing.Gaps[0].Reason != string(StatusNotAnalysed) || missing.Gaps[1].Reason != "base_not_loaded" {
 		t.Fatalf("gaps = %+v", missing.Gaps)
+	}
+}
+
+func TestDependentsOfARemovedFileReachItsFormerImporters(t *testing.T) {
+	analyzer := realAnalyzer(t)
+	repo := newGitRepository(t)
+	repo.write(map[string]string{"lib.py": "def f():\n    return 1\n", "use.py": "from lib import f\n\n\ndef g():\n    return f()\n"})
+	baseCommit := repo.commit("base")
+	repo.git("rm", "-q", "lib.py")
+	headCommit := repo.commit("head")
+	store := newTestStore(t, DefaultStoreLimits())
+	base := loadGraph(t, store, buildCommit(t, store, analyzer, repo.tree(baseCommit)))
+	head := loadGraph(t, store, buildCommit(t, store, analyzer, repo.tree(headCommit)))
+	result := Dependents(head, base, []Change{{BasePath: "lib.py", BaseLines: []LineRange{{1, 2}}}}, DefaultDependentsLimits())
+	if len(result.Changed) != 1 || result.Changed[0].Side != "base" || len(result.Dependents) != 1 || result.Dependents[0].Path != "use.py" || result.Dependents[0].Scope != ScopeImport {
+		t.Fatalf("dependents of a removed file = %+v", result)
+	}
+	if !result.Coverage.Complete || result.Coverage.Statuses[StatusIndexed] != 1 {
+		t.Fatalf("coverage = %+v", result.Coverage)
 	}
 }
 

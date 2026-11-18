@@ -28,9 +28,12 @@ type Builder struct {
 // third-party code that a review does not cover.
 var analysedRoles = map[Role]int{RoleSource: 0, RoleTest: 1, RoleGenerated: 2}
 
-// snapshotEntryBytes estimates the bytes of one snapshot entry, which the
-// store limit reserves before records.
-const snapshotEntryBytes = 128
+// segmentOverhead is a segment's header and trailer, and directoryEntryBytes
+// the most a record's directory entry takes; the store limit reserves both.
+const (
+	segmentOverhead     = int64(segmentHeader + segmentTrailer + 10)
+	directoryEntryBytes = 32 + 1 + 10 + 10 + 4
+)
 
 type outcome struct {
 	index  int
@@ -78,7 +81,7 @@ func (b Builder) Build(ctx context.Context, tree Tree) (Snapshot, error) {
 		return Snapshot{}, err
 	}
 
-	budget := max(0, b.Store.limits.MaxBytes-int64(len(s.Files))*snapshotEntryBytes)
+	budget := max(0, b.Store.limits.MaxBytes-int64(len(encodeSnapshot(s, b.Store.identity)))-segmentOverhead)
 	var recordBytes int64
 	// Files with the same blob and key share one record and one analysis:
 	// pending holds the first of them and sharing the others.
@@ -95,13 +98,13 @@ func (b Builder) Build(ctx context.Context, tree Tree) (Snapshot, error) {
 			sharing[key] = append(sharing[key], i)
 			continue
 		}
-		if !counted[key] && recordBytes+sess.recordBytes(key) > budget {
+		if !counted[key] && recordBytes+sess.recordBytes(key)+directoryEntryBytes > budget {
 			s.Files[i].Status = StatusStoreLimit
 			continue
 		}
 		if !counted[key] {
 			counted[key] = true
-			recordBytes += sess.recordBytes(key)
+			recordBytes += sess.recordBytes(key) + directoryEntryBytes
 		}
 		s.Files[i] = withFlags(f, sess.records[key].flags)
 		s.Coverage.Reused++
@@ -131,7 +134,7 @@ func (b Builder) Build(ctx context.Context, tree Tree) (Snapshot, error) {
 			continue
 		}
 		encoded := o.record.encode()
-		if recordBytes+int64(len(encoded)) > budget {
+		if recordBytes+int64(len(encoded))+directoryEntryBytes > budget {
 			apply(func(f *FileEntry) { f.Status = StatusStoreLimit })
 			continue
 		}
@@ -139,7 +142,7 @@ func (b Builder) Build(ctx context.Context, tree Tree) (Snapshot, error) {
 			_ = wait(true)
 			return Snapshot{}, ErrUnavailable
 		}
-		recordBytes += int64(len(encoded))
+		recordBytes += int64(len(encoded)) + directoryEntryBytes
 		apply(func(f *FileEntry) { *f = withFlags(*f, o.record.flags()) })
 		if !o.record.binary {
 			s.Coverage.Analysed++
@@ -150,7 +153,8 @@ func (b Builder) Build(ctx context.Context, tree Tree) (Snapshot, error) {
 		return Snapshot{}, err
 	}
 	s.BuiltAt = now().UTC()
-	s.Coverage.Duration = s.BuiltAt.Sub(started)
+	// A clock that steps backwards must not make the duration negative.
+	s.Coverage.Duration = max(0, s.BuiltAt.Sub(started))
 	committed = true
 	if err := sess.installSegment(segment); err != nil {
 		return Snapshot{}, err

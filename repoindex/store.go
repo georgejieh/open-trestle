@@ -26,6 +26,9 @@ var (
 	ErrBusy = errors.New("repository index is in use by another process")
 	// ErrNotIndexed reports a commit the index has no snapshot of.
 	ErrNotIndexed = errors.New("commit is not indexed")
+	// ErrDamaged reports a damaged record whose segment was removed; a
+	// build of the commit analyses its files again.
+	ErrDamaged = errors.New("a damaged index file was removed; the commit must be indexed again")
 
 	errCorrupt = errors.New("repository index file is corrupt")
 	errStale   = errors.New("repository index file has another analysis identity")
@@ -464,7 +467,7 @@ func (sess *session) liveRecords(snapshots []Snapshot) (map[Key]bool, int64) {
 	var bytes int64
 	for _, s := range snapshots {
 		for _, f := range s.Files {
-			if f.Status != StatusIndexed {
+			if f.Status != StatusIndexed && f.Status != StatusBinary {
 				continue
 			}
 			key := s.key(f)

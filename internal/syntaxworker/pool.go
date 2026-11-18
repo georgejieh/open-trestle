@@ -53,7 +53,7 @@ type Pool struct {
 
 // Stats counts what happened to the pool's workers.
 type Stats struct {
-	Started, Killed, TimedOut, Crashed, Malformed, Abandoned int
+	Started, Killed, TimedOut, Crashed, Malformed, Abandoned, Canceled int
 }
 
 // NewPool returns a pool; it starts workers when files arrive.
@@ -195,6 +195,11 @@ func (p *Pool) Analyze(ctx context.Context, source syntaxanalysis.Source) (synta
 	gap := func(reason syntaxanalysis.GapReason) (syntaxanalysis.FileAnalysis, error) {
 		return syntaxanalysis.WholeFileGap(source, Identity, reason, ""), nil
 	}
+	// The workers analyse with the default limits; a larger file would get
+	// the same gap from them after being copied there.
+	if source.Size() > syntaxanalysis.DefaultLimits().MaxFileBytes {
+		return syntaxanalysis.WholeFileGap(source, Identity, syntaxanalysis.GapLimitExceeded, syntaxanalysis.LimitFileSize), nil
+	}
 	w, err := p.acquire()
 	if err != nil {
 		return syntaxanalysis.FileAnalysis{}, err
@@ -229,7 +234,7 @@ func (p *Pool) Analyze(ctx context.Context, source syntaxanalysis.Source) (synta
 	defer timer.Stop()
 	select {
 	case <-ctx.Done():
-		w.kill()
+		p.discard(w, &p.stats.Canceled)
 		return syntaxanalysis.FileAnalysis{}, ctx.Err()
 	case <-timer.C:
 		p.discard(w, &p.stats.TimedOut)

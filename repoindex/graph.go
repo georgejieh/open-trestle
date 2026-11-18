@@ -3,7 +3,6 @@ package repoindex
 import (
 	"context"
 	"errors"
-	"fmt"
 	"path"
 	"strings"
 
@@ -15,13 +14,14 @@ import (
 // thousand files fits: every name is interned once, records refer to names
 // and files by number, and the name indexes are flat posting lists.
 type Graph struct {
-	files   []graphFile
-	byPath  map[string]int32
-	names   []syntaxanalysis.Text
-	nameIDs map[string]int32
-	defs    []graphDef
-	refs    []graphRef
-	imports []graphImport
+	coverage GraphCoverage
+	files    []graphFile
+	byPath   map[string]int32
+	names    []syntaxanalysis.Text
+	nameIDs  map[string]int32
+	defs     []graphDef
+	refs     []graphRef
+	imports  []graphImport
 	// defsByName and refsByName list definitions and references by name.
 	defsByName, refsByName postings
 	// units group files that see each other's definitions without an
@@ -163,7 +163,7 @@ func (s *Store) Load(ctx context.Context, algorithm, commit string) (*Graph, err
 	if err != nil {
 		return nil, err
 	}
-	g := newGraph(snapshot.Modules)
+	g := newGraph(snapshot)
 	for i, f := range snapshot.Files {
 		if i%1024 == 0 && ctx.Err() != nil {
 			return nil, ctx.Err()
@@ -181,7 +181,7 @@ func (s *Store) Load(ctx context.Context, algorithm, commit string) (*Graph, err
 			if errors.Is(err, errCorrupt) {
 				// The next build analyses the files of a removed segment again.
 				if sess.removeSegmentOf(key) == nil {
-					return nil, fmt.Errorf("%w: a damaged index file was removed; build the index again", ErrUnavailable)
+					return nil, ErrDamaged
 				}
 			}
 			if err != nil {
@@ -194,9 +194,30 @@ func (s *Store) Load(ctx context.Context, algorithm, commit string) (*Graph, err
 	return g, nil
 }
 
-func newGraph(modules []GoModule) *Graph {
-	return &Graph{byPath: map[string]int32{}, nameIDs: map[string]int32{}, names: []syntaxanalysis.Text{{}}, goModules: modules}
+func newGraph(s Snapshot) *Graph {
+	coverage := GraphCoverage{Commit: s.Commit, Coverage: s.Coverage, Statuses: map[Status]int{}}
+	for _, f := range s.Files {
+		coverage.Statuses[f.Status]++
+	}
+	coverage.Complete = !s.Coverage.TreeTruncated && s.Coverage.InvalidPaths == 0
+	for _, status := range []Status{StatusUnavailable, StatusFileLimit, StatusByteLimit, StatusTimeLimit, StatusStoreLimit, StatusFailed} {
+		coverage.Complete = coverage.Complete && coverage.Statuses[status] == 0
+	}
+	return &Graph{coverage: coverage, byPath: map[string]int32{}, nameIDs: map[string]int32{}, names: []syntaxanalysis.Text{{}}, goModules: s.Modules}
 }
+
+// GraphCoverage says how much of a commit a graph covers. Complete is false
+// when the tree was cut, a path was left out, or a file that should have an
+// analysis has none: a reference in such a file is not seen.
+type GraphCoverage struct {
+	Commit   string         `json:"commit"`
+	Complete bool           `json:"complete"`
+	Statuses map[Status]int `json:"files_by_status"`
+	Coverage Coverage       `json:"build"`
+}
+
+// Coverage returns what the graph covers.
+func (g *Graph) Coverage() GraphCoverage { return g.coverage }
 
 // add appends a file and its analysis. Record indices of the analysis
 // become indices into the graph's slices.
