@@ -1,4 +1,4 @@
-"""Build and verify the isolated secret-scanner release package."""
+"""Build and verify the secret-scanner release package, or a development build."""
 
 from __future__ import annotations
 
@@ -6,15 +6,13 @@ import argparse
 import hashlib
 import json
 import os
+import posixpath
 import re
 import shutil
 import stat
-import struct
 import subprocess
 import sys
-import tarfile
 import tempfile
-import urllib.request
 import uuid
 from pathlib import Path, PurePosixPath
 from urllib.parse import quote
@@ -26,39 +24,25 @@ SCANNER_VERSION = "v1.8.1"
 SCANNER_COMMIT = "5eab48332cc48565864514e3bc6de89df091a7c4"
 RULESET_IDENTITY = "27ded783c81940d13c22cc46556a3f8184baf397bff08a69fcfae87991925f42"
 RULESET_RULE_COUNT = 417
-BUILD_PROFILE = "public_detect_run_re2_purego_go1.26.11_linux_amd64_v1"
-ROOT_GO = "go1.26.11"
-WORKER_GO = "go1.26.11"
-LAUNCHER_TOOLCHAIN_MANIFEST = "workers/secret-scanner/launcher/toolchain-v1.json"
-LAUNCHER_TOOLCHAIN_CACHE = ".tmp/toolchains/zig-x86_64-linux-0.14.1.tar.xz"
-LAUNCHER_ZIG_VERSION = "0.14.1"
-LAUNCHER_ZIG_TARGET = "x86_64-linux-musl"
-LAUNCHER_CPPFLAGS = ("-DOPEN_TRESTLE_PRODUCTION_BUILD=1",)
-LAUNCHER_CFLAGS = (
-    "-std=c17", "-O2", "-pipe", "-fPIE", "-fstack-protector-strong",
-    "-D_FORTIFY_SOURCE=3", "-Wall", "-Wextra", "-Werror", "-Wformat=2",
-    "-Wconversion", "-Wshadow", "-Wstrict-prototypes",
-)
-LAUNCHER_LDFLAGS = (
-    "-static", "-pie", "-s",
-    "-Wl,-z,relro,-z,now,-z,noexecstack,--build-id=none",
-)
-LAUNCHER_BUILD_ENVIRONMENT = {
-    "base_environment": "empty",
-    "LC_ALL": "C",
-    "SOURCE_DATE_EPOCH": "0",
-    "cache_policy": "fresh isolated global and local caches for each build",
-}
-WORKER_BUILD_FLAGS = (
-    "-trimpath", "-buildvcs=false", "-ldflags=-s -w -buildid=",
-)
+BUILD_PROFILE = "public_detect_run_re2_host_go1.26.11_wasip1_wasm_v1"
+GO_TOOLCHAIN = "go1.26.11"
+RELEASE_TARGET = ("linux", "amd64")
+SCANNER_DIRECTORY = "workers/secret-scanner"
+GUEST_DIRECTORY = "workers/secret-scanner/guest"
+SCANNER_MODULE = "github.com/georgejieh/open-trestle/workers/secret-scanner"
+HELPER_PACKAGE = SCANNER_MODULE + "/cmd/open-trestle-scan-helper"
+GUEST_PACKAGE = SCANNER_MODULE + "/guest"
+HELPER_NAME = "open-trestle-scan-helper"
+GUEST_NAME = "open-trestle-scan-guest.wasm"
+HELPER_PATH = "libexec/open-trestle/" + HELPER_NAME
+HELPER_PIN = "github.com/georgejieh/open-trestle/internal/secretscan.expectedHelperSHA256"
+BUILDINFO_PACKAGE = "github.com/georgejieh/open-trestle/internal/buildinfo"
+GUEST_BUILD_FLAGS = ("-trimpath", "-buildvcs=false", "-ldflags=-s -w -buildid=")
 RELEASE_SOURCE_PATHS = {"scripts/model_catalog.py": "tools/model_catalog.py"}
-EXECUTABLE_PATHS = frozenset({
-    "trestle",
-    "trestled",
-    "libexec/open-trestle/open-trestle-secret-scanner",
-    "libexec/open-trestle/open-trestle-secret-scanner-worker",
-})
+EXECUTABLE_PATHS = frozenset({"trestle", "trestled", HELPER_PATH})
+# The linker embeds a program's module information between these markers.
+MODINFO_START = bytes.fromhex("3077af0c9274080241e1c107e6d618e6")
+MODINFO_END = bytes.fromhex("f932433186182072008242104116d8f2")
 
 
 def _file_checksums(path: Path) -> tuple[str, str]:
@@ -72,232 +56,152 @@ def _file_checksums(path: Path) -> tuple[str, str]:
 
 
 def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as source:
-        while chunk := source.read(1 << 20):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def _tree_digest(root: Path) -> tuple[str, int, int]:
-    digest = hashlib.sha256()
-    count = 0
-    total = 0
-    files = sorted(
-        (path for path in root.rglob("*") if path.is_file()),
-        key=lambda path: path.relative_to(root).as_posix(),
-    )
-    for path in files:
-        relative = path.relative_to(root).as_posix().encode("utf-8")
-        size = path.stat().st_size
-        digest.update(len(relative).to_bytes(4, "big"))
-        digest.update(relative)
-        digest.update(size.to_bytes(8, "big"))
-        digest.update(bytes.fromhex(_sha256(path)))
-        count += 1
-        total += size
-    return digest.hexdigest(), count, total
-
-
-def _launcher_toolchain_manifest(repository: Path) -> tuple[dict[str, object], str]:
-    path = repository / LAUNCHER_TOOLCHAIN_MANIFEST
-    try:
-        document = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise ValueError("launcher toolchain manifest is invalid") from error
-    archive = document.get("archive")
-    tree = document.get("extracted_tree")
-    critical_files = document.get("critical_files")
-    runtime_components = document.get("runtime_components")
-    if (
-        document.get("schema_version") != 1
-        or document.get("builder") != "zig"
-        or document.get("builder_version") != LAUNCHER_ZIG_VERSION
-        or document.get("target") != LAUNCHER_ZIG_TARGET
-        or not isinstance(archive, dict)
-        or archive.get("sha256") != "24aeeec8af16c381934a6cd7d95c807a8cb2cf7df9fa40d359aa884195c4716c"
-        or archive.get("size") != 49086504
-        or archive.get("url") != "https://ziglang.org/download/0.14.1/zig-x86_64-linux-0.14.1.tar.xz"
-        or archive.get("root") != "zig-x86_64-linux-0.14.1"
-        or tree != {
-            "sha256": "58e5c7d8fd7b4c2940613201bdae6685fb1f70f879669db913c118cb20bb537a",
-            "regular_files": 14673,
-            "bytes": 311138938,
-        }
-        or not isinstance(critical_files, list)
-        or not isinstance(runtime_components, list)
-        or not isinstance(document.get("input_closure"), dict)
-    ):
-        raise ValueError("launcher toolchain manifest does not match the frozen pin")
-    return document, _sha256(path)
-
-
-def _verify_toolchain_archive(path: Path, archive: dict[str, object]) -> None:
-    if path.is_symlink() or not path.is_file():
-        raise ValueError("launcher toolchain archive is unavailable")
-    if path.stat().st_size != archive["size"] or _sha256(path) != archive["sha256"]:
-        raise ValueError("launcher toolchain archive identity mismatch")
-
-
-def _download_toolchain_archive(path: Path, archive: dict[str, object]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists():
-        _verify_toolchain_archive(path, archive)
-        return
-    temporary = path.with_suffix(path.suffix + ".partial")
-    temporary.unlink(missing_ok=True)
-    try:
-        with urllib.request.urlopen(str(archive["url"]), timeout=120) as response:
-            if response.geturl() != archive["url"] or getattr(response, "status", 200) != 200:
-                raise ValueError("launcher toolchain download was redirected or rejected")
-            with temporary.open("xb") as destination:
-                copied = 0
-                while chunk := response.read(1 << 20):
-                    copied += len(chunk)
-                    if copied > archive["size"]:
-                        raise ValueError("launcher toolchain download exceeds pinned size")
-                    destination.write(chunk)
-        _verify_toolchain_archive(temporary, archive)
-        os.replace(temporary, path)
-    except BaseException:
-        temporary.unlink(missing_ok=True)
-        raise
-
-
-def _extract_toolchain(archive_path: Path, destination: Path, manifest: dict[str, object]) -> Path:
-    archive = manifest["archive"]
-    expected_root = str(archive["root"])
-    destination.mkdir(parents=True)
-    with tarfile.open(archive_path, mode="r:xz") as source:
-        members = source.getmembers()
-        file_bytes = sum(member.size for member in members if member.isfile())
-        if file_bytes != manifest["extracted_tree"]["bytes"]:
-            raise ValueError("launcher toolchain archive payload size mismatch")
-        for member in members:
-            relative = PurePosixPath(member.name)
-            if (
-                relative.is_absolute()
-                or not relative.parts
-                or relative.parts[0] != expected_root
-                or any(part in {"", ".", ".."} for part in relative.parts)
-                or not (member.isdir() or member.isfile())
-            ):
-                raise ValueError("launcher toolchain archive member is unsafe")
-            target = destination.joinpath(*relative.parts)
-            if member.isdir():
-                target.mkdir(parents=True, exist_ok=True)
-                target.chmod(member.mode & 0o777)
-                continue
-            target.parent.mkdir(parents=True, exist_ok=True)
-            extracted = source.extractfile(member)
-            if extracted is None:
-                raise ValueError("launcher toolchain archive member is unreadable")
-            with extracted, target.open("xb") as output:
-                shutil.copyfileobj(extracted, output, 1 << 20)
-            target.chmod(member.mode & 0o777)
-    root = destination / expected_root
-    tree = manifest["extracted_tree"]
-    if _tree_digest(root) != (tree["sha256"], tree["regular_files"], tree["bytes"]):
-        raise ValueError("launcher toolchain extracted-tree identity mismatch")
-    for entry in manifest["critical_files"]:
-        relative = PurePosixPath(entry["path"])
-        if relative.is_absolute() or any(part in {"", ".", ".."} for part in relative.parts):
-            raise ValueError("launcher toolchain critical path is invalid")
-        path = root.joinpath(*relative.parts)
-        if path.stat().st_size != entry["size"] or _sha256(path) != entry["sha256"]:
-            raise ValueError("launcher toolchain critical file mismatch")
-    version = _run([str(root / "zig"), "version"], cwd=destination, environment={"LC_ALL": "C"}).strip()
-    if version != LAUNCHER_ZIG_VERSION:
-        raise ValueError("launcher Zig version mismatch")
-    return root
-
-
-def provision_launcher_toolchain(
-    repository: Path, temporary: Path
-) -> tuple[Path, dict[str, object], str]:
-    """Provision the complete pinned compiler, linker, sysroot, and static runtime closure."""
-    manifest, manifest_sha256 = _launcher_toolchain_manifest(repository)
-    archive_path = repository / LAUNCHER_TOOLCHAIN_CACHE
-    _download_toolchain_archive(archive_path, manifest["archive"])
-    private_archive = temporary / "launcher-toolchain.tar.xz"
-    shutil.copyfile(archive_path, private_archive)
-    private_archive.chmod(0o400)
-    _verify_toolchain_archive(private_archive, manifest["archive"])
-    toolchain = _extract_toolchain(private_archive, temporary / "launcher-toolchain", manifest)
-    return toolchain, manifest, manifest_sha256
+    return _file_checksums(path)[1]
 
 
 def _run(arguments: list[str], *, cwd: Path, environment: dict[str, str] | None = None) -> str:
     try:
         result = subprocess.run(
-            arguments,
-            cwd=cwd,
-            env=environment,
-            check=True,
-            capture_output=True,
-            text=True,
+            arguments, cwd=cwd, env=environment, check=True, capture_output=True, text=True,
         )
-    except (OSError, subprocess.CalledProcessError) as error:
+    except OSError as error:
         raise ValueError(f"release command failed: {arguments[0]}") from error
+    except subprocess.CalledProcessError as error:
+        detail = (error.stderr or "").strip()[-2000:]
+        raise ValueError(f"release command failed: {' '.join(arguments[:3])}: {detail}") from error
     return result.stdout
 
 
-def _parse_build_modules(build_info: str) -> dict[tuple[str, str], str]:
-    modules: dict[tuple[str, str], str] = {}
+def _go_environment(go_tmp: Path, target: tuple[str, str] | None = None) -> dict[str, str]:
+    fixed = {"GOOS", "GOARCH", "CGO_ENABLED", "GOWORK", "GOTOOLCHAIN", "GOFLAGS", "GOENV", "GOEXPERIMENT"}
+    environment = {key: value for key, value in os.environ.items() if key.upper() not in fixed}
+    environment.update({
+        "CGO_ENABLED": "0", "GOWORK": "off", "GOTOOLCHAIN": GO_TOOLCHAIN,
+        "GOFLAGS": "", "GOENV": "off", "GOEXPERIMENT": "", "GOTMPDIR": str(go_tmp),
+    })
+    go_tmp.mkdir(parents=True, exist_ok=True)
+    if target is not None:
+        environment["GOOS"], environment["GOARCH"] = target
+    return environment
+
+
+def _executable_name(name: str, goos: str) -> str:
+    return name + ".exe" if goos == "windows" else name
+
+
+def parse_target(value: str) -> tuple[str, str]:
+    match = re.fullmatch(r"([a-z0-9]+)/([a-z0-9]+)", value)
+    if match is None:
+        raise ValueError("target must be GOOS/GOARCH")
+    return match.group(1), match.group(2)
+
+
+def _host_target(repository: Path, go_tmp: Path) -> tuple[str, str]:
+    fields = _run(["go", "env", "GOOS", "GOARCH"], cwd=repository, environment=_go_environment(go_tmp)).split()
+    if len(fields) != 2:
+        raise ValueError("host Go target is unavailable")
+    return parse_target("/".join(fields))
+
+
+def build_helper(repository: Path, output: Path, target: tuple[str, str], go_tmp: Path) -> tuple[Path, Path]:
+    """Build the guest and a helper for target that embeds it, and return both paths."""
+    printed = _run(
+        ["go", "run", "./internal/cmd/build-scan-helper", "-o", str(output), "-goos", target[0], "-goarch", target[1]],
+        cwd=repository / SCANNER_DIRECTORY,
+        environment=_go_environment(go_tmp),
+    ).strip()
+    helper = output / _executable_name(HELPER_NAME, target[0])
+    guest = output / GUEST_NAME
+    if Path(printed).resolve() != helper.resolve() or not helper.is_file() or not guest.is_file():
+        raise ValueError("scan helper build did not produce the expected files")
+    return helper, guest
+
+
+def embedded_build_info(program: bytes) -> str:
+    """Return the module information the Go linker embeds, which go version -m cannot read from wasm."""
+    start = program.find(MODINFO_START)
+    end = program.find(MODINFO_END, start + len(MODINFO_START))
+    if start < 0 or end < 0 or program.find(MODINFO_START, start + 1) >= 0:
+        raise ValueError("guest build metadata is missing or ambiguous")
+    try:
+        return program[start + len(MODINFO_START):end].decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise ValueError("guest build metadata is invalid") from error
+
+
+def verify_go_toolchain(build_info: str, name: str) -> None:
+    """Require the pinned Go toolchain in go version -m output."""
+    lines = build_info.splitlines()
+    if not lines or not lines[0].endswith(": " + GO_TOOLCHAIN):
+        raise ValueError(f"{name} Go toolchain metadata mismatch")
+
+
+def verify_build_settings(build_info: str, package: str, target: tuple[str, str]) -> None:
+    """Require the main package and the fixed build settings for target."""
+    lines = {line.strip() for line in build_info.splitlines()}
+    required = {
+        f"path\t{package}",
+        "build\t-trimpath=true",
+        "build\tCGO_ENABLED=0",
+        f"build\tGOOS={target[0]}",
+        f"build\tGOARCH={target[1]}",
+    }
+    if not required <= lines:
+        raise ValueError(f"{package} build metadata mismatch")
+
+
+def parse_build_modules(build_info: str) -> dict[tuple[str, str], dict[str, str]]:
+    """Read linked modules; a local replacement is returned as its replacement path."""
+    modules: dict[tuple[str, str], dict[str, str]] = {}
+    previous: tuple[str, str] | None = None
     for line in build_info.splitlines():
         fields = line.strip().split("\t")
-        if fields and fields[0] == "=>":
-            raise ValueError("replaced linked modules are unsupported")
-        if not fields or fields[0] != "dep":
+        if fields[0] == "dep":
+            if len(fields) == 4 and fields[1] and fields[2] and fields[3].startswith("h1:"):
+                metadata = {"module_sum": fields[3]}
+            elif len(fields) == 3 and fields[1] and fields[2]:
+                metadata = {}
+            else:
+                raise ValueError("linked module metadata is incomplete")
+            identity = (fields[1], fields[2])
+            if identity in modules:
+                raise ValueError("duplicate linked module metadata")
+            modules[identity] = metadata
+            previous = identity
             continue
-        if len(fields) != 4 or not fields[1] or not fields[2] or not fields[3].startswith("h1:"):
-            raise ValueError("linked module metadata is incomplete")
-        identity = (fields[1], fields[2])
-        if identity in modules:
-            raise ValueError("duplicate linked module metadata")
-        modules[identity] = fields[3]
-    if not modules:
-        raise ValueError("linked module inventory is empty")
+        if fields[0] == "=>":
+            if previous is None or modules[previous] or len(fields) != 3 or fields[2] != "(devel)" or not fields[1]:
+                raise ValueError("only local module replacements are supported")
+            modules[previous] = {"replacement": fields[1]}
+        previous = None
+    if not modules or any(not metadata for metadata in modules.values()):
+        raise ValueError("linked module inventory is empty or incomplete")
     return modules
 
 
-def verify_root_build_info(build_info: str) -> None:
-    """Require the pinned root Go toolchain in package metadata."""
-    lines = build_info.splitlines()
-    if not lines or not lines[0].endswith(f": {ROOT_GO}"):
-        raise ValueError("root Go toolchain metadata mismatch")
+def _safe_relative(value: object, label: str) -> str:
+    path = PurePosixPath(value) if isinstance(value, str) else None
+    if (
+        path is None
+        or not re.fullmatch(r"[A-Za-z0-9._/-]+", value)
+        or path.is_absolute()
+        or any(part in {"", ".", ".."} for part in path.parts)
+    ):
+        raise ValueError(f"{label} path is invalid")
+    return value
 
 
-def verify_worker_build_info(build_info: str) -> None:
-    """Require the frozen Go toolchain and target settings in the linked worker."""
-    lines = build_info.splitlines()
-    if not lines or not lines[0].endswith(": " + WORKER_GO):
-        raise ValueError("worker Go toolchain metadata mismatch")
-    required = {
-        "build\t-trimpath=true",
-        "build\tCGO_ENABLED=0",
-        "build\tGOARCH=amd64",
-        "build\tGOOS=linux",
-    }
-    normalized = {line.strip() for line in lines}
-    if not required.issubset(normalized):
-        raise ValueError("worker target metadata mismatch")
-
-def verify_linked_licenses(
-    build_info: str, manifest: dict[str, object], license_root: Path
-) -> list[dict[str, str]]:
-    """Match reviewed license material to the exact binary module closure."""
+def reviewed_licenses(manifest: dict[str, object], license_root: Path) -> dict[tuple[str, str], dict[str, object]]:
+    """Verify every reviewed license file and that no other file is present."""
     if manifest.get("schema_version") != 1 or not isinstance(manifest.get("modules"), list):
         raise ValueError("license manifest is invalid")
-    linked = _parse_build_modules(build_info)
     reviewed: dict[tuple[str, str], dict[str, object]] = {}
+    listed: set[str] = set()
     for entry in manifest["modules"]:
         if not isinstance(entry, dict):
             raise ValueError("license manifest entry is invalid")
-        module = entry.get("module")
-        version = entry.get("version")
-        license_name = entry.get("license")
-        files = entry.get("files")
+        module, version = entry.get("module"), entry.get("version")
+        license_name, files = entry.get("license"), entry.get("files")
         if (
             not isinstance(module, str)
             or not isinstance(version, str)
@@ -307,96 +211,115 @@ def verify_linked_licenses(
             or not files
         ):
             raise ValueError("license manifest entry is incomplete")
-        identity = (module, version)
-        if identity in reviewed:
+        if (module, version) in reviewed:
             raise ValueError("duplicate license manifest entry")
         for file_entry in files:
             if not isinstance(file_entry, dict):
                 raise ValueError("license file entry is invalid")
-            relative = file_entry.get("file")
-            expected_digest = file_entry.get("sha256")
-            relative_path = PurePosixPath(relative) if isinstance(relative, str) else None
-            if (
-                relative_path is None
-                or not re.fullmatch(r"[A-Za-z0-9._/-]+", relative)
-                or relative_path.is_absolute()
-                or any(part in {"", ".", ".."} for part in relative_path.parts)
-            ):
-                raise ValueError("license file path is invalid")
+            relative = _safe_relative(file_entry.get("file"), "license file")
             path = license_root / relative
             if path.is_symlink() or not path.is_file():
                 raise ValueError(f"license file is missing: {relative}")
-            if _sha256(path) != expected_digest:
+            if _sha256(path) != file_entry.get("sha256"):
                 raise ValueError(f"license digest mismatch: {relative}")
-        reviewed[identity] = entry
-    if set(linked) != set(reviewed):
-        raise ValueError("linked module inventory mismatch")
-    return [
-        {
+            listed.add(relative)
+        reviewed[(module, version)] = entry
+    present = {
+        path.relative_to(license_root).as_posix()
+        for path in license_root.rglob("*")
+        if not path.is_dir()
+    } - {"MODULES.json"}
+    if present != listed:
+        raise ValueError("license directory contains unreviewed files")
+    return reviewed
+
+
+def go_sums(paths: list[Path]) -> dict[tuple[str, str, bool], str]:
+    """Merge go.sum files keyed by module, version and whether the sum is for go.mod."""
+    sums: dict[tuple[str, str, bool], str] = {}
+    for path in paths:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            fields = line.split()
+            if len(fields) != 3:
+                raise ValueError(f"go.sum is invalid: {path.name}")
+            module, version, checksum = fields
+            key = (module, version.removesuffix("/go.mod"), version.endswith("/go.mod"))
+            if sums.setdefault(key, checksum) != checksum:
+                raise ValueError("go.sum files disagree")
+    return sums
+
+
+def _patched_copy(
+    repository: Path, linker_directory: str, replacement: str, entry: dict[str, object]
+) -> dict[str, str]:
+    path = posixpath.normpath(posixpath.join(linker_directory, replacement))
+    copies = [
+        item for item in entry.get("patched_copies", [])
+        if isinstance(item, dict) and item.get("path") == path and item.get("linked_by") == linker_directory
+    ]
+    if len(copies) != 1:
+        raise ValueError(f"replaced module is not a reviewed patched copy: {entry['module']}")
+    patch = _safe_relative(copies[0].get("patch"), "patch")
+    patch_file = repository / patch
+    if patch_file.is_symlink() or not patch_file.is_file() or _sha256(patch_file) != copies[0].get("patch_sha256"):
+        raise ValueError(f"patch digest mismatch: {patch}")
+    return {"path": path, "patch": patch, "patch_sha256": str(copies[0]["patch_sha256"])}
+
+
+def linked_modules(
+    repository: Path,
+    linked: dict[str, str],
+    manifest: dict[str, object],
+    license_root: Path,
+) -> list[dict[str, object]]:
+    """Match reviewed licenses and module sums to the modules linked into each component.
+
+    linked maps a component directory, such as the guest module, to its build
+    metadata. The scanner module itself is first-party and is not listed.
+    """
+    reviewed = reviewed_licenses(manifest, license_root)
+    sums = go_sums([repository / directory / "go.sum" for directory in sorted(linked)])
+    found: dict[tuple[str, str], tuple[dict[str, str], list[str]]] = {}
+    for directory, build_info in sorted(linked.items()):
+        for identity, metadata in parse_build_modules(build_info).items():
+            if identity[0] == SCANNER_MODULE:
+                if posixpath.normpath(posixpath.join(directory, metadata.get("replacement", ""))) != SCANNER_DIRECTORY:
+                    raise ValueError("scanner module is not linked from the source tree")
+                continue
+            previous, components = found.setdefault(identity, (metadata, []))
+            if previous != metadata or "replacement" in metadata and components:
+                raise ValueError(f"components link different copies of {identity[0]}")
+            components.append(directory)
+    if set(found) != set(reviewed):
+        missing = sorted(f"{module}@{version}" for module, version in set(found) - set(reviewed))
+        extra = sorted(f"{module}@{version}" for module, version in set(reviewed) - set(found))
+        raise ValueError(f"linked module inventory mismatch: unreviewed {missing}, unlinked {extra}")
+    result: list[dict[str, object]] = []
+    for (module, version), (metadata, components) in sorted(found.items()):
+        entry = reviewed[(module, version)]
+        record: dict[str, object] = {
             "module": module,
             "version": version,
-            "module_sum": linked[(module, version)],
-            "license": str(reviewed[(module, version)]["license"]),
+            "license": str(entry["license"]),
+            "linked_by": components,
         }
-        for module, version in sorted(linked)
-    ]
-
-
-def verify_launcher_licenses(
-    repository: Path, toolchain_manifest: dict[str, object]
-) -> list[dict[str, str]]:
-    """Verify legal material for every non-project component linked into the launcher."""
-    root = repository / "THIRD_PARTY_LICENSES/secret-scanner-launcher"
-    try:
-        inventory = json.loads((root / "COMPONENTS.json").read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise ValueError("launcher legal inventory is invalid") from error
-    components = inventory.get("components")
-    if (
-        inventory.get("schema_version") != 1
-        or inventory.get("toolchain_manifest") != LAUNCHER_TOOLCHAIN_MANIFEST
-        or components != toolchain_manifest["runtime_components"]
-    ):
-        raise ValueError("launcher legal inventory does not match the toolchain closure")
-    result: list[dict[str, str]] = []
-    for component in components:
-        license_file = component.get("license_file")
-        if not isinstance(license_file, str) or PurePosixPath(license_file).name != license_file:
-            raise ValueError("launcher license path is invalid")
-        path = root / license_file
-        if path.is_symlink() or not path.is_file() or _sha256(path) != component.get("license_sha256"):
-            raise ValueError("launcher license identity mismatch")
-        if component.get("license") != "MIT":
-            raise ValueError("launcher runtime license is unknown or incompatible")
-        result.append(dict(component))
-    return result
-
-
-def _go_sum_entries(path: Path) -> dict[tuple[str, str, bool], str]:
-    entries: dict[tuple[str, str, bool], str] = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
-        fields = line.split()
-        if len(fields) != 3:
-            raise ValueError("worker go.sum is invalid")
-        module, version, checksum = fields
-        is_go_mod = version.endswith("/go.mod")
-        if is_go_mod:
-            version = version.removesuffix("/go.mod")
-        entries[(module, version, is_go_mod)] = checksum
-    return entries
-
-
-def add_go_mod_sums(modules: list[dict[str, str]], go_sum_path: Path) -> list[dict[str, str]]:
-    sums = _go_sum_entries(go_sum_path)
-    result: list[dict[str, str]] = []
-    for module in modules:
-        identity = (module["module"], module["version"])
-        if sums.get((*identity, False)) != module["module_sum"]:
-            raise ValueError("worker module sum does not match go.sum")
-        go_mod_sum = sums.get((*identity, True))
+        if "replacement" in metadata:
+            record["patched_copy"] = _patched_copy(repository, components[0], metadata["replacement"], entry)
+            upstream = sums.get((module, version, False))
+            if not upstream:
+                raise ValueError(f"upstream module sum is missing: {module}")
+            record["upstream_module_sum"] = upstream
+        else:
+            if entry.get("patched_copies"):
+                raise ValueError(f"reviewed patched copy is not linked: {module}")
+            if sums.get((module, version, False)) != metadata["module_sum"]:
+                raise ValueError(f"module sum does not match go.sum: {module}")
+            record["module_sum"] = metadata["module_sum"]
+        go_mod_sum = sums.get((module, version, True))
         if not go_mod_sum:
-            raise ValueError("worker go.mod sum is missing")
-        result.append({**module, "go_mod_sum": go_mod_sum})
+            raise ValueError(f"go.mod sum is missing: {module}")
+        record["go_mod_sum"] = go_mod_sum
+        result.append(record)
     return result
 
 
@@ -404,47 +327,20 @@ def _canonical_json(document: object) -> bytes:
     return (json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
 
 
+def _package_id(*parts: str) -> str:
+    return "SPDXRef-Package-" + hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
+
+
 def encode_release_evidence(
-    *,
-    launcher_sha1: str,
-    launcher_sha256: str,
-    worker_sha1: str,
-    worker_sha256: str,
-    launcher_source_sha256: str,
-    launcher_build_contract_sha256: str,
-    launcher_toolchain_manifest_sha256: str,
-    launcher_toolchain_manifest: dict[str, object],
-    launcher_runtime_components: list[dict[str, str]],
-    modules: list[dict[str, str]],
+    *, helper_sha1: str, helper_sha256: str, guest_sha256: str, modules: list[dict[str, object]],
 ) -> tuple[bytes, bytes]:
     """Encode deterministic scanner build evidence and SPDX 2.3 JSON."""
-    for digest in (launcher_sha1, worker_sha1):
-        if not re.fullmatch(r"[0-9a-f]{40}", digest):
-            raise ValueError("release digest is invalid")
-    for digest in (
-        launcher_sha256,
-        worker_sha256,
-        launcher_source_sha256,
-        launcher_build_contract_sha256,
-        launcher_toolchain_manifest_sha256,
-    ):
+    if not re.fullmatch(r"[0-9a-f]{40}", helper_sha1):
+        raise ValueError("release digest is invalid")
+    for digest in (helper_sha256, guest_sha256):
         if not re.fullmatch(r"[0-9a-f]{64}", digest):
             raise ValueError("release digest is invalid")
-    combined = hashlib.sha256(
-        f"{launcher_sha256}\n{worker_sha256}\n".encode("ascii")
-    ).hexdigest()
-    builder_identity = hashlib.sha256(_canonical_json({
-        "archive_sha256": launcher_toolchain_manifest["archive"]["sha256"],
-        "build_contract_sha256": launcher_build_contract_sha256,
-        "cflags": list(LAUNCHER_CFLAGS),
-        "cppflags": list(LAUNCHER_CPPFLAGS),
-        "extracted_tree_sha256": launcher_toolchain_manifest["extracted_tree"]["sha256"],
-        "ldflags": list(LAUNCHER_LDFLAGS),
-        "build_environment": LAUNCHER_BUILD_ENVIRONMENT,
-        "source_sha256": launcher_source_sha256,
-        "target": LAUNCHER_ZIG_TARGET,
-        "toolchain_manifest_sha256": launcher_toolchain_manifest_sha256,
-    })).hexdigest()
+    goos, goarch = RELEASE_TARGET
     evidence = {
         "schema_version": 1,
         "scanner": SCANNER_NAME,
@@ -454,118 +350,68 @@ def encode_release_evidence(
         "ruleset_rule_count": RULESET_RULE_COUNT,
         "regexp_engine": "re2",
         "build_profile": BUILD_PROFILE,
-        "sandbox_profile": "single_threaded_landlock_exec_then_worker_seccomp_tsync_v1",
-        "launcher": {
-            "sha256": launcher_sha256,
-            "source_sha256": launcher_source_sha256,
-            "builder": "zig",
-            "builder_version": LAUNCHER_ZIG_VERSION,
-            "target": LAUNCHER_ZIG_TARGET,
-            "toolchain_archive": launcher_toolchain_manifest["archive"],
-            "toolchain_extracted_tree": launcher_toolchain_manifest["extracted_tree"],
-            "toolchain_input_closure": launcher_toolchain_manifest["input_closure"],
-            "toolchain_manifest_sha256": launcher_toolchain_manifest_sha256,
-            "build_contract_sha256": launcher_build_contract_sha256,
-            "builder_identity": builder_identity,
-            "cppflags": list(LAUNCHER_CPPFLAGS),
-            "cflags": list(LAUNCHER_CFLAGS),
-            "ldflags": list(LAUNCHER_LDFLAGS),
-            "build_environment": LAUNCHER_BUILD_ENVIRONMENT,
-            "runtime_components": launcher_runtime_components,
-        },
-        "worker": {
-            "sha256": worker_sha256,
-            "go_toolchain": WORKER_GO,
-            "goos": "linux",
-            "goarch": "amd64",
+        "helper": {
+            "path": HELPER_PATH,
+            "sha256": helper_sha256,
+            "go_toolchain": GO_TOOLCHAIN,
+            "goos": goos,
+            "goarch": goarch,
             "cgo_enabled": False,
-            "build_flags": list(WORKER_BUILD_FLAGS),
-            "modules": modules,
+            "build_flags": [
+                "-trimpath", "-buildvcs=false",
+                f"-ldflags=-s -w -buildid= -X main.expectedGuestSHA256={guest_sha256}",
+            ],
         },
+        "guest": {
+            "sha256": guest_sha256,
+            "go_toolchain": GO_TOOLCHAIN,
+            "goos": "wasip1",
+            "goarch": "wasm",
+            "cgo_enabled": False,
+            "build_flags": list(GUEST_BUILD_FLAGS),
+        },
+        "modules": modules,
         "root_client": {
-            "go_toolchain": ROOT_GO,
-            "launcher_sha256": launcher_sha256,
-            "worker_sha256": worker_sha256,
+            "go_toolchain": GO_TOOLCHAIN,
+            "helper_sha256": helper_sha256,
+            "helper_pin": HELPER_PIN,
         },
-        "combined_release_identity": combined,
     }
     root_id = "SPDXRef-Package-Secret-Scanner"
-    worker_file_id = "SPDXRef-File-Worker"
-    launcher_file_id = "SPDXRef-File-Launcher"
-    packages = [{
-        "SPDXID": root_id,
-        "name": "Open Trestle secret scanner",
-        "versionInfo": BUILD_PROFILE,
-        "downloadLocation": "NOASSERTION",
-        "filesAnalyzed": False,
-        "licenseConcluded": "Apache-2.0",
-        "licenseDeclared": "Apache-2.0",
-        "primaryPackagePurpose": "APPLICATION",
-    }]
-    relationships = [
-        {"spdxElementId": root_id, "relationshipType": "DISTRIBUTION_ARTIFACT", "relatedSpdxElement": launcher_file_id},
-        {"spdxElementId": root_id, "relationshipType": "DISTRIBUTION_ARTIFACT", "relatedSpdxElement": worker_file_id},
-    ]
-    builder_package_id = "SPDXRef-Package-Launcher-Builder-Zig"
-    packages.append({
-        "SPDXID": builder_package_id,
-        "name": "Zig launcher toolchain",
-        "versionInfo": LAUNCHER_ZIG_VERSION,
-        "downloadLocation": launcher_toolchain_manifest["archive"]["url"],
-        "filesAnalyzed": False,
-        "licenseConcluded": "NOASSERTION",
-        "licenseDeclared": "NOASSERTION",
-        "checksums": [{
-            "algorithm": "SHA256",
-            "checksumValue": launcher_toolchain_manifest["archive"]["sha256"],
-        }],
-        "sourceInfo": "Complete compiler, linker, headers, sysroot, and static-library closure is bound by the archive and extracted-tree SHA-256 values in the scanner release evidence.",
-    })
-    relationships.append({
-        "spdxElementId": builder_package_id,
-        "relationshipType": "BUILD_TOOL_OF",
-        "relatedSpdxElement": launcher_file_id,
-    })
-    for component in launcher_runtime_components:
-        component_identity = f"launcher-runtime\n{component['name']}\n{component['version']}".encode("utf-8")
-        component_id = "SPDXRef-Package-" + hashlib.sha256(component_identity).hexdigest()
-        packages.append({
-            "SPDXID": component_id,
-            "name": component["name"],
-            "versionInfo": component["version"],
-            "downloadLocation": launcher_toolchain_manifest["archive"]["url"],
+    helper_id = "SPDXRef-File-Scan-Helper"
+    guest_id = "SPDXRef-Package-Scan-Guest"
+    linkers = {SCANNER_DIRECTORY: helper_id, GUEST_DIRECTORY: guest_id}
+    packages = [
+        {
+            "SPDXID": root_id,
+            "name": "Open Trestle secret scanner",
+            "versionInfo": BUILD_PROFILE,
+            "downloadLocation": "NOASSERTION",
             "filesAnalyzed": False,
-            "licenseConcluded": component["license"],
-            "licenseDeclared": component["license"],
+            "licenseConcluded": "Apache-2.0",
+            "licenseDeclared": "Apache-2.0",
+            "primaryPackagePurpose": "APPLICATION",
+        },
+        {
+            "SPDXID": guest_id,
+            "name": "Open Trestle scan guest",
+            "versionInfo": BUILD_PROFILE,
+            "downloadLocation": "NOASSERTION",
+            "filesAnalyzed": False,
+            "checksums": [{"algorithm": "SHA256", "checksumValue": guest_sha256}],
+            "licenseConcluded": "NOASSERTION",
+            "licenseDeclared": "Apache-2.0",
             "primaryPackagePurpose": "LIBRARY",
-            "sourceInfo": f"Runtime code linked from the verified Zig {LAUNCHER_ZIG_VERSION} toolchain archive.",
-        })
-        relationships.append({
-            "spdxElementId": launcher_file_id,
-            "relationshipType": "STATIC_LINK",
-            "relatedSpdxElement": component_id,
-        })
-    linux_headers_id = "SPDXRef-Package-Linux-UAPI-Headers"
-    packages.append({
-        "SPDXID": linux_headers_id,
-        "name": "Linux UAPI headers bundled in Zig 0.14.1",
-        "versionInfo": "zig-0.14.1-bundle",
-        "downloadLocation": launcher_toolchain_manifest["archive"]["url"],
-        "filesAnalyzed": False,
-        "licenseConcluded": "NOASSERTION",
-        "licenseDeclared": "GPL-2.0 WITH Linux-syscall-note",
-        "primaryPackagePurpose": "SOURCE",
-        "sourceInfo": "Compile-time headers only; no Linux kernel code is linked into the launcher.",
-    })
-    relationships.append({
-        "spdxElementId": linux_headers_id,
-        "relationshipType": "BUILD_DEPENDENCY_OF",
-        "relatedSpdxElement": launcher_file_id,
-    })
+            "sourceInfo": "WebAssembly module for wasip1/wasm embedded in the scan helper.",
+        },
+    ]
+    relationships = [
+        {"spdxElementId": root_id, "relationshipType": "DISTRIBUTION_ARTIFACT", "relatedSpdxElement": helper_id},
+        {"spdxElementId": helper_id, "relationshipType": "CONTAINS", "relatedSpdxElement": guest_id},
+    ]
     for module in modules:
-        identity = f"{module['module']}\n{module['version']}".encode("utf-8")
-        package_id = "SPDXRef-Package-" + hashlib.sha256(identity).hexdigest()
-        packages.append({
+        package_id = _package_id(str(module["module"]), str(module["version"]))
+        package = {
             "SPDXID": package_id,
             "name": module["module"],
             "versionInfo": module["version"],
@@ -576,14 +422,22 @@ def encode_release_evidence(
             "externalRefs": [{
                 "referenceCategory": "PACKAGE-MANAGER",
                 "referenceType": "purl",
-                "referenceLocator": f"pkg:golang/{quote(module['module'], safe='/')}@{quote(module['version'], safe='._-~')}",
+                "referenceLocator": f"pkg:golang/{quote(str(module['module']), safe='/')}@{quote(str(module['version']), safe='._-~')}",
             }],
-        })
-        relationships.append({
-            "spdxElementId": root_id,
-            "relationshipType": "DEPENDS_ON",
-            "relatedSpdxElement": package_id,
-        })
+        }
+        if "patched_copy" in module:
+            copy = module["patched_copy"]
+            package["sourceInfo"] = (
+                f"Patched copy at {copy['path']}: the upstream release plus {copy['patch']} "
+                f"(SHA-256 {copy['patch_sha256']})."
+            )
+        packages.append(package)
+        for directory in module["linked_by"]:
+            relationships.append({
+                "spdxElementId": linkers[directory],
+                "relationshipType": "STATIC_LINK",
+                "relatedSpdxElement": package_id,
+            })
     namespace_identity = hashlib.sha256(_canonical_json(evidence)).hexdigest()
     spdx = {
         "spdxVersion": "SPDX-2.3",
@@ -596,30 +450,17 @@ def encode_release_evidence(
             "creators": ["Tool: open-trestle-secret-scanner-packager-1"],
         },
         "documentDescribes": [root_id],
-        "files": [
-            {
-                "SPDXID": launcher_file_id,
-                "fileName": "./libexec/open-trestle/open-trestle-secret-scanner",
-                "checksums": [
-                    {"algorithm": "SHA1", "checksumValue": launcher_sha1},
-                    {"algorithm": "SHA256", "checksumValue": launcher_sha256},
-                ],
-                "licenseConcluded": "Apache-2.0 AND MIT",
-                "licenseInfoInFiles": ["NOASSERTION"],
-                "copyrightText": "NOASSERTION",
-            },
-            {
-                "SPDXID": worker_file_id,
-                "fileName": "./libexec/open-trestle/open-trestle-secret-scanner-worker",
-                "checksums": [
-                    {"algorithm": "SHA1", "checksumValue": worker_sha1},
-                    {"algorithm": "SHA256", "checksumValue": worker_sha256},
-                ],
-                "licenseConcluded": "NOASSERTION",
-                "licenseInfoInFiles": ["NOASSERTION"],
-                "copyrightText": "NOASSERTION",
-            },
-        ],
+        "files": [{
+            "SPDXID": helper_id,
+            "fileName": "./" + HELPER_PATH,
+            "checksums": [
+                {"algorithm": "SHA1", "checksumValue": helper_sha1},
+                {"algorithm": "SHA256", "checksumValue": helper_sha256},
+            ],
+            "licenseConcluded": "NOASSERTION",
+            "licenseInfoInFiles": ["NOASSERTION"],
+            "copyrightText": "NOASSERTION",
+        }],
         "packages": packages,
         "relationships": relationships,
     }
@@ -661,7 +502,7 @@ def validate_staging(
     if actual != expected_files:
         raise ValueError("staging inventory mismatch")
     forbidden_segments = {"references", "source", "sources", "test", "tests", "tools", "workers"}
-    forbidden_suffixes = {".c", ".go", ".h", ".o", ".py", ".sh"}
+    forbidden_suffixes = {".c", ".go", ".h", ".o", ".py", ".sh", ".wasm"}
     for relative in actual:
         path = PurePosixPath(relative)
         if forbidden_segments.intersection(part.lower() for part in path.parts):
@@ -671,7 +512,7 @@ def validate_staging(
                 raise ValueError("catalog script mode is not read-only")
             if _sha256(root / relative) != expected_source_digests.get(relative):
                 raise ValueError("catalog script digest mismatch")
-        elif path.suffix.lower() in forbidden_suffixes or path.name in {"go", "gcc", "make", "ld", "zig", "clang", "lld", "musl-gcc"}:
+        elif path.suffix.lower() in forbidden_suffixes or path.name in {"go", "gcc", "make", "ld", "clang"}:
             raise ValueError("source, test, private reference, or build tool in staging")
     for relative in EXECUTABLE_PATHS:
         path = root / relative
@@ -681,128 +522,6 @@ def validate_staging(
     if data.is_symlink() or not data.is_dir() or any(data.iterdir()):
         raise ValueError("runtime data staging must be an empty directory")
     return tuple(sorted(actual))
-
-
-def _environment(toolchain: str, go_tmp: Path | None = None) -> dict[str, str]:
-    environment = os.environ.copy()
-    environment.update({
-        "GOWORK": "off",
-        "GOTOOLCHAIN": toolchain,
-        "GOOS": "linux",
-        "GOARCH": "amd64",
-        "CGO_ENABLED": "0",
-    })
-    if go_tmp is not None:
-        go_tmp.mkdir(parents=True, exist_ok=True)
-        environment["GOTMPDIR"] = str(go_tmp)
-    return environment
-
-
-def _build_worker(repository: Path, output: Path, go_tmp: Path) -> None:
-    _run(
-        [
-            "go", "build", "-trimpath", "-buildvcs=false",
-            "-ldflags=-s -w -buildid=", "-o", str(output),
-            "./cmd/open-trestle-secret-scanner",
-        ],
-        cwd=repository / "workers/secret-scanner",
-        environment=_environment(WORKER_GO, go_tmp),
-    )
-
-
-
-def verify_launcher_build_contract(repository: Path) -> None:
-    """Require the reviewed makefile to match the hermetic production command."""
-    makefile = (repository / "workers/secret-scanner/launcher/build.mk").read_text(encoding="utf-8")
-    required = (
-        f"EXPECTED_ZIG_VERSION := {LAUNCHER_ZIG_VERSION}",
-        f"ZIG_TARGET := {LAUNCHER_ZIG_TARGET}",
-        "CPPFLAGS := " + " ".join(LAUNCHER_CPPFLAGS),
-        "CFLAGS := " + " ".join(LAUNCHER_CFLAGS),
-        "LDFLAGS := " + " ".join(LAUNCHER_LDFLAGS),
-    )
-    if any(line not in makefile.splitlines() for line in required):
-        raise ValueError("launcher build contract mismatch")
-
-
-def launcher_build_command(zig: Path, output: Path) -> list[str]:
-    """Return the complete fixed launcher compiler invocation."""
-    return [
-        str(zig), "cc", "-target", LAUNCHER_ZIG_TARGET,
-        *LAUNCHER_CPPFLAGS, *LAUNCHER_CFLAGS, *LAUNCHER_LDFLAGS,
-        "-o", str(output), "launcher.c",
-    ]
-
-
-def _build_launcher(
-    repository: Path, output: Path, toolchain: Path, cache: Path
-) -> None:
-    environment = {
-        "LC_ALL": "C",
-        "SOURCE_DATE_EPOCH": "0",
-        "ZIG_GLOBAL_CACHE_DIR": str(cache / "global"),
-        "ZIG_LOCAL_CACHE_DIR": str(cache / "local"),
-    }
-    _run(
-        launcher_build_command(toolchain / "zig", output),
-        cwd=repository / "workers/secret-scanner/launcher",
-        environment=environment,
-    )
-
-
-def verify_static_pie_launcher(path: Path) -> None:
-    """Require a static x86-64 PIE with no interpreter or dynamic dependency."""
-    data = path.read_bytes()
-    header_format = "<16sHHIQQQIHHHHHH"
-    header_size = struct.calcsize(header_format)
-    if len(data) < header_size:
-        raise ValueError("launcher ELF header is truncated")
-    header = struct.unpack_from(header_format, data)
-    identity, elf_type, machine = header[0], header[1], header[2]
-    program_offset, program_entry_size, program_count = header[5], header[9], header[10]
-    if (
-        identity[:7] != b"\x7fELF\x02\x01\x01"
-        or elf_type != 3
-        or machine != 62
-        or program_entry_size != struct.calcsize("<IIQQQQQQ")
-    ):
-        raise ValueError("launcher is not an x86-64 static PIE")
-    dynamic: tuple[int, int] | None = None
-    has_nonexec_stack = False
-    for index in range(program_count):
-        offset = program_offset + index * program_entry_size
-        if offset + program_entry_size > len(data):
-            raise ValueError("launcher program header is truncated")
-        program_type, flags, file_offset, _, _, file_size, _, _ = struct.unpack_from(
-            "<IIQQQQQQ", data, offset
-        )
-        if program_type == 3:
-            raise ValueError("launcher has a dynamic interpreter")
-        if program_type == 2:
-            dynamic = (file_offset, file_size)
-        if program_type == 0x6474E551:
-            has_nonexec_stack = flags & 1 == 0
-    if dynamic is None or not has_nonexec_stack:
-        raise ValueError("launcher hardening metadata is incomplete")
-    dynamic_offset, dynamic_size = dynamic
-    has_pie = False
-    has_bind_now = False
-    for offset in range(dynamic_offset, dynamic_offset + dynamic_size, 16):
-        if offset + 16 > len(data):
-            raise ValueError("launcher dynamic section is truncated")
-        tag, value = struct.unpack_from("<qQ", data, offset)
-        if tag == 0:
-            break
-        if tag == 1:
-            raise ValueError("launcher has a dynamic dependency")
-        if tag == 24 or tag == 30 and value & 8:
-            has_bind_now = True
-        if tag == 0x6FFFFFFB and value & 0x08000000:
-            has_pie = True
-    if not has_pie or not has_bind_now:
-        raise ValueError("launcher PIE or BIND_NOW flag is missing")
-    if b"GLIBC_" in data or b"GNU C Library" in data:
-        raise ValueError("launcher contains a glibc runtime reference")
 
 
 def _copy_file(source: Path, destination: Path, mode: int = 0o444) -> None:
@@ -815,17 +534,15 @@ def _copy_file(source: Path, destination: Path, mode: int = 0o444) -> None:
 
 def _expected_staging_files(repository: Path) -> set[str]:
     files = {
-        "ca-certificates.crt", "LICENSE", "NOTICE", "trestle", "trestled",
+        "ca-certificates.crt", "LICENSE", "NOTICE", "trestle", "trestled", HELPER_PATH,
         *RELEASE_SOURCE_PATHS,
-        "libexec/open-trestle/open-trestle-secret-scanner",
-        "libexec/open-trestle/open-trestle-secret-scanner-worker",
         "release/secret-scanner-release.json",
         "release/secret-scanner.spdx.json",
     }
-    for source_root in (repository / "THIRD_PARTY_LICENSES",):
-        for path in source_root.rglob("*"):
-            if path.is_file():
-                files.add("licenses/" + path.relative_to(source_root).as_posix())
+    source_root = repository / "THIRD_PARTY_LICENSES"
+    for path in source_root.rglob("*"):
+        if path.is_file():
+            files.add("licenses/" + path.relative_to(source_root).as_posix())
     return files
 
 
@@ -837,7 +554,7 @@ def source_binding(repository: Path) -> dict[str, str]:
         raise ValueError("protected packaging requires verified clean source") from error
     if not state.clean:
         raise ValueError("protected packaging requires verified clean source")
-    # Ignored staging and toolchain caches change during the build, not tracked inputs.
+    # Ignored staging and build directories change during the build, not tracked inputs.
     fields = (
         state.git_authority_sha256, state.committed_tree_sha256,
         state.live_tracked_tree_sha256, state.index_sha256,
@@ -872,7 +589,7 @@ def verify_root_provenance(payload: str, program: str, binding: dict[str, str]) 
 
 
 def verify_packaged_provenance(repository: Path, staging: Path, binding: dict[str, str]) -> None:
-    """Inspect both native product entry points without loading daemon runtime configuration."""
+    """Inspect both product entry points without loading daemon runtime configuration."""
     for name in ("trestle", "trestled"):
         payload = _run(
             [str(staging / name), "build-info"], cwd=repository,
@@ -881,63 +598,80 @@ def verify_packaged_provenance(repository: Path, staging: Path, binding: dict[st
         verify_root_provenance(payload, name, binding)
 
 
+def build_root_binaries(
+    repository: Path,
+    output: Path,
+    target: tuple[str, str],
+    helper_sha256: str,
+    go_tmp: Path,
+    binding: dict[str, str] | None = None,
+) -> dict[str, Path]:
+    """Build trestle and trestled for target with the helper digest pinned."""
+    flags = f"-s -w -buildid= -X {HELPER_PIN}={helper_sha256}"
+    if binding is not None:
+        flags += (
+            f" -X {BUILDINFO_PACKAGE}.sourceRevision={binding['source_revision']}"
+            f" -X {BUILDINFO_PACKAGE}.sourceTree={binding['source_tree']}"
+        )
+    binaries: dict[str, Path] = {}
+    for name in ("trestle", "trestled"):
+        binary = output / _executable_name(name, target[0])
+        _run(
+            ["go", "build", "-trimpath", "-buildvcs=false", f"-ldflags={flags}", "-o", str(binary), f"./cmd/{name}"],
+            cwd=repository,
+            environment=_go_environment(go_tmp, target),
+        )
+        build_info = _run(["go", "version", "-m", str(binary)], cwd=repository, environment=_go_environment(go_tmp))
+        verify_go_toolchain(build_info, name)
+        if helper_sha256.encode("ascii") not in binary.read_bytes():
+            raise ValueError(f"{name} does not contain the scan helper digest")
+        binaries[name] = binary
+    return binaries
+
+
+def _verify_go_mod_pins(repository: Path) -> None:
+    for directory in (".", SCANNER_DIRECTORY, GUEST_DIRECTORY):
+        go_mod = (repository / directory / "go.mod").read_text(encoding="utf-8")
+        if "\ngo 1.25.0\n" not in go_mod or f"\ntoolchain {GO_TOOLCHAIN}\n" not in go_mod:
+            raise ValueError(f"Go toolchain pin changed: {directory}/go.mod")
+
+
 def package(repository: Path, output: Path) -> None:
-    """Build deterministic scanner binaries and create the runtime staging tree."""
+    """Build the deterministic scan helper and root binaries into the runtime staging tree."""
     repository = repository.resolve()
     binding = source_binding(repository)
     expected_source_digests = release_input_digests(repository)
     output = output.resolve()
     if output == repository or repository not in output.parents:
         raise ValueError("staging output must be a repository subdirectory")
-    root_mod = (repository / "go.mod").read_text(encoding="utf-8")
-    if "\ngo 1.25.0\n" not in root_mod or "\ntoolchain go1.26.11\n" not in root_mod:
-        raise ValueError("root toolchain pin changed")
-    worker_mod = (repository / "workers/secret-scanner/go.mod").read_text(encoding="utf-8")
-    if "\ngo 1.25.0\n" not in worker_mod or "\ntoolchain go1.26.11\n" not in worker_mod:
-        raise ValueError("worker toolchain pin changed")
+    _verify_go_mod_pins(repository)
     temporary_root = repository / ".tmp"
     temporary_root.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="open-trestle-secret-scanner-", dir=temporary_root) as directory:
         temporary = Path(directory)
         go_tmp = temporary / "go-tmp"
-        verify_launcher_build_contract(repository)
-        toolchain, toolchain_manifest, toolchain_manifest_sha256 = provision_launcher_toolchain(
-            repository, temporary
-        )
-        launcher_runtime_components = verify_launcher_licenses(repository, toolchain_manifest)
-        launcher_a = temporary / "launcher-a"
-        launcher_b = temporary / "launcher-b"
-        worker_a = temporary / "worker-a"
-        worker_b = temporary / "worker-b"
-        _build_launcher(repository, launcher_a, toolchain, temporary / "zig-cache-a")
-        _build_launcher(repository, launcher_b, toolchain, temporary / "zig-cache-b")
-        _build_worker(repository, worker_a, go_tmp)
-        _build_worker(repository, worker_b, go_tmp)
-        if launcher_a.read_bytes() != launcher_b.read_bytes():
-            raise ValueError("launcher builds are not deterministic")
-        verify_static_pie_launcher(launcher_a)
-        verify_static_pie_launcher(launcher_b)
-        if worker_a.read_bytes() != worker_b.read_bytes():
-            raise ValueError("worker builds are not deterministic")
-        launcher_sha1, launcher_digest = _file_checksums(launcher_a)
-        worker_sha1, worker_digest = _file_checksums(worker_a)
-        build_info = _run(["go", "version", "-m", str(worker_a)], cwd=repository)
-        verify_worker_build_info(build_info)
+        helper_a, guest_a = build_helper(repository, temporary / "build-a", RELEASE_TARGET, go_tmp)
+        helper_b, guest_b = build_helper(repository, temporary / "build-b", RELEASE_TARGET, go_tmp)
+        helper_bytes = helper_a.read_bytes()
+        guest_bytes = guest_a.read_bytes()
+        if helper_bytes != helper_b.read_bytes() or guest_bytes != guest_b.read_bytes():
+            raise ValueError("scan helper builds are not deterministic")
+        helper_sha1, helper_sha256 = _file_checksums(helper_a)
+        guest_sha256 = _sha256(guest_a)
+        if guest_sha256.encode("ascii") not in helper_bytes or guest_bytes not in helper_bytes:
+            raise ValueError("scan helper does not embed and pin the built guest")
+        helper_info = _run(["go", "version", "-m", str(helper_a)], cwd=repository, environment=_go_environment(go_tmp))
+        verify_go_toolchain(helper_info, "scan helper")
+        verify_build_settings(helper_info, HELPER_PACKAGE, RELEASE_TARGET)
+        guest_info = embedded_build_info(guest_bytes)
+        verify_build_settings(guest_info, GUEST_PACKAGE, ("wasip1", "wasm"))
         license_root = repository / "THIRD_PARTY_LICENSES/secret-scanner"
         manifest = json.loads((license_root / "MODULES.json").read_text(encoding="utf-8"))
-        modules = verify_linked_licenses(build_info, manifest, license_root)
-        modules = add_go_mod_sums(modules, repository / "workers/secret-scanner/go.sum")
+        modules = linked_modules(
+            repository, {SCANNER_DIRECTORY: helper_info, GUEST_DIRECTORY: guest_info}, manifest, license_root,
+        )
         evidence, spdx = encode_release_evidence(
-            launcher_sha1=launcher_sha1,
-            launcher_sha256=launcher_digest,
-            worker_sha1=worker_sha1,
-            worker_sha256=worker_digest,
-            launcher_source_sha256=_sha256(repository / "workers/secret-scanner/launcher/launcher.c"),
-            launcher_build_contract_sha256=_sha256(repository / "workers/secret-scanner/launcher/build.mk"),
-            launcher_toolchain_manifest_sha256=toolchain_manifest_sha256,
-            launcher_toolchain_manifest=toolchain_manifest,
-            launcher_runtime_components=launcher_runtime_components,
-            modules=modules,
+            helper_sha1=helper_sha1, helper_sha256=helper_sha256, guest_sha256=guest_sha256, modules=modules,
         )
         if output.exists():
             if output.is_symlink():
@@ -954,65 +688,81 @@ def package(repository: Path, output: Path) -> None:
         for path in (output / "licenses").rglob("*"):
             if path.is_file():
                 path.chmod(0o444)
-        _copy_file(
-            launcher_a,
-            output / "libexec/open-trestle/open-trestle-secret-scanner",
-            0o555,
-        )
-        _copy_file(
-            worker_a,
-            output / "libexec/open-trestle/open-trestle-secret-scanner-worker",
-            0o555,
-        )
-        staged_launcher = output / "libexec/open-trestle/open-trestle-secret-scanner"
-        staged_worker = output / "libexec/open-trestle/open-trestle-secret-scanner-worker"
-        if _sha256(staged_launcher) != launcher_digest or _sha256(staged_worker) != worker_digest:
-            raise ValueError("staged scanner digest mismatch")
+        _copy_file(helper_a, output / HELPER_PATH, 0o555)
+        if _sha256(output / HELPER_PATH) != helper_sha256:
+            raise ValueError("staged scan helper digest mismatch")
         release_dir = output / "release"
         release_dir.mkdir()
         (release_dir / "secret-scanner-release.json").write_bytes(evidence)
         (release_dir / "secret-scanner.spdx.json").write_bytes(spdx)
         for path in release_dir.iterdir():
             path.chmod(0o444)
-        root_environment = _environment(ROOT_GO, go_tmp)
-        root_environment.update({"GOENV": "off", "GOFLAGS": "", "GOEXPERIMENT": ""})
-        root_flags = (
-            "-s -w -buildid= "
-            f"-X github.com/georgejieh/open-trestle/internal/secretscan.expectedSecretScannerLauncherSHA256={launcher_digest} "
-            f"-X github.com/georgejieh/open-trestle/internal/secretscan.expectedSecretScannerWorkerSHA256={worker_digest} "
-            f"-X github.com/georgejieh/open-trestle/internal/buildinfo.sourceRevision={binding['source_revision']} "
-            f"-X github.com/georgejieh/open-trestle/internal/buildinfo.sourceTree={binding['source_tree']}"
-        )
-        for command, name in (("./cmd/trestle", "trestle"), ("./cmd/trestled", "trestled")):
-            _run(
-                ["go", "build", "-trimpath", "-buildvcs=false", f"-ldflags={root_flags}", "-o", str(output / name), command],
-                cwd=repository,
-                environment=root_environment,
-            )
-            (output / name).chmod(0o555)
-            root_build_info = _run(["go", "version", "-m", str(output / name)], cwd=repository)
-            verify_root_build_info(root_build_info)
-            binary = (output / name).read_bytes()
-            if launcher_digest.encode("ascii") not in binary or worker_digest.encode("ascii") not in binary:
-                raise ValueError(f"{name} does not contain both scanner digests")
+        for binary in build_root_binaries(repository, output, RELEASE_TARGET, helper_sha256, go_tmp, binding).values():
+            binary.chmod(0o555)
     verify_packaged_provenance(repository, output, binding)
     if source_binding(repository) != binding:
         raise ValueError("source changed during packaging")
     validate_staging(output, _expected_staging_files(repository), expected_source_digests)
 
 
+def build_development(repository: Path, output: Path, target: tuple[str, str] | None) -> None:
+    """Build trestle, trestled and the scan helper for target from the working tree.
+
+    The outputs are output/bin/trestle, output/bin/trestled and
+    output/libexec/open-trestle/open-trestle-scan-helper (with .exe for
+    Windows). They are not bound to committed source.
+    """
+    repository = repository.resolve()
+    output = output.resolve()
+    if output.is_symlink() or output.exists() and not output.is_dir():
+        raise ValueError("development output must be a directory")
+    _verify_go_mod_pins(repository)
+    with tempfile.TemporaryDirectory(prefix="open-trestle-development-") as directory:
+        temporary = Path(directory)
+        go_tmp = temporary / "go-tmp"
+        target = target or _host_target(repository, go_tmp)
+        helper, guest = build_helper(repository, temporary / "helper", target, go_tmp)
+        helper_bytes = helper.read_bytes()
+        helper_sha256 = _sha256(helper)
+        if _sha256(guest).encode("ascii") not in helper_bytes:
+            raise ValueError("scan helper does not pin the built guest")
+        helper_info = _run(["go", "version", "-m", str(helper)], cwd=repository, environment=_go_environment(go_tmp))
+        verify_go_toolchain(helper_info, "scan helper")
+        verify_build_settings(helper_info, HELPER_PACKAGE, target)
+        binaries = build_root_binaries(repository, temporary, target, helper_sha256, go_tmp)
+        placements = [(helper, output / "libexec/open-trestle" / helper.name)]
+        placements += [(binary, output / "bin" / binary.name) for binary in binaries.values()]
+        for source, destination in placements:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            if os.name != "nt":
+                source.chmod(0o555)
+            os.replace(source, destination)
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--verify", metavar="DIRECTORY")
-    parser.add_argument("--output", default=".container", metavar="DIRECTORY")
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--output", default=".container", metavar="DIRECTORY",
+                       help="release staging directory below the repository")
+    modes.add_argument("--verify", metavar="DIRECTORY", help="verify a release staging directory")
+    modes.add_argument("--development", metavar="DIRECTORY",
+                       help="build pinned development binaries from the working tree")
+    parser.add_argument("--target", metavar="GOOS/GOARCH",
+                        help="development target; the host target by default")
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
-    arguments = _parser().parse_args(argv)
+    parser = _parser()
+    arguments = parser.parse_args(argv)
+    if arguments.target and not arguments.development:
+        parser.error("--target requires --development")
     repository = Path(__file__).resolve().parent.parent
     try:
-        if arguments.verify:
+        if arguments.development:
+            target = parse_target(arguments.target) if arguments.target else None
+            build_development(repository, Path(arguments.development), target)
+        elif arguments.verify:
             binding = source_binding(repository)
             validate_staging(
                 repository / arguments.verify,

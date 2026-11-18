@@ -712,5 +712,5 @@
     }
   ],
   "schema_version": 1,
-  "source": "go version -m on the deterministic production worker"
+  "source": "modules linked into the scan helper and the scan guest"
 }

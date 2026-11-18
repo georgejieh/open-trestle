@@ -50,13 +50,8 @@ def _staging(root: Path, marker: bytes = b"one") -> Path:
     _write(staging / "trestle", _elf(b"trestle-" + marker), 0o555)
     _write(staging / "trestled", _elf(b"trestled-" + marker), 0o555)
     _write(
-        staging / "libexec/open-trestle/open-trestle-secret-scanner",
-        _elf(b"launcher-" + marker, 3),
-        0o555,
-    )
-    _write(
-        staging / "libexec/open-trestle/open-trestle-secret-scanner-worker",
-        _elf(b"worker-" + marker),
+        staging / "libexec/open-trestle/open-trestle-scan-helper",
+        _elf(b"helper-" + marker),
         0o555,
     )
     _write(staging / "LICENSE", b"project license\n", 0o444)
@@ -380,7 +375,7 @@ class BuilderTest(unittest.TestCase):
             self.assertFalse(Path(str(output) + ".sha256").exists())
 
     def test_build_rejects_wrong_modes_symlinks_elf_target_and_unexpected_inventory(self):
-        cases = ("mode", "symlink", "elf", "unexpected", "release")
+        cases = ("mode", "symlink", "elf", "pie", "unexpected", "release")
         for case in cases:
             with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
@@ -396,6 +391,10 @@ class BuilderTest(unittest.TestCase):
                     struct.pack_into("<H", body, 18, 183)
                     path.chmod(0o644)
                     _write(path, bytes(body), 0o555)
+                elif case == "pie":
+                    path = staging / "libexec/open-trestle/open-trestle-scan-helper"
+                    path.chmod(0o644)
+                    _write(path, _elf(b"helper-pie", 3), 0o555)
                 elif case == "unexpected":
                     _write(staging / "source.go", b"private source\n", 0o444)
                 else:
