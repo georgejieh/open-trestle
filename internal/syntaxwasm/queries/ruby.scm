@@ -1,25 +1,36 @@
 ; Ruby query pack. Capture vocabulary: docs/syntax-analysis.md.
 ; Methods are recorded as functions, and a function directly inside a class
-; becomes a method. Visibility is applied by finishRuby. Definitions made
-; by calls such as attr_accessor or define_method name a symbol, which the
-; queries cannot record without its colon, so they are not recorded.
+; becomes a method. Visibility is applied by finishRuby. A name written
+; as A::B records its innermost scope as the container.
 
 ; Modules, classes and singleton classes. A singleton class (class << self)
 ; is recorded so that its methods have a parent; finishRuby removes it.
 (module name: (constant) @name) @definition.module
-(module name: (scope_resolution name: (constant) @name)) @definition.module
+(module name: (scope_resolution scope: [(constant) @container (scope_resolution name: (constant) @container)]? name: (constant) @name)) @definition.module
 (class name: (constant) @name) @definition.class
-(class name: (scope_resolution name: (constant) @name)) @definition.class
+(class name: (scope_resolution scope: [(constant) @container (scope_resolution name: (constant) @container)]? name: (constant) @name)) @definition.class
 (singleton_class value: [(self) (identifier) (constant)] @name) @definition.class
 
 ; Methods and aliases.
 (method name: (_) @name) @definition.function
 (singleton_method name: (_) @name) @definition.function
-(alias name: (identifier) @name) @definition.function
+(alias name: [(identifier) (constant) (operator) (setter)] @name) @definition.function
+(alias name: (simple_symbol) @symbol) @definition.function
+
+; Methods made by calls. A symbol argument is the name without its colon.
+; The attribute calls define one method per argument; define_method and
+; alias_method define their first. A method written with = in attr_writer
+; is recorded under the attribute's name.
+(call !receiver method: (identifier) @match.attr_reader arguments: (argument_list [(simple_symbol) @symbol (delimited_symbol . (string_content) @name .) (string . (string_content) @name .)])) @definition.function
+(call !receiver method: (identifier) @match.attr_writer arguments: (argument_list [(simple_symbol) @symbol (delimited_symbol . (string_content) @name .) (string . (string_content) @name .)])) @definition.function
+(call !receiver method: (identifier) @match.attr_accessor arguments: (argument_list [(simple_symbol) @symbol (delimited_symbol . (string_content) @name .) (string . (string_content) @name .)])) @definition.function
+(call !receiver method: (identifier) @match.attr arguments: (argument_list [(simple_symbol) @symbol (delimited_symbol . (string_content) @name .) (string . (string_content) @name .)])) @definition.function
+(call !receiver method: (identifier) @match.define_method arguments: (argument_list . [(simple_symbol) @symbol (delimited_symbol . (string_content) @name .) (string . (string_content) @name .)])) @definition.function
+(call !receiver method: (identifier) @match.alias_method arguments: (argument_list . [(simple_symbol) @symbol (delimited_symbol . (string_content) @name .) (string . (string_content) @name .)])) @definition.function
 
 ; Constants. A constant bound to a class or module factory is a type.
 (assignment left: (constant) @name) @definition.constant
-(assignment left: (scope_resolution name: (constant) @name)) @definition.constant
+(assignment left: (scope_resolution scope: [(constant) @container (scope_resolution name: (constant) @container)]? name: (constant) @name)) @definition.constant
 (assignment left: (constant) @name right: (call receiver: (constant) @match.Struct method: (identifier) @match.new)) @definition.class
 (assignment left: (constant) @name right: (call receiver: (constant) @match.Class method: (identifier) @match.new)) @definition.class
 (assignment left: (constant) @name right: (call receiver: (constant) @match.Data method: (identifier) @match.define)) @definition.class

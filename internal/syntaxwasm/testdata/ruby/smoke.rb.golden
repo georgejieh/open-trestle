@@ -9,7 +9,7 @@
     21:13-21:28 method "Outer.Inner.hidden"
     23:5-23:19 method "Outer.Inner.shown"
     26:5-26:10 constant "Outer.Inner.X"
-  30:3-31:6 class "Outer.Nested" exported
+  30:3-31:6 class "Outer.Nested" exported container="Other"
 # references
 1:1 call "require"
 2:1 call "require"

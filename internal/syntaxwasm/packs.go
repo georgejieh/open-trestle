@@ -94,6 +94,7 @@ const (
 	roleContainer
 	roleOpaque
 	roleLocal
+	roleSymbol
 )
 
 // captureRoles maps every capture name of a query to its role and refuses
@@ -131,7 +132,7 @@ func captureRoles(names []string) ([]role, error) {
 				"exported": roleExported, "qualifier": roleQualifier,
 				"import.source": roleImportSource, "import.name": roleImportName,
 				"import.alias": roleImportAlias, "container": roleContainer, "opaque": roleOpaque,
-				"local": roleLocal,
+				"local": roleLocal, "symbol": roleSymbol,
 			}[name]
 			if !ok {
 				return nil, errQueryPack
@@ -165,7 +166,10 @@ matches:
 					return syntaxanalysis.RawFile{}, errQueryPack
 				}
 				record, recordRole = c, r
-			case roleName:
+			case roleName, roleSymbol:
+				if r.kind == roleSymbol && span.End-span.Start > 1 && content[span.Start] == ':' {
+					span.Start++
+				}
 				if name.Empty() {
 					name = span
 				}

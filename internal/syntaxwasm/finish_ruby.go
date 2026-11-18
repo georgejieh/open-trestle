@@ -17,10 +17,17 @@ import (
 // keywords private, protected, public and module_function, alone on a line
 // or applied to a def or a list of symbols, and private_constant and
 // private_class_method. A def self. method is not affected by a bare
-// keyword. Class variables are not exported. Names defined by attr_*
-// calls or define_method are not recorded at all.
+// keyword. Class variables are not exported. A call that defines methods,
+// such as attr_reader :name, is the node of those definitions; the call
+// itself belongs to the scope around them.
 func finishRuby(content []byte, _ syntaxanalysis.RawFile, a *syntaxanalysis.FileAnalysis) {
 	defs := a.Definitions
+	for i := range a.References {
+		r := &a.References[i]
+		for r.Enclosing >= 0 && defs[r.Enclosing].Range.StartByte == r.Range.StartByte {
+			r.Enclosing = defs[r.Enclosing].Parent
+		}
+	}
 	singleton := make([]bool, len(defs))
 	for i, d := range defs {
 		singleton[i] = d.Kind == syntaxanalysis.KindClass && rubySingletonClass(content, d.Range.StartByte)

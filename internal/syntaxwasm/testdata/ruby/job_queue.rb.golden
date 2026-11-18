@@ -8,6 +8,7 @@
   19:3-19:34 class "JobQueue.TimeoutError" exported
   20:3-27:6 class "JobQueue.Rejected" exported
     21:5-24:8 constructor "JobQueue.Rejected.initialize" exported
+    26:5-26:21 method "JobQueue.Rejected.job" exported
   29:3-39:6 class "JobQueue.Priority" exported
     32:5-34:8 method "JobQueue.Priority.<=>" exported
     36:5-38:8 method "JobQueue.Priority.to_s" exported
@@ -23,6 +24,10 @@
   68:3-79:6 module "JobQueue.Retryable" exported
     69:5-78:8 function "JobQueue.Retryable.with_retries" exported
   81:3-184:6 class "JobQueue.Job" exported
+    87:5-87:38 method "JobQueue.Job.payload" exported
+    87:5-87:38 method "JobQueue.Job.attempts" exported
+    88:5-88:31 method "JobQueue.Job.id" exported
+    88:5-88:31 method "JobQueue.Job.priority" exported
     90:5-90:18 field "JobQueue.Job.@@created"
     91:5-91:18 constant "JobQueue.Job.REGISTRY" exported
     94:7-96:10 method "JobQueue.Job.create" exported
@@ -37,6 +42,7 @@
     143:5-145:8 method "JobQueue.Job.result=" exported
     147:5-149:8 method "JobQueue.Job.to_h" exported
     151:5-151:23 method "JobQueue.Job.to_hash" exported
+    152:5-152:33 method "JobQueue.Job.to_s" exported
     156:5-158:8 method "JobQueue.Job.merge_attempts"
     162:5-164:8 method "JobQueue.Job.cleanup"
     166:5-168:8 method "JobQueue.Job.audit"
@@ -45,8 +51,10 @@
     180:5-180:29 method "JobQueue.Job.exposed_flag"
     183:5-183:43 method "JobQueue.Job.registry_size" exported
   186:3-260:6 class "JobQueue.Queue" exported
+    190:5-190:22 method "JobQueue.Queue.jobs" exported
     192:5-197:8 constructor "JobQueue.Queue.initialize" exported
     199:5-207:8 method "JobQueue.Queue.push" exported
+    208:5-208:18 method "JobQueue.Queue.<<" exported
     210:5-212:8 method "JobQueue.Queue.pop" exported
     214:5-219:8 method "JobQueue.Queue.each" exported
     221:5-230:8 method "JobQueue.Queue.drain" exported
@@ -55,6 +63,8 @@
     240:5-242:8 method "JobQueue.Queue.close" exported
     244:5-246:8 method "JobQueue.Queue.stats" exported
     248:5-259:8 class "JobQueue.Queue.Stats" exported
+      249:7-249:34 method "JobQueue.Queue.Stats.size" exported
+      249:7-249:34 method "JobQueue.Queue.Stats.workers" exported
       251:7-254:10 constructor "JobQueue.Queue.Stats.initialize" exported
       256:7-258:10 method "JobQueue.Queue.Stats.busy?" exported
   262:3-279:6 class "JobQueue.Worker" exported
@@ -66,10 +76,10 @@
     284:5-288:8 constructor "JobQueue.Scheduler.initialize" exported
     290:5-295:8 method "JobQueue.Scheduler.run" exported
     297:5-300:8 method "JobQueue.Scheduler.stop" exported
-304:1-310:4 module "Testing" exported
+304:1-310:4 module "Testing" exported container="JobQueue"
   305:3-305:38 class "Testing.FakeJob" exported
   307:3-309:6 function "Testing.fake" exported
-312:1-316:4 class "Runner" exported
+312:1-316:4 class "Runner" exported container="JobQueue"
   313:3-315:6 method "Runner.run" exported
 318:1-323:4 function "run_queue" exported
 # references

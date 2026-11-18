@@ -8,12 +8,12 @@ import (
 	"github.com/georgejieh/open-trestle/syntaxanalysis"
 )
 
-func TestCaptureRolesIncludeContainerOpaqueAndLocal(t *testing.T) {
-	roles, err := captureRoles([]string{"container", "opaque", "name", "local"})
+func TestCaptureRolesIncludeTheSpanAndSymbolRoles(t *testing.T) {
+	roles, err := captureRoles([]string{"container", "opaque", "name", "local", "symbol"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if roles[0].kind != roleContainer || roles[1].kind != roleOpaque || roles[2].kind != roleName || roles[3].kind != roleLocal {
+	if roles[0].kind != roleContainer || roles[1].kind != roleOpaque || roles[2].kind != roleName || roles[3].kind != roleLocal || roles[4].kind != roleSymbol {
 		t.Fatalf("roles = %+v", roles)
 	}
 }
