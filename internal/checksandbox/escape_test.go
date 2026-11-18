@@ -187,6 +187,10 @@ func TestEscapeDiskFillIsBounded(t *testing.T) {
 	if !result.DiskExceeded {
 		t.Fatalf("disk limit not reported; result %+v stdout %q", result, result.Stdout)
 	}
+	// The disk limit, not the time limit, must have stopped the writes.
+	if result.TimedOut || result.Duration > spec.Limits.Time/3 {
+		t.Fatalf("the writes ran for %v under a %v time limit", result.Duration, spec.Limits.Time)
+	}
 	if written, ok := strings.CutPrefix(strings.TrimSpace(string(result.Stdout)), "wrote "); ok {
 		if count, _ := strconv.ParseInt(written, 10, 64); count > spec.Limits.DiskBytes {
 			t.Fatalf("wrote %d bytes, limit %d", count, spec.Limits.DiskBytes)

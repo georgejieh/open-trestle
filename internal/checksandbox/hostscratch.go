@@ -53,11 +53,13 @@ func watchDisk(ctx context.Context, scratch string, limit int64, exceeded func()
 // folderSize adds up file sizes below root, stopping once past limit.
 func folderSize(root string, limit int64) int64 {
 	var total int64
-	_ = filepath.WalkDir(root, func(_ string, entry fs.DirEntry, err error) error {
+	_ = filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil || entry.IsDir() {
 			return nil
 		}
-		if info, err := entry.Info(); err == nil {
+		// The size a folder listing reports for a file still being written
+		// can be stale on NTFS; the file's own metadata is current.
+		if info, err := os.Lstat(path); err == nil {
 			total += info.Size()
 		}
 		if total > limit {
