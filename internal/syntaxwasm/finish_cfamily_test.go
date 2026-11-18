@@ -167,3 +167,38 @@ func TestClassBodiesAreReadOnce(t *testing.T) {
 		t.Fatalf("last member: %+v", f)
 	}
 }
+
+func TestLocalSpansDropLocalsWhereverDeclarationsSit(t *testing.T) {
+	a := testAnalyzer(t)
+	source := `#if A
+int first(void);
+#elif B
+int second(void);
+int counter;
+#endif
+class Box {
+  friend void swap(Box &, Box &);
+  friend bool operator==(const Box &, const Box &) { return true; }
+  int size;
+};
+void run() {
+  if (int found = lookup()) { use(found); }
+  while (auto *next = advance()) { int inner = 1; }
+  auto task = [] { int captured = 2; return captured; };
+}
+TEST(Box, Works) {
+  int expected = 3;
+}
+`
+	got := definitionFlags(analyze(t, a, "locals.cpp", []byte(source)))
+	for _, name := range []string{"first", "second", "counter", "Box", "Box.size", "run"} {
+		if _, ok := got[name]; !ok {
+			t.Errorf("%s is missing from %v", name, got)
+		}
+	}
+	for _, name := range []string{"Box.swap", "swap", "run.found", "run.next", "run.inner", "run.task", "run.captured", "expected"} {
+		if _, ok := got[name]; ok {
+			t.Errorf("%s was recorded", name)
+		}
+	}
+}

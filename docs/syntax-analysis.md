@@ -49,6 +49,7 @@ Captures:
 | `@export` | An export list entry; a top-level definition with its `@name` is exported. |
 | `@container` | The owner named in a definition's name, as in `Owner::name`, when it is not the lexical parent. |
 | `@opaque` | A span in which the pack drops type references, because the grammar reads values or macro arguments there as types. |
+| `@local` | A span, such as a block, in which variables and function declarations are locals and are not recorded. |
 | `@match.<word>` | Keeps the match only when the captured text is `<word>`, in place of `#eq?`. |
 | `@_<anything>` | A helper capture with no meaning. |
 

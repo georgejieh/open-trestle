@@ -1,5 +1,7 @@
 ; C query pack. Capture vocabulary: docs/syntax-analysis.md.
-; The patterns for declarations repeat for each place a declaration can sit.
+; Declarations match wherever they sit. Blocks are local spans, so the
+; variables and function declarations inside them are dropped before
+; assembly.
 
 ; Preprocessor definitions.
 (preproc_def name: (identifier) @name) @definition.macro
@@ -15,14 +17,27 @@
 (enumerator name: (identifier) @name) @definition.constant
 
 ; Typedefs. The alias of a typedef that defines a tagged type is recorded on its own name.
-(type_definition type: [(primitive_type) (sized_type_specifier) (type_identifier) (struct_specifier !body) (union_specifier !body) (enum_specifier !body) (macro_type_specifier)] declarator: [(type_identifier) @name (_ declarator: (type_identifier) @name) (_ declarator: (_ declarator: (type_identifier) @name)) (function_declarator declarator: (parenthesized_declarator (pointer_declarator declarator: (type_identifier) @name)))]) @definition.type
-(type_definition type: [(struct_specifier name: (_) body: (_)) (union_specifier name: (_) body: (_)) (enum_specifier name: (_) body: (_))] declarator: (type_identifier) @name @definition.type)
-(type_definition type: [(struct_specifier body: (_)) (union_specifier body: (_)) (enum_specifier body: (_))] declarator: [(_ declarator: (type_identifier) @name @definition.type) (_ declarator: (_ declarator: (type_identifier) @name @definition.type)) (function_declarator declarator: (parenthesized_declarator (pointer_declarator declarator: (type_identifier) @name @definition.type)))])
+(type_definition
+  type: [(primitive_type) (sized_type_specifier) (type_identifier) (struct_specifier !body) (union_specifier !body) (enum_specifier !body) (macro_type_specifier)]
+  declarator: [(type_identifier) @name
+               (_ declarator: (type_identifier) @name)
+               (_ declarator: (_ declarator: (type_identifier) @name))
+               (function_declarator declarator: (parenthesized_declarator (pointer_declarator declarator: (type_identifier) @name)))]) @definition.type
+(type_definition
+  type: [(struct_specifier name: (_) body: (_)) (union_specifier name: (_) body: (_)) (enum_specifier name: (_) body: (_))]
+  declarator: (type_identifier) @name @definition.type)
+(type_definition
+  type: [(struct_specifier body: (_)) (union_specifier body: (_)) (enum_specifier body: (_))]
+  declarator: [(_ declarator: (type_identifier) @name @definition.type)
+               (_ declarator: (_ declarator: (type_identifier) @name @definition.type))
+               (function_declarator declarator: (parenthesized_declarator (pointer_declarator declarator: (type_identifier) @name @definition.type)))])
 
 ; Function definitions. A definition needs a return type: a macro invocation followed by a block is not one.
-(function_definition type: (_) declarator: [(function_declarator declarator: (identifier) @name) (_ (function_declarator declarator: (identifier) @name))]) @definition.function
-; A function that returns a pointer to a function.
-(function_definition type: (_) declarator: (function_declarator declarator: (parenthesized_declarator (pointer_declarator declarator: (function_declarator declarator: (identifier) @name))))) @definition.function
+(function_definition
+  type: (_)
+  declarator: [(function_declarator declarator: (identifier) @name)
+               (_ (function_declarator declarator: (identifier) @name))
+               (function_declarator declarator: (parenthesized_declarator (pointer_declarator declarator: (function_declarator declarator: (identifier) @name))))]) @definition.function
 
 ; A function-like block without a return type is a macro invocation. Its arguments are not types.
 (translation_unit (function_definition !type declarator: (function_declarator declarator: (identifier) @name parameters: (parameter_list) @opaque)) @reference.call)
@@ -31,29 +46,42 @@
 (declaration type: (type_identifier) @opaque declarator: (parenthesized_declarator))
 (declaration type: (type_identifier) @name declarator: (parenthesized_declarator)) @reference.call
 
+; Local spans: every block, including a block after a macro invocation at
+; file scope.
+(compound_statement) @local
+
 ; Function declarations.
-(translation_unit (declaration type: (_) declarator: [(function_declarator declarator: (identifier) @name) (_ (function_declarator declarator: (identifier) @name))]) @definition.function)
-(declaration_list (declaration type: (_) declarator: [(function_declarator declarator: (identifier) @name) (_ (function_declarator declarator: (identifier) @name))]) @definition.function)
-(preproc_if (declaration type: (_) declarator: [(function_declarator declarator: (identifier) @name) (_ (function_declarator declarator: (identifier) @name))]) @definition.function)
-(preproc_ifdef (declaration type: (_) declarator: [(function_declarator declarator: (identifier) @name) (_ (function_declarator declarator: (identifier) @name))]) @definition.function)
-(preproc_else (declaration type: (_) declarator: [(function_declarator declarator: (identifier) @name) (_ (function_declarator declarator: (identifier) @name))]) @definition.function)
-(translation_unit (declaration type: (_) declarator: (function_declarator declarator: (parenthesized_declarator (pointer_declarator declarator: (function_declarator declarator: (identifier) @name))))) @definition.function)
-(declaration_list (declaration type: (_) declarator: (function_declarator declarator: (parenthesized_declarator (pointer_declarator declarator: (function_declarator declarator: (identifier) @name))))) @definition.function)
-(linkage_specification body: (declaration type: (_) declarator: [(function_declarator declarator: (identifier) @name) (_ (function_declarator declarator: (identifier) @name))]) @definition.function)
+(declaration
+  type: (_)
+  declarator: [(function_declarator declarator: (identifier) @name)
+               (_ (function_declarator declarator: (identifier) @name))
+               (function_declarator declarator: (parenthesized_declarator (pointer_declarator declarator: (function_declarator declarator: (identifier) @name))))]) @definition.function
 
-; Variables of a file or namespace. The finisher makes the const ones constants.
-(translation_unit (declaration declarator: [(identifier) @name (_ declarator: (identifier) @name) (_ declarator: (_ declarator: (identifier) @name)) (_ declarator: (_ declarator: (_ declarator: (identifier) @name))) (function_declarator declarator: (parenthesized_declarator (pointer_declarator declarator: (identifier) @name))) (function_declarator declarator: (parenthesized_declarator (pointer_declarator declarator: (array_declarator declarator: (identifier) @name))))]) @definition.variable)
-(declaration_list (declaration declarator: [(identifier) @name (_ declarator: (identifier) @name) (_ declarator: (_ declarator: (identifier) @name)) (_ declarator: (_ declarator: (_ declarator: (identifier) @name))) (function_declarator declarator: (parenthesized_declarator (pointer_declarator declarator: (identifier) @name))) (function_declarator declarator: (parenthesized_declarator (pointer_declarator declarator: (array_declarator declarator: (identifier) @name))))]) @definition.variable)
-(preproc_if (declaration declarator: [(identifier) @name (_ declarator: (identifier) @name) (_ declarator: (_ declarator: (identifier) @name)) (_ declarator: (_ declarator: (_ declarator: (identifier) @name))) (function_declarator declarator: (parenthesized_declarator (pointer_declarator declarator: (identifier) @name)))]) @definition.variable)
-(preproc_ifdef (declaration declarator: [(identifier) @name (_ declarator: (identifier) @name) (_ declarator: (_ declarator: (identifier) @name)) (_ declarator: (_ declarator: (_ declarator: (identifier) @name))) (function_declarator declarator: (parenthesized_declarator (pointer_declarator declarator: (identifier) @name)))]) @definition.variable)
-(preproc_else (declaration declarator: [(identifier) @name (_ declarator: (identifier) @name) (_ declarator: (_ declarator: (identifier) @name)) (_ declarator: (_ declarator: (_ declarator: (identifier) @name))) (function_declarator declarator: (parenthesized_declarator (pointer_declarator declarator: (identifier) @name)))]) @definition.variable)
-(linkage_specification body: (declaration declarator: [(identifier) @name (_ declarator: (identifier) @name) (_ declarator: (_ declarator: (identifier) @name)) (_ declarator: (_ declarator: (_ declarator: (identifier) @name))) (function_declarator declarator: (parenthesized_declarator (pointer_declarator declarator: (identifier) @name)))]) @definition.variable)
+; Variables of a file. The finisher makes the const ones constants.
+(declaration
+  declarator: [(identifier) @name
+               (_ declarator: (identifier) @name)
+               (_ declarator: (_ declarator: (identifier) @name))
+               (_ declarator: (_ declarator: (_ declarator: (identifier) @name)))
+               (function_declarator declarator: (parenthesized_declarator (pointer_declarator declarator: (identifier) @name)))
+               (function_declarator declarator: (parenthesized_declarator (pointer_declarator declarator: (array_declarator declarator: (identifier) @name))))]) @definition.variable
 
-; Members of structs, unions and classes.
-(field_declaration declarator: [(field_identifier) @name (_ declarator: (field_identifier) @name) (_ declarator: (_ declarator: (field_identifier) @name)) (_ declarator: (_ declarator: (_ declarator: (field_identifier) @name))) (function_declarator declarator: (parenthesized_declarator (pointer_declarator declarator: (field_identifier) @name))) (function_declarator declarator: (parenthesized_declarator (pointer_declarator declarator: (array_declarator declarator: (field_identifier) @name))))]) @definition.field
+; Members of structs and unions.
+(field_declaration
+  declarator: [(field_identifier) @name
+               (_ declarator: (field_identifier) @name)
+               (_ declarator: (_ declarator: (field_identifier) @name))
+               (_ declarator: (_ declarator: (_ declarator: (field_identifier) @name)))
+               (function_declarator declarator: (parenthesized_declarator (pointer_declarator declarator: (field_identifier) @name)))
+               (function_declarator declarator: (parenthesized_declarator (pointer_declarator declarator: (array_declarator declarator: (field_identifier) @name))))]) @definition.field
 
 ; Calls. A call whose receiver is more than a short chain is recorded without a qualifier.
-(call_expression function: [(identifier) @name (field_expression argument: [(identifier) (field_expression argument: (identifier)) (field_expression argument: (field_expression argument: (identifier)))] @qualifier field: (field_identifier) @name) (field_expression field: (field_identifier) @name)]) @reference.call
+(call_expression
+  function: [(identifier) @name
+             (field_expression field: (field_identifier) @name)
+             (field_expression
+               argument: [(identifier) (field_expression argument: (identifier)) (field_expression argument: (field_expression argument: (identifier)))] @qualifier
+               field: (field_identifier) @name)]) @reference.call
 
 ; Type uses.
 (_ type: (type_identifier) @name @reference.type)

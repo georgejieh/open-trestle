@@ -93,6 +93,7 @@ const (
 	roleMatch
 	roleContainer
 	roleOpaque
+	roleLocal
 )
 
 // captureRoles maps every capture name of a query to its role and refuses
@@ -130,6 +131,7 @@ func captureRoles(names []string) ([]role, error) {
 				"exported": roleExported, "qualifier": roleQualifier,
 				"import.source": roleImportSource, "import.name": roleImportName,
 				"import.alias": roleImportAlias, "container": roleContainer, "opaque": roleOpaque,
+				"local": roleLocal,
 			}[name]
 			if !ok {
 				return nil, errQueryPack
@@ -142,16 +144,16 @@ func captureRoles(names []string) ([]role, error) {
 
 // rawFile turns decoded matches into raw records. Each match must carry
 // exactly one record capture: a definition, a reference, an import or an
-// export.
+// export, unless it only marks opaque or local spans.
 func rawFile(content []byte, result analysisResult, roles []role) (syntaxanalysis.RawFile, error) {
 	raw := syntaxanalysis.RawFile{}
-	var opaqueSpans []syntaxanalysis.Span
+	var opaqueSpans, localSpans []syntaxanalysis.Span
 matches:
 	for _, m := range result.matches {
 		var record *capture
 		var recordRole role
 		var name, qualifier, source, imported, alias, container syntaxanalysis.Span
-		var names, opaque []syntaxanalysis.Span
+		var names, opaque, local []syntaxanalysis.Span
 		exported := false
 		for i := range m.captures {
 			c := &m.captures[i]
@@ -182,6 +184,8 @@ matches:
 				container = span
 			case roleOpaque:
 				opaque = append(opaque, span)
+			case roleLocal:
+				local = append(local, span)
 			case roleMatch:
 				if string(content[c.start:c.end]) != r.text {
 					continue matches
@@ -189,8 +193,9 @@ matches:
 			}
 		}
 		opaqueSpans = append(opaqueSpans, opaque...)
+		localSpans = append(localSpans, local...)
 		if record == nil {
-			if len(opaque) > 0 {
+			if len(opaque)+len(local) > 0 {
 				continue
 			}
 			return syntaxanalysis.RawFile{}, errQueryPack
@@ -207,19 +212,18 @@ matches:
 			raw.Exports = append(raw.Exports, names...)
 		}
 	}
-	raw.References = dropOpaque(raw.References, opaqueSpans)
+	raw.References = dropOpaque(raw.References, mergeSpans(opaqueSpans))
+	raw.Definitions = dropLocals(content, raw.Definitions, mergeSpans(localSpans))
 	for _, r := range result.regions {
 		raw.Gaps = append(raw.Gaps, syntaxanalysis.RawGap{Reason: syntaxanalysis.GapParseError, Span: syntaxanalysis.Span{Start: r.start, End: r.end}})
 	}
 	return raw, nil
 }
 
-// dropOpaque removes the type references whose name lies inside one of the
-// opaque spans: code that the grammar reads as declarations although the
-// names in it are values or macro arguments.
-func dropOpaque(references []syntaxanalysis.RawReference, spans []syntaxanalysis.Span) []syntaxanalysis.RawReference {
+// mergeSpans sorts spans by start and joins the overlapping ones.
+func mergeSpans(spans []syntaxanalysis.Span) []syntaxanalysis.Span {
 	if len(spans) == 0 {
-		return references
+		return nil
 	}
 	slices.SortFunc(spans, func(a, b syntaxanalysis.Span) int { return a.Start - b.Start })
 	merged := spans[:1]
@@ -230,19 +234,54 @@ func dropOpaque(references []syntaxanalysis.RawReference, spans []syntaxanalysis
 			merged = append(merged, s)
 		}
 	}
+	return merged
+}
+
+// insideSpans reports whether the byte at offset lies in one of the merged
+// spans.
+func insideSpans(merged []syntaxanalysis.Span, offset int) bool {
+	at, _ := slices.BinarySearchFunc(merged, offset, func(s syntaxanalysis.Span, start int) int { return s.Start - start })
+	if at < len(merged) && merged[at].Start == offset {
+		return true
+	}
+	return at > 0 && offset < merged[at-1].End
+}
+
+// dropOpaque removes the type references whose name lies inside one of the
+// opaque spans: code that the grammar reads as declarations although the
+// names in it are values or macro arguments.
+func dropOpaque(references []syntaxanalysis.RawReference, merged []syntaxanalysis.Span) []syntaxanalysis.RawReference {
+	if len(merged) == 0 {
+		return references
+	}
 	kept := references[:0]
 	for _, r := range references {
-		if r.Kind != syntaxanalysis.ReferenceType {
+		if r.Kind != syntaxanalysis.ReferenceType || !insideSpans(merged, r.Name.Start) {
 			kept = append(kept, r)
-			continue
 		}
-		at, _ := slices.BinarySearchFunc(merged, r.Name.Start, func(s syntaxanalysis.Span, start int) int { return s.Start - start })
-		inside := at < len(merged) && merged[at].Start == r.Name.Start
-		if !inside && at > 0 && r.Name.Start < merged[at-1].End {
-			inside = true
+	}
+	return kept
+}
+
+// dropLocals removes the variables, and the function declarations that end
+// in a semicolon, whose name lies inside one of the local spans: locals of a
+// function body and the functions a friend declaration names. Function
+// definitions there, such as the methods of a local class, are kept.
+func dropLocals(content []byte, definitions []syntaxanalysis.RawDefinition, merged []syntaxanalysis.Span) []syntaxanalysis.RawDefinition {
+	if len(merged) == 0 {
+		return definitions
+	}
+	kept := definitions[:0]
+	for _, d := range definitions {
+		local := false
+		switch d.Kind {
+		case syntaxanalysis.KindVariable:
+			local = true
+		case syntaxanalysis.KindFunction:
+			local = d.Node.End > d.Node.Start && d.Node.End <= len(content) && content[d.Node.End-1] == ';'
 		}
-		if !inside {
-			kept = append(kept, r)
+		if !local || !insideSpans(merged, d.Name.Start) {
+			kept = append(kept, d)
 		}
 	}
 	return kept
