@@ -127,6 +127,11 @@ func (f *RunFinalizer) ReconcileRepository(ctx context.Context, tenantID, reposi
 				return runs, finalized, ErrInvalidRunFinalizer
 			}
 			_, changed, err := f.ReconcileRun(ctx, plan.Scope(), at)
+			if err == ErrRunNotOpened {
+				// A plan is saved before its run opens; there is nothing to finalize.
+				runs++
+				continue
+			}
 			if err != nil {
 				return runs, finalized, err
 			}

@@ -387,6 +387,11 @@ func (s *TaskNotificationScheduler) ReconcileRepository(ctx context.Context, ten
 				return runs, notices, ErrInvalidTaskNotificationQueue
 			}
 			_, created, err := s.ReconcileRun(ctx, plan.Scope(), at)
+			if err == ErrRunNotOpened {
+				// A plan is saved before its run opens; there is nothing to schedule.
+				runs++
+				continue
+			}
 			if err != nil {
 				return runs, notices, err
 			}
