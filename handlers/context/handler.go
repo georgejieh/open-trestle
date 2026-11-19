@@ -707,7 +707,7 @@ func (h *Handler) assembleAt(ctx context.Context, request controlplane.TaskExecu
 	// this handler already loaded.
 	plan, planFailure := h.indexContextPlan(ctx, change.Repository(), change.BaseRevision(), change.HeadRevision())
 	if planFailure == 0 && plan.State != review.ContextIndexUsed {
-		plan, planFailure = h.snapshotContextPlan(ctx, request.Plan().Scope(), readAt, base, change, contents, &expires)
+		plan, planFailure = h.boundedSnapshotContextPlan(ctx, request.Plan().Scope(), readAt, base, change, contents, &expires)
 	}
 	if planFailure != 0 {
 		return contextAssembly{}, provider.Request{}, nil, planFailure

@@ -3,18 +3,21 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/georgejieh/open-trestle/internal/evidence"
 	"github.com/georgejieh/open-trestle/internal/review"
 	"github.com/georgejieh/open-trestle/repoindex"
+	"github.com/georgejieh/open-trestle/syntaxanalysis"
 )
 
 const indexingLine = "Indexing the repository for review context"
@@ -80,10 +83,13 @@ func (r reviewContextRepo) open(t *testing.T) *indexSession {
 	return session
 }
 
+// prepare prepares the index as a review with the timeout would.
 func (r reviewContextRepo) prepare(t *testing.T, session *indexSession, timeout time.Duration) (*reviewIndexContext, string) {
 	t.Helper()
 	var stderr bytes.Buffer
-	c := prepareReviewIndex(context.Background(), session, r.base, r.head, timeout, &stderr)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	c := prepareReviewIndex(ctx, session, r.base, r.head, &stderr)
 	if c == nil {
 		t.Fatal("prepareReviewIndex returned no context")
 	}
@@ -136,7 +142,9 @@ func TestReviewIndexOverBudgetWithoutSnapshot(t *testing.T) {
 	repo := newReviewContextRepo(t, map[string]string{"a.go": "package p\n"}, map[string]string{"b.go": "package p\n"})
 	session := repo.open(t)
 	c := &reviewIndexContext{session: session, base: repo.base, head: repo.head, state: review.ContextIndexOverBudget}
-	if c.build(context.Background(), repo.head, 0) {
+	expired, cancel := context.WithTimeout(context.Background(), 0)
+	defer cancel()
+	if c.build(expired, []evidence.RevisionIdentity{repo.head}) {
 		t.Fatal("a build with no time reported success")
 	}
 	plan, err := repo.plan(c)
@@ -253,5 +261,50 @@ func TestReviewIndexSessionOpensOnAnObjectsRoot(t *testing.T) {
 	plan, err := repo.plan(c)
 	if err != nil || plan.State != review.ContextIndexUsed || !plan.Complete {
 		t.Fatalf("plan = %+v, %v", plan, err)
+	}
+}
+
+// stalledAnalyzer analyses nothing until its context ends, as a build of a
+// repository too large for the time would.
+type stalledAnalyzer struct{ calls *atomic.Int64 }
+
+func (stalledAnalyzer) Supports(syntaxanalysis.Language) bool { return true }
+
+func (a stalledAnalyzer) Analyze(ctx context.Context, _ syntaxanalysis.Source) (syntaxanalysis.FileAnalysis, error) {
+	a.calls.Add(1)
+	<-ctx.Done()
+	return syntaxanalysis.FileAnalysis{}, ctx.Err()
+}
+
+// A review with a short timeout reaches its model call when indexing would
+// outlast the whole review: the build gives up at its share of the time.
+func TestReviewWithAStalledIndexBuildReachesTheModel(t *testing.T) {
+	calls := &atomic.Int64{}
+	previous := reviewIndexAnalyzer
+	reviewIndexAnalyzer = func(syntaxanalysis.Analyzer) syntaxanalysis.Analyzer { return stalledAnalyzer{calls: calls} }
+	t.Cleanup(func() { reviewIndexAnalyzer = previous })
+	f := newLocalModelFixture(t, localModelFixtureOptions{generationMode: "wait"})
+	args := replaceLocalGitChangeValue(f.args, "--timeout", "4s")
+	var stdout, stderr bytes.Buffer
+	done := make(chan int, 1)
+	go func() { done <- run(args, &stdout, &stderr) }()
+	select {
+	case <-f.generation.entered:
+	case code := <-done:
+		t.Fatalf("entrypoint returned %d before reaching the model wait", code)
+	case <-time.After(4 * time.Second):
+		t.Fatal("the model wait was not reached within the review timeout")
+	}
+	if calls.Load() == 0 {
+		t.Fatal("the index build did not run")
+	}
+	select {
+	case code := <-done:
+		var result localModelReceipt
+		if code != 3 || json.Unmarshal(stdout.Bytes(), &result) != nil || result.Status != "canceled" || !strings.Contains(stderr.String(), indexingLine) {
+			t.Fatalf("exit=%d stdout=%s stderr=%q", code, stdout.String(), stderr.String())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the review did not stop at its deadline")
 	}
 }

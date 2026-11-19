@@ -1,8 +1,10 @@
 package review
 
 import (
+	"context"
 	"errors"
 	"slices"
+	"time"
 )
 
 // ErrInvalidContextManifest identifies malformed context accounting.
@@ -156,6 +158,24 @@ type ContextPlan struct {
 // UnavailableContextPlan is the plan of a review without an index.
 func UnavailableContextPlan(state string) ContextPlan {
 	return ContextPlan{State: state}
+}
+
+// WithContextPlanDeadline bounds work that only adds context to a review,
+// such as building, loading or planning from an index, to a quarter of the
+// time left before ctx's deadline, so that the model calls keep the rest.
+// Without a deadline, ctx bounds the work alone.
+func WithContextPlanDeadline(ctx context.Context) (context.Context, context.CancelFunc) {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(ctx, time.Until(deadline)/4)
+}
+
+// ContextPlanAbandoned reports that bounded, a context from
+// WithContextPlanDeadline, ran out of its own time while ctx still has time.
+func ContextPlanAbandoned(ctx, bounded context.Context) bool {
+	return bounded.Err() != nil && ctx.Err() == nil
 }
 
 // ContextManifestSource is an index source included in a packet.

@@ -24,6 +24,21 @@ const (
 	maximumSnapshotGoBytes = 64 << 20
 )
 
+// boundedSnapshotContextPlan is snapshotContextPlan within its share of the
+// review's time. A plan that runs out of it is abandoned, and the review
+// keeps the changed lines and what it already selected.
+func (h *Handler) boundedSnapshotContextPlan(ctx context.Context, scope audit.ReviewScope, at time.Time, base sourceoutput.Snapshot, change changecodec.Result, contents map[string][]byte, expires *time.Time) (review.ContextPlan, controlplane.RunFailure) {
+	bounded, cancel := review.WithContextPlanDeadline(ctx)
+	defer cancel()
+	planExpires := *expires
+	plan, failure := h.snapshotContextPlan(bounded, scope, at, base, change, contents, &planExpires)
+	if failure != 0 && review.ContextPlanAbandoned(ctx, bounded) {
+		return review.UnavailableContextPlan(review.ContextIndexOverBudget), 0
+	}
+	*expires = planExpires
+	return plan, failure
+}
+
 // snapshotContextPlan plans index context from the snapshots the handler
 // already loaded, analysing their Go files in process: the head's Go files
 // and the base versions of the changed files; other languages need the

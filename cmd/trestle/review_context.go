@@ -15,6 +15,7 @@ import (
 	"github.com/georgejieh/open-trestle/internal/review"
 	"github.com/georgejieh/open-trestle/repoindex"
 	"github.com/georgejieh/open-trestle/reviewcontext"
+	"github.com/georgejieh/open-trestle/syntaxanalysis"
 )
 
 // maxReviewIndexTime bounds the time a review spends building the index of
@@ -50,24 +51,27 @@ func (c *reviewIndexContext) close() {
 	}
 }
 
-// reviewIndexTime is the build's share of a review timeout.
-func reviewIndexTime(timeout time.Duration) time.Duration {
-	return min(maxReviewIndexTime, timeout/4)
-}
+// reviewIndexAnalyzer is the analyzer of a review's index build: the
+// build's syntax workers. Tests replace it to slow the build down.
+var reviewIndexAnalyzer = func(workers syntaxanalysis.Analyzer) syntaxanalysis.Analyzer { return workers }
 
 // prepareReviewIndex builds or refreshes the index of a review's base and
-// head under its own deadline, so that the review keeps the rest of its
-// time, and says so once when either commit is new to the index. It returns
-// nil when the objects have no usable index; the review then plans from
-// its own snapshots.
-func prepareReviewIndex(ctx context.Context, session *indexSession, base, head evidence.RevisionIdentity, timeout time.Duration, stderr io.Writer) *reviewIndexContext {
+// head within a share of the time left before ctx's deadline, so that the
+// review keeps the rest of it, and says so once when either commit is new
+// to the index. It returns nil when the objects have no usable index; the
+// review then plans from its own snapshots.
+func prepareReviewIndex(ctx context.Context, session *indexSession, base, head evidence.RevisionIdentity, stderr io.Writer) *reviewIndexContext {
 	if session == nil {
 		return nil
 	}
 	c := &reviewIndexContext{session: session, base: base, head: head, state: review.ContextIndexUsed}
+	build, cancel := review.WithContextPlanDeadline(ctx)
+	defer cancel()
+	build, cancelMax := context.WithTimeout(build, maxReviewIndexTime)
+	defer cancelMax()
 	pending := []evidence.RevisionIdentity{}
 	for _, revision := range slices.Compact([]evidence.RevisionIdentity{base, head}) {
-		snapshot, err := session.index.Snapshot(ctx, session.algorithm, revision.Digest())
+		snapshot, err := session.index.Snapshot(build, session.algorithm, revision.Digest())
 		if err != nil || needsBuild(snapshot) {
 			pending = append(pending, revision)
 		}
@@ -75,34 +79,46 @@ func prepareReviewIndex(ctx context.Context, session *indexSession, base, head e
 	if len(pending) == 0 {
 		return c
 	}
-	limit := reviewIndexTime(timeout)
-	fmt.Fprintf(stderr, "Indexing the repository for review context (up to %s; later reviews reuse the index).\n", limit.Round(time.Second))
-	build, cancel := context.WithTimeout(ctx, limit)
-	defer cancel()
 	deadline, _ := build.Deadline()
-	for _, revision := range pending {
-		if !c.build(build, revision, time.Until(deadline)) {
-			c.state = review.ContextIndexOverBudget
-		}
+	fmt.Fprintf(stderr, "Indexing the repository for review context (up to %s; later reviews reuse the index).\n", time.Until(deadline).Round(time.Second))
+	if !c.build(build, pending) {
+		c.state = review.ContextIndexOverBudget
 	}
 	return c
 }
 
-// build indexes one commit within a time limit and reports whether the
-// build reached every file it could.
-func (c *reviewIndexContext) build(ctx context.Context, revision evidence.RevisionIdentity, limit time.Duration) bool {
-	if limit <= 0 {
+// build indexes the commits before ctx's deadline with one pool of syntax
+// workers and reports whether each build reached every file it could.
+func (c *reviewIndexContext) build(ctx context.Context, revisions []evidence.RevisionIdentity) bool {
+	deadline, _ := ctx.Deadline()
+	if time.Until(deadline) <= 0 {
 		return false
 	}
-	b, tree, pool, err := c.session.builder(revision)
+	b, tree, pool, err := c.session.builder(revisions[0])
 	if err != nil {
 		return false
 	}
 	defer pool.Close()
+	trees := []*repoindex.GitTree{tree}
+	for _, revision := range revisions[1:] {
+		tree, err := repoindex.NewGitTree(c.session.store, revision)
+		if err != nil {
+			return false
+		}
+		trees = append(trees, tree)
+	}
+	b.Analyzer = reviewIndexAnalyzer(pool)
 	b.Limits = repoindex.DefaultBuildLimits()
-	b.Limits.MaxDuration = limit
-	snapshot, err := b.Build(ctx, tree)
-	return err == nil && !needsBuild(snapshot)
+	complete := true
+	for _, tree := range trees {
+		b.Limits.MaxDuration = time.Until(deadline)
+		if b.Limits.MaxDuration <= 0 {
+			return false
+		}
+		snapshot, err := b.Build(ctx, tree)
+		complete = complete && err == nil && !needsBuild(snapshot)
+	}
+	return complete
 }
 
 // needsBuild reports a snapshot that a build can still extend: one cut by
@@ -112,14 +128,24 @@ func needsBuild(s repoindex.Snapshot) bool {
 	return slices.ContainsFunc(s.Files, func(f repoindex.FileEntry) bool { return f.Status == repoindex.StatusTimeLimit })
 }
 
-// ContextPlan loads the indexed base and head and plans their context, once.
-// A commit the build did not reach is over budget; a partial build is used
-// and the plan says it is incomplete.
+// ContextPlan loads the indexed base and head and plans their context, once,
+// within a share of the time left before ctx's deadline. A commit the build
+// did not reach, or a plan that ran out of time, is over budget; a partial
+// build is used and the plan says it is incomplete.
 func (c *reviewIndexContext) ContextPlan(ctx context.Context, _ evidence.RepositoryIdentity, base, head evidence.RevisionIdentity) (review.ContextPlan, error) {
 	if base != c.base || head != c.head {
 		return review.ContextPlan{}, errors.New("the review range is not the prepared one")
 	}
-	c.once.Do(func() { c.plan, c.err = c.load(ctx) })
+	c.once.Do(func() {
+		bounded, cancel := review.WithContextPlanDeadline(ctx)
+		defer cancel()
+		c.plan, c.err = c.load(bounded)
+		// load leaves out the checks when reading them fails, so a plan
+		// that ran past the bound is abandoned even when it returned.
+		if review.ContextPlanAbandoned(ctx, bounded) {
+			c.plan, c.err = review.UnavailableContextPlan(review.ContextIndexOverBudget), nil
+		}
+	})
 	return c.plan, c.err
 }
 

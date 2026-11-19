@@ -255,3 +255,30 @@ func TestVerifierReceivesIndexSourcesWithoutTheManifest(t *testing.T) {
 		t.Fatal("the generation system channel does not explain the index sources and repository checks")
 	}
 }
+
+func TestContextPlanDeadlineIsAQuarterOfTheTimeLeft(t *testing.T) {
+	parent, cancel := context.WithTimeout(context.Background(), time.Hour)
+	defer cancel()
+	bounded, stop := WithContextPlanDeadline(parent)
+	defer stop()
+	deadline, ok := bounded.Deadline()
+	if left := time.Until(deadline); !ok || left > 15*time.Minute || left < 14*time.Minute {
+		t.Fatalf("bounded deadline in %s", left)
+	}
+	if ContextPlanAbandoned(parent, bounded) {
+		t.Fatal("work with time left was abandoned")
+	}
+	stop()
+	if !ContextPlanAbandoned(parent, bounded) {
+		t.Fatal("work past its bound was not abandoned")
+	}
+	cancel()
+	if ContextPlanAbandoned(parent, bounded) {
+		t.Fatal("a canceled review counted as abandoned work")
+	}
+	unbounded, stopUnbounded := WithContextPlanDeadline(context.Background())
+	defer stopUnbounded()
+	if _, ok := unbounded.Deadline(); ok {
+		t.Fatal("work without a review deadline was given one")
+	}
+}

@@ -374,7 +374,7 @@ func prepareLocalModelReview(execution context.Context, options *localModelRevie
 	}
 	inputs.base, inputs.head = base, head
 	if options.investigation == "" {
-		inputs.index = prepareReviewIndex(execution, openReviewIndexSession(execution, *options, base), base, head, options.timeout, stderr)
+		inputs.index = prepareReviewIndex(execution, openReviewIndexSession(execution, *options, base), base, head, stderr)
 	}
 	if options.retainedMemory != "" {
 		scope, scopeErr := memory.NewScope(options.tenant, options.repository, "local-reviewer", memory.RefVisibilityExact, head.Identity(), []string{"."})
