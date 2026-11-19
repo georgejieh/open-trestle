@@ -109,7 +109,6 @@ func installScanHelper(t *testing.T) error {
 	config := SessionConfig{
 		HelperPath:     installed,
 		HelperSHA256:   hex.EncodeToString(digest[:]),
-		BuildProfile:   HostRE2BuildProfile,
 		CacheDirectory: filepath.Join(directory, "cache"),
 	}
 	started = time.Now()
@@ -205,7 +204,7 @@ func TestScanHelperSessionFindsTheExpectedSpans(t *testing.T) {
 		if err != nil || !result.Complete() {
 			t.Fatalf("%s: scan failed: %v, %v", fixture.id, result.Failure(), err)
 		}
-		if metadata := result.Metadata(); metadata.BuildProfile != HostRE2BuildProfile || metadata.HelperSHA256 != config.HelperSHA256 {
+		if metadata := result.Metadata(); metadata.BuildProfile != BuildProfile || metadata.HelperSHA256 != config.HelperSHA256 {
 			t.Fatalf("%s: unexpected metadata %+v", fixture.id, metadata)
 		}
 		var got []helperExpectedSpan
@@ -317,7 +316,7 @@ func repeatedFixtures(fixtures []helperFixture, size int) []byte {
 // TestScanHelperSessionScansDenseContent runs finding-dense requests through
 // sessions with the production limits. Requests of one and two full sources
 // complete well within the watchdog, and a request at the protocol's size
-// limit stops at the match limit with the failure class the native worker
+// limit stops at the match limit with the failure class the native adapter
 // reports for it.
 func TestScanHelperSessionScansDenseContent(t *testing.T) {
 	config := scanHelperForTest(t)
@@ -373,5 +372,30 @@ func TestScanHelperWithTheWrongDigestDoesNotStart(t *testing.T) {
 	}
 	if err := Prewarm(context.Background(), config); !errors.Is(err, ErrHelperUntrusted) {
 		t.Fatalf("prewarm with the wrong helper digest was not refused: %v", err)
+	}
+}
+
+// TestScanHelperKilledMidScanFailsClosed kills the real helper while it scans
+// finding-dense content: the scan returns no result, the session refuses
+// every later scan, and Close reports the failure.
+func TestScanHelperKilledMidScanFailsClosed(t *testing.T) {
+	config := scanHelperForTest(t)
+	fixtures, _ := readScannerFixtures(t)
+	dense := repeatedFixtures(fixtures, 256*1024)
+	session := openHelperSessionForTest(t, config)
+	if result, err := session.Scan(context.Background(), [][]byte{[]byte("warm up")}); err != nil || !result.Complete() {
+		t.Fatalf("first scan: %v", err)
+	}
+	killed := time.AfterFunc(200*time.Millisecond, func() { _ = session.process.command.Process.Kill() })
+	defer killed.Stop()
+	result, err := session.Scan(context.Background(), [][]byte{dense, dense})
+	if err == nil || result.Complete() || len(result.Matches()) != 0 {
+		t.Fatalf("scan of a killed helper: %v, %v", result.Failure(), err)
+	}
+	if _, err := session.Scan(context.Background(), [][]byte{[]byte("after")}); !errors.Is(err, ErrSessionPoisoned) {
+		t.Fatalf("scan after the kill: %v", err)
+	}
+	if err := session.Close(); err == nil {
+		t.Fatal("close after the kill reported no failure")
 	}
 }

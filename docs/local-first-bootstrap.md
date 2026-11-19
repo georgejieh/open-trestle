@@ -129,7 +129,7 @@ The result carries `"scope": "direct-review"` and omits the daemon commands. It 
 
 ### Exit codes and readiness
 
-`ready` (exit 0) means that these setup checks passed. It does not mean that a daemon is running. `pending` (exit 3) lists the checks that are not complete. `refused` (exit 4) means an unsafe input or a blocked checker. Usage errors use exit 2, and output failures use exit 1.
+The check also needs this trestle's secret scan helper, since every review scans its model requests: `sanitized_egress_scanner` is `refused` when the binary pins no helper and `pending` when the helper is missing or does not match. `ready` (exit 0) means that these setup checks passed. It does not mean that a daemon is running. `pending` (exit 3) lists the checks that are not complete. `refused` (exit 4) means an unsafe input or a blocked checker. Usage errors use exit 2, and output failures use exit 1.
 
 ## Launch and request the first review
 
@@ -157,7 +157,7 @@ Start the daemon with the operator and observer tokens in its environment. Keep 
 
 Execute `review_command` only after you approve the use of your source, and with the operator token in its environment. This is the step where repository source goes to the model. It requests the review pipeline on the pinned commits: nine tasks over eight stage kinds, because source is acquired once for the base and once for the head.
 
-This command enables no publication task and no forge credentials. The runtime still needs its pinned scanner binaries and host confinement support, which bootstrap does not install.
+This command enables no publication task and no forge credentials. The runtime still needs its secret scan helper next to the program (see [remote model review](remote-model-review.md#prerequisite-1-a-trestle-with-its-secret-scanner)), which bootstrap does not install.
 
 Submit within five minutes of `prepare-review` for the first admission, so prepare only after the daemon is running. Inspection does not refresh that window. Save the submit array and repeat it for retries after admission. If you miss the first-admission window, the submission stays refused. Do not edit or delete the intent file; prepare a new setup in a fresh protected directory instead.
 

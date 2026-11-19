@@ -140,12 +140,11 @@ func deriveSanitizedModelRequestIdentity(value SanitizedModelRequest) string {
 }
 
 type ScannerBinaryDigests struct {
-	LauncherSHA256 string
-	WorkerSHA256   string
+	HelperSHA256 string
 }
 
 func (value ScannerBinaryDigests) validate() bool {
-	return validNonzeroDigest(value.LauncherSHA256) && validNonzeroDigest(value.WorkerSHA256)
+	return validNonzeroDigest(value.HelperSHA256)
 }
 
 type ScannerProfile struct {
@@ -156,8 +155,7 @@ type ScannerProfile struct {
 	RulesetIdentity  string
 	RulesetRuleCount int
 	BuildProfile     string
-	LauncherSHA256   string
-	WorkerSHA256     string
+	HelperSHA256     string
 }
 
 type ScanCompletion struct {
@@ -271,7 +269,7 @@ func (value SanitizedEgressReceipt) Validate() error {
 }
 
 func validScannerProfile(profile ScannerProfile) bool {
-	return profile.WorkerProtocol == 1 && profile.Scanner == secretscan.ScannerName && profile.ScannerVersion == secretscan.ScannerVersion && profile.ScannerCommit == secretscan.ScannerCommit && profile.RulesetIdentity == secretscan.RulesetIdentity && profile.RulesetRuleCount == secretscan.RulesetRuleCount && secretscan.ReceiptBuildProfile(profile.BuildProfile) && validNonzeroDigest(profile.LauncherSHA256) && validNonzeroDigest(profile.WorkerSHA256)
+	return profile.WorkerProtocol == 1 && profile.Scanner == secretscan.ScannerName && profile.ScannerVersion == secretscan.ScannerVersion && profile.ScannerCommit == secretscan.ScannerCommit && profile.RulesetIdentity == secretscan.RulesetIdentity && profile.RulesetRuleCount == secretscan.RulesetRuleCount && profile.BuildProfile == secretscan.BuildProfile && validNonzeroDigest(profile.HelperSHA256)
 }
 func validNonzeroDigest(value string) bool {
 	return validCandidateDigest(value) && value != strings.Repeat("0", 64)

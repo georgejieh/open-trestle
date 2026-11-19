@@ -59,8 +59,7 @@ type ContextInputDescriptor struct {
 	Receipt                     ContextInputArtifactDescriptor `json:"receipt"`
 	Input                       ContextInputArtifactDescriptor `json:"input"`
 	ReceiptIdentity             string                         `json:"receipt_identity"`
-	ScannerLauncherDigest       string                         `json:"scanner_launcher_digest"`
-	ScannerWorkerDigest         string                         `json:"scanner_worker_digest"`
+	ScannerHelperDigest         string                         `json:"scanner_helper_digest"`
 	GenerationInputIdentity     string                         `json:"generation_input_identity"`
 	AuthorizationIdentity       string                         `json:"authorization_identity"`
 	SelectionReceiptIdentity    string                         `json:"selection_receipt_identity"`
@@ -83,7 +82,7 @@ func cloneContextInputDescriptor(d ContextInputDescriptor) ContextInputDescripto
 	return d
 }
 func (d ContextInputDescriptor) valid(scope interface{ Identity() string }) bool {
-	for _, v := range []string{d.PacketPreparedEventIdentity, d.PacketArtifactIdentity, d.LeaseIdentity, d.LeaseEventIdentity, d.ReceiptIdentity, d.ScannerLauncherDigest, d.ScannerWorkerDigest, d.GenerationInputIdentity, d.AuthorizationIdentity, d.SelectionReceiptIdentity, d.RoutingInputIdentity, d.SelectedRecordIdentity, d.PolicyIdentity, d.RoutePairIdentity, d.AuthorizerIdentity, d.SanitizerIdentity} {
+	for _, v := range []string{d.PacketPreparedEventIdentity, d.PacketArtifactIdentity, d.LeaseIdentity, d.LeaseEventIdentity, d.ReceiptIdentity, d.ScannerHelperDigest, d.GenerationInputIdentity, d.AuthorizationIdentity, d.SelectionReceiptIdentity, d.RoutingInputIdentity, d.SelectedRecordIdentity, d.PolicyIdentity, d.RoutePairIdentity, d.AuthorizerIdentity, d.SanitizerIdentity} {
 		if !validControlPlaneDigest(v) {
 			return false
 		}

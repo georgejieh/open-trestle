@@ -877,6 +877,7 @@ class ReleaseWorkflowTest(unittest.TestCase):
             "--artifact vscode=extensions/vscode/dist/open-trestle.vsix",
             "--go-binary .container/trestle",
             "--go-binary .container/trestled",
+            "--go-binary .container/libexec/open-trestle/open-trestle-scan-helper",
             "--npm-lock web/package-lock.json",
             "--npm-lock extensions/vscode/package-lock.json",
             "diff -r",

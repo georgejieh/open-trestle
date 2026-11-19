@@ -25,6 +25,7 @@ import (
 	"github.com/georgejieh/open-trestle/internal/provider"
 	"github.com/georgejieh/open-trestle/internal/review"
 	"github.com/georgejieh/open-trestle/internal/scm"
+	"github.com/georgejieh/open-trestle/internal/secretscan"
 	"github.com/georgejieh/open-trestle/runtimecatalog"
 	"github.com/georgejieh/open-trestle/runtimeconfig"
 	"github.com/georgejieh/open-trestle/worker"
@@ -67,8 +68,14 @@ type SessionOptions struct {
 	Timeout, RenewalInterval, Retention time.Duration
 	ArtifactCapacity                    int
 	RetainedMemoryInput                 *runtimeconfig.RetainedMemoryInput
-	GenerationSanitizer                 review.GenerationRequestSanitizer
-	VerificationSanitizer               review.VerificationRequestSanitizer
+	// Scanner is the review's secret scan session. The generation and
+	// verification sanitizers and the publication scanner scan through it
+	// unless GenerationSanitizer or VerificationSanitizer replace them. The
+	// caller owns it and closes it after Close. Without it every request
+	// that needs a scan is refused.
+	Scanner               secretscan.Sanitizer
+	GenerationSanitizer   review.GenerationRequestSanitizer
+	VerificationSanitizer review.VerificationRequestSanitizer
 	// ModelHTTPClient optionally replaces the policy-approved adapter transport
 	// (for example an offline test transport). It is refused with local-only
 	// egress, which always uses the numeric-loopback client.
@@ -122,6 +129,11 @@ func NewSpecialistSession(o SessionOptions, specialist review.ContextSpecialist)
 
 func newSession(o SessionOptions, investigationPolicy *review.InvestigationPolicy, specialist review.ContextSpecialist) (*Session, error) {
 	if o.RetainedMemoryInput != nil && (investigationPolicy != nil || o.Egress != EgressLocalOnly) {
+		return nil, ErrInvalidSession
+	}
+	// Investigation requests are not secret-scanned, so they stay on this
+	// machine.
+	if investigationPolicy != nil && o.Egress != EgressLocalOnly {
 		return nil, ErrInvalidSession
 	}
 	if !specialist.IsZero() && (investigationPolicy != nil || specialist.Validate() != nil) {
@@ -256,7 +268,7 @@ func newSession(o SessionOptions, investigationPolicy *review.InvestigationPolic
 	}
 	ledger := audit.NewMemoryLedger()
 	diagnosticStore := diagnostics.NewMemoryStore()
-	publicationScanner := review.PublicationContentScanner(review.NewFixedPublicationContentScanner())
+	publicationScanner := review.PublicationContentScanner(review.NewFixedPublicationContentScanner(o.Scanner))
 	if provider, ok := o.GenerationSanitizer.(interface {
 		PublicationContentScanner() review.PublicationContentScanner
 	}); ok {
@@ -304,7 +316,7 @@ func newSession(o SessionOptions, investigationPolicy *review.InvestigationPolic
 		}
 		sanitizer := o.GenerationSanitizer
 		if sanitizer == nil {
-			sanitizer = review.NewFixedGenerationRequestSanitizer()
+			sanitizer = review.NewFixedGenerationRequestSanitizer(o.Scanner)
 		}
 		var assembly *contexthandler.Handler
 		if specialist.IsZero() {
@@ -329,7 +341,7 @@ func newSession(o SessionOptions, investigationPolicy *review.InvestigationPolic
 		}
 		verificationSanitizer := o.VerificationSanitizer
 		if verificationSanitizer == nil {
-			verificationSanitizer = review.NewFixedVerificationRequestSanitizer()
+			verificationSanitizer = review.NewFixedVerificationRequestSanitizer(o.Scanner)
 		}
 		verification, err := modelhandler.NewVerificationHandler(store, dispatchers, ledger, verificationAuthority, o.Clock, verificationSanitizer)
 		if err != nil {

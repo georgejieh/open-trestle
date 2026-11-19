@@ -32,16 +32,9 @@ RELEASE_FILES = frozenset(
     }
 )
 EXECUTABLES = {
-    "trestle": ("usr/local/bin/trestle", 2),
-    "trestled": ("usr/local/bin/trestled", 2),
-    "libexec/open-trestle/open-trestle-secret-scanner": (
-        "usr/local/libexec/open-trestle/open-trestle-secret-scanner",
-        3,
-    ),
-    "libexec/open-trestle/open-trestle-secret-scanner-worker": (
-        "usr/local/libexec/open-trestle/open-trestle-secret-scanner-worker",
-        2,
-    ),
+    "trestle": "usr/local/bin/trestle",
+    "trestled": "usr/local/bin/trestled",
+    "libexec/open-trestle/open-trestle-scan-helper": "usr/local/libexec/open-trestle/open-trestle-scan-helper",
 }
 EXPECTED_ROOT = frozenset(
     {
@@ -170,11 +163,11 @@ def _read_stable(
     return b"".join(chunks)
 
 
-def _validate_elf(body: bytes, label: str, expected_type: int) -> None:
+def _validate_elf(body: bytes, label: str) -> None:
     if len(body) < 64 or body[:16] != b"\x7fELF\x02\x01\x01\x00" + (b"\x00" * 8):
         raise ValueError(f"staging executable is not a canonical ELF64 file: {label}")
     elf_type, machine, version = struct.unpack_from("<HHI", body, 16)
-    if elf_type != expected_type or machine != 62 or version != 1:
+    if elf_type != 2 or machine != 62 or version != 1:
         raise ValueError(f"staging executable target is invalid: {label}")
     program_offset = struct.unpack_from("<Q", body, 32)[0]
     program_entry_size, program_count = struct.unpack_from("<HH", body, 54)
@@ -271,9 +264,9 @@ def _collect_payload(staging: Path, expected_source_digests: dict[str, str]) -> 
         if files != expected_files:
             raise ValueError("staging file inventory is invalid")
         payload: list[Payload] = []
-        for source, (target, elf_type) in EXECUTABLES.items():
+        for source, target in EXECUTABLES.items():
             body = _read_stable(staging / source, 0o555, source, root_descriptor, file_statuses[source])
-            _validate_elf(body, source, elf_type)
+            _validate_elf(body, source)
             payload.append(Payload(source, target, 0o555, len(body), hashlib.sha256(body).hexdigest(), True, body))
         document_sources = ["LICENSE", "NOTICE", "scripts/model_catalog.py", *license_files, *sorted(RELEASE_FILES)]
         for source in document_sources:

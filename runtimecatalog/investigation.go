@@ -98,7 +98,7 @@ func NewInvestigationPipelineCatalog(profile model.InvestigationPipelineProfile,
 	}
 	publicationScanner := o.PublicationScanner
 	if publicationScanner == nil {
-		publicationScanner = review.NewFixedPublicationContentScanner()
+		publicationScanner = review.NewFixedPublicationContentScanner(nil)
 	}
 	bridge, err := model.NewInvestigationPipeline(model.InvestigationPipelineOptions{Profile: profile, Store: o.Store, Ledger: o.Ledger, Journal: o.Journal, Clock: o.Clock, Catalog: o.Dispatchers, Source: o.Source, Support: model.InvestigationSupportBindings{Change: changes.HandlerIdentity(), Analysis: analyses.HandlerIdentity(), Memory: memories.HandlerIdentity(), PublicationScanner: publicationScanner.Identity()}, PlanningRefusals: o.PlanningRefusals})
 	if err != nil {

@@ -267,10 +267,10 @@ func sanitizedGenerationFixture(t *testing.T, scope audit.ReviewScope, rawArtifa
 		redacted += field.RedactedByteCount
 		matches += len(field.Matches)
 	}
-	expected := review.ScannerBinaryDigests{LauncherSHA256: strings.Repeat("b", 64), WorkerSHA256: strings.Repeat("c", 64)}
+	expected := review.ScannerBinaryDigests{HelperSHA256: strings.Repeat("b", 64)}
 	receipt, err := review.NewSanitizedEgressReceipt(review.SanitizedEgressReceiptInput{
 		ReviewScopeIdentity: scope.Identity(), RawRequestIdentity: raw.Identity(), SanitizedRequestIdentity: request.SanitizedRequestIdentity(),
-		Scanner: review.ScannerProfile{WorkerProtocol: 1, Scanner: secretscan.ScannerName, ScannerVersion: secretscan.ScannerVersion, ScannerCommit: secretscan.ScannerCommit, RulesetIdentity: secretscan.RulesetIdentity, RulesetRuleCount: secretscan.RulesetRuleCount, BuildProfile: secretscan.BuildProfile, LauncherSHA256: expected.LauncherSHA256, WorkerSHA256: expected.WorkerSHA256},
+		Scanner: review.ScannerProfile{WorkerProtocol: 1, Scanner: secretscan.ScannerName, ScannerVersion: secretscan.ScannerVersion, ScannerCommit: secretscan.ScannerCommit, RulesetIdentity: secretscan.RulesetIdentity, RulesetRuleCount: secretscan.RulesetRuleCount, BuildProfile: secretscan.BuildProfile, HelperSHA256: expected.HelperSHA256},
 		Initial: review.ScanCompletion{Complete: true, FieldCount: len(fields), ScannedByteCount: total, MatchCount: matches}, Residual: review.ScanCompletion{Complete: true, FieldCount: len(fields), ScannedByteCount: total}, RedactedByteCount: redacted, Fields: fields,
 	})
 	if err != nil {
@@ -519,7 +519,7 @@ func TestGenerationHandlerRejectsIncompleteOrCrossWiredSanitizedAuthorityBeforeC
 		expected   review.ScannerBinaryDigests
 	}{
 		{"missing receipt", false, expected},
-		{"wrong trusted launcher", true, review.ScannerBinaryDigests{LauncherSHA256: strings.Repeat("d", 64), WorkerSHA256: expected.WorkerSHA256}},
+		{"wrong trusted launcher", true, review.ScannerBinaryDigests{HelperSHA256: strings.Repeat("d", 64)}},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {

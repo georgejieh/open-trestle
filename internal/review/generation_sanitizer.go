@@ -54,16 +54,25 @@ type sanitizedScanProjection interface {
 
 type sanitizedScanClient interface {
 	Sanitize(context.Context, [][]byte) sanitizedScanProjection
-	BinaryDigests() (string, string)
+	HelperSHA256() string
 }
 
-type fixedSecretScanClient struct{ client *secretscan.Client }
+// helperScanClient scans through a scan helper Sanitizer: the session of
+// one review, or a session per call.
+type helperScanClient struct{ sanitizer secretscan.Sanitizer }
 
-func (value fixedSecretScanClient) Sanitize(ctx context.Context, sources [][]byte) sanitizedScanProjection {
-	return value.client.Sanitize(ctx, sources)
+func (value helperScanClient) Sanitize(ctx context.Context, sources [][]byte) sanitizedScanProjection {
+	return value.sanitizer.Sanitize(ctx, sources)
 }
-func (value fixedSecretScanClient) BinaryDigests() (string, string) {
-	return value.client.BinaryDigests()
+func (value helperScanClient) HelperSHA256() string { return value.sanitizer.HelperSHA256() }
+
+// newHelperScanClient returns nil for a nil sanitizer, which every
+// sanitizer built on it refuses.
+func newHelperScanClient(sanitizer secretscan.Sanitizer) sanitizedScanClient {
+	if sanitizer == nil {
+		return nil
+	}
+	return helperScanClient{sanitizer: sanitizer}
 }
 
 type FixedGenerationRequestSanitizer struct {
@@ -71,8 +80,10 @@ type FixedGenerationRequestSanitizer struct {
 	identity string
 }
 
-func NewFixedGenerationRequestSanitizer() *FixedGenerationRequestSanitizer {
-	return newFixedGenerationRequestSanitizer(fixedSecretScanClient{client: secretscan.NewClient()})
+// NewFixedGenerationRequestSanitizer returns the generation sanitizer that
+// scans through sanitizer. A nil sanitizer refuses every request.
+func NewFixedGenerationRequestSanitizer(sanitizer secretscan.Sanitizer) *FixedGenerationRequestSanitizer {
+	return newFixedGenerationRequestSanitizer(newHelperScanClient(sanitizer))
 }
 
 func newFixedGenerationRequestSanitizer(client sanitizedScanClient) *FixedGenerationRequestSanitizer {
@@ -88,12 +99,20 @@ func (value *FixedGenerationRequestSanitizer) Identity() string {
 	return value.identity
 }
 
+// PublicationContentScanner returns the publication scanner that scans
+// through the same scan helper as the sanitizer.
+func (value *FixedGenerationRequestSanitizer) PublicationContentScanner() PublicationContentScanner {
+	if value == nil {
+		return newFixedPublicationContentScanner(nil)
+	}
+	return newFixedPublicationContentScanner(value.client)
+}
+
 func (value *FixedGenerationRequestSanitizer) ExpectedBinaryDigests() ScannerBinaryDigests {
 	if value == nil || value.client == nil {
 		return ScannerBinaryDigests{}
 	}
-	launcher, worker := value.client.BinaryDigests()
-	return ScannerBinaryDigests{LauncherSHA256: launcher, WorkerSHA256: worker}
+	return ScannerBinaryDigests{HelperSHA256: value.client.HelperSHA256()}
 }
 
 func (value *FixedGenerationRequestSanitizer) SanitizeGeneration(ctx context.Context, raw provider.Request, reviewScopeIdentity string) (SanitizedModelRequest, SanitizedEgressReceipt, error) {
@@ -187,7 +206,7 @@ func closeSanitizedProjection(raw provider.Request, reviewScopeIdentity string, 
 	}
 	receipt, err := NewSanitizedEgressReceipt(SanitizedEgressReceiptInput{
 		ReviewScopeIdentity: reviewScopeIdentity, RawRequestIdentity: raw.Identity(), SanitizedRequestIdentity: request.SanitizedRequestIdentity(),
-		Scanner:           ScannerProfile{WorkerProtocol: 1, Scanner: initial.Scanner, ScannerVersion: initial.ScannerVersion, ScannerCommit: initial.ScannerCommit, RulesetIdentity: initial.RulesetIdentity, RulesetRuleCount: secretscan.RulesetRuleCount, BuildProfile: initial.BuildProfile, LauncherSHA256: initial.LauncherSHA256, WorkerSHA256: initial.WorkerSHA256},
+		Scanner:           ScannerProfile{WorkerProtocol: 1, Scanner: initial.Scanner, ScannerVersion: initial.ScannerVersion, ScannerCommit: initial.ScannerCommit, RulesetIdentity: initial.RulesetIdentity, RulesetRuleCount: secretscan.RulesetRuleCount, BuildProfile: initial.BuildProfile, HelperSHA256: initial.HelperSHA256},
 		Initial:           ScanCompletion{Complete: true, FieldCount: initial.SourceCount, ScannedByteCount: initial.ScannedByteCount, MatchCount: initial.MatchCount},
 		Residual:          ScanCompletion{Complete: true, FieldCount: residual.SourceCount, ScannedByteCount: residual.ScannedByteCount, MatchCount: residual.MatchCount},
 		RedactedByteCount: totalRedacted, Fields: fields,
@@ -207,7 +226,7 @@ func parseSanitizablePayload(payload []byte, capability provider.Capability, rev
 }
 
 func validProjectionMetadata(metadata secretscan.ScanMetadata, expected ScannerBinaryDigests, sourceCount int) bool {
-	return metadata.Scanner == secretscan.ScannerName && metadata.ScannerVersion == secretscan.ScannerVersion && metadata.ScannerCommit == secretscan.ScannerCommit && metadata.RulesetIdentity == secretscan.RulesetIdentity && metadata.BuildProfile == secretscan.BuildProfile && metadata.LauncherSHA256 == expected.LauncherSHA256 && metadata.WorkerSHA256 == expected.WorkerSHA256 && metadata.SourceCount == sourceCount && metadata.ScannedByteCount >= 0 && metadata.MatchCount >= 0
+	return metadata.Scanner == secretscan.ScannerName && metadata.ScannerVersion == secretscan.ScannerVersion && metadata.ScannerCommit == secretscan.ScannerCommit && metadata.RulesetIdentity == secretscan.RulesetIdentity && metadata.BuildProfile == secretscan.BuildProfile && metadata.HelperSHA256 == expected.HelperSHA256 && metadata.SourceCount == sourceCount && metadata.ScannedByteCount >= 0 && metadata.MatchCount >= 0
 }
 
 func deriveGenerationRequestSanitizerIdentity(expected ScannerBinaryDigests) string {
@@ -217,9 +236,8 @@ func deriveGenerationRequestSanitizerIdentity(expected ScannerBinaryDigests) str
 		Policy   string `json:"policy"`
 		Scanner  string `json:"scanner"`
 		Profile  string `json:"profile"`
-		Launcher string `json:"launcher"`
-		Worker   string `json:"worker"`
-	}{"open-trestle/generation-request-sanitizer", 1, SanitizationPolicyIdentity, secretscan.ScannerName, secretscan.BuildProfile, expected.LauncherSHA256, expected.WorkerSHA256})
+		Helper   string `json:"helper"`
+	}{"open-trestle/generation-request-sanitizer", 1, SanitizationPolicyIdentity, secretscan.ScannerName, secretscan.BuildProfile, expected.HelperSHA256})
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:])
 }

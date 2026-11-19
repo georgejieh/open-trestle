@@ -63,8 +63,7 @@ func (value fixedGenerationProjectionFixture) MaskedByteCount() int { return val
 
 type fixedGenerationClientFixture struct {
 	projection sanitizedScanProjection
-	launcher   string
-	worker     string
+	helper     string
 	calls      int
 	observed   [][]byte
 }
@@ -77,9 +76,7 @@ func (value *fixedGenerationClientFixture) Sanitize(_ context.Context, sources [
 	}
 	return value.projection
 }
-func (value *fixedGenerationClientFixture) BinaryDigests() (string, string) {
-	return value.launcher, value.worker
-}
+func (value *fixedGenerationClientFixture) HelperSHA256() string { return value.helper }
 
 func sanitizedFixture(t *testing.T) sanitizedEgressFixture {
 	t.Helper()
@@ -139,7 +136,7 @@ func sanitizedFixture(t *testing.T) sanitizedEgressFixture {
 	}
 	receipt, err := NewSanitizedEgressReceipt(SanitizedEgressReceiptInput{
 		ReviewScopeIdentity: scope.Identity(), RawRequestIdentity: rawRequest.Identity(), SanitizedRequestIdentity: request.SanitizedRequestIdentity(),
-		Scanner:           ScannerProfile{WorkerProtocol: 1, Scanner: secretscan.ScannerName, ScannerVersion: secretscan.ScannerVersion, ScannerCommit: secretscan.ScannerCommit, RulesetIdentity: secretscan.RulesetIdentity, RulesetRuleCount: secretscan.RulesetRuleCount, BuildProfile: secretscan.BuildProfile, LauncherSHA256: strings.Repeat("b", 64), WorkerSHA256: strings.Repeat("c", 64)},
+		Scanner:           ScannerProfile{WorkerProtocol: 1, Scanner: secretscan.ScannerName, ScannerVersion: secretscan.ScannerVersion, ScannerCommit: secretscan.ScannerCommit, RulesetIdentity: secretscan.RulesetIdentity, RulesetRuleCount: secretscan.RulesetRuleCount, BuildProfile: secretscan.BuildProfile, HelperSHA256: strings.Repeat("b", 64)},
 		Initial:           ScanCompletion{Complete: true, FieldCount: len(fields), ScannedByteCount: totalBytes, MatchCount: matchCount},
 		Residual:          ScanCompletion{Complete: true, FieldCount: len(fields), ScannedByteCount: totalBytes, MatchCount: 0},
 		RedactedByteCount: redactedCount,
@@ -148,7 +145,7 @@ func sanitizedFixture(t *testing.T) sanitizedEgressFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	expected := ScannerBinaryDigests{LauncherSHA256: strings.Repeat("b", 64), WorkerSHA256: strings.Repeat("c", 64)}
+	expected := ScannerBinaryDigests{HelperSHA256: strings.Repeat("b", 64)}
 	requestArtifact, receiptArtifact, err := NewSanitizedEgressArtifacts(rawArtifact, request, receipt, expected, time.UnixMilli(200))
 	if err != nil {
 		t.Fatal(err)
@@ -195,7 +192,7 @@ func TestSanitizedEgressReceiptCanonicalRoundTripClosesScannerFieldsAndCounts(t 
 		t.Fatalf("parsed=(%#v,%v) fields=%#v", parsed, err, fields)
 	}
 	scanner := parsed.Scanner()
-	if scanner.WorkerProtocol != 1 || scanner.Scanner != secretscan.ScannerName || scanner.BuildProfile != secretscan.BuildProfile || scanner.LauncherSHA256 != strings.Repeat("b", 64) || scanner.WorkerSHA256 != strings.Repeat("c", 64) || !parsed.Initial().Complete || !parsed.Residual().Complete || parsed.Residual().MatchCount != 0 {
+	if scanner.WorkerProtocol != 1 || scanner.Scanner != secretscan.ScannerName || scanner.BuildProfile != secretscan.BuildProfile || scanner.HelperSHA256 != strings.Repeat("b", 64) || !parsed.Initial().Complete || !parsed.Residual().Complete || parsed.Residual().MatchCount != 0 {
 		t.Fatalf("scanner=%#v initial=%#v residual=%#v", scanner, parsed.Initial(), parsed.Residual())
 	}
 }
@@ -239,7 +236,7 @@ func TestSanitizedEgressReceiptRejectsCountSpanRuleAndCompletionMismatches(t *te
 		{"initial incomplete", "initial_scan.complete", false}, {"residual incomplete", "residual_scan.complete", false}, {"residual match", "residual_scan.match_count", float64(1)},
 		{"ordinal", "fields.0.ordinal", float64(1)}, {"field bytes", "fields.0.scanned_byte_count", float64(11)}, {"field redacted", "fields.1.redacted_byte_count", float64(7)},
 		{"span", "fields.1.matches.0.end_byte_exclusive", float64(21)}, {"rule", "fields.1.matches.0.rule_id", "not-a-pinned-rule"}, {"occurrence", "fields.1.matches.0.occurrence_id", strings.Repeat("d", 64)},
-		{"worker protocol", "scanner.worker_protocol", float64(2)}, {"rule count", "scanner.ruleset_rule_count", float64(416)}, {"profile", "scanner.build_profile", "other"}, {"launcher digest", "scanner.launcher_sha256", strings.Repeat("0", 64)},
+		{"worker protocol", "scanner.worker_protocol", float64(2)}, {"rule count", "scanner.ruleset_rule_count", float64(416)}, {"profile", "scanner.build_profile", "other"}, {"helper digest", "scanner.helper_sha256", strings.Repeat("0", 64)},
 	}
 	for _, mutation := range mutations {
 		t.Run(mutation.name, func(t *testing.T) {
@@ -355,8 +352,8 @@ func TestSanitizedEgressArtifactsRejectUnmaskedPayloadWithInternallyConsistentId
 func TestSanitizedEgressArtifactsRequireAuthoritativeBinaryDigests(t *testing.T) {
 	f := sanitizedFixture(t)
 	for _, expected := range []ScannerBinaryDigests{
-		{LauncherSHA256: strings.Repeat("d", 64), WorkerSHA256: f.expected.WorkerSHA256},
-		{LauncherSHA256: f.expected.LauncherSHA256, WorkerSHA256: strings.Repeat("d", 64)},
+		{HelperSHA256: strings.Repeat("d", 64)},
+		{HelperSHA256: strings.Repeat("0", 64)},
 	} {
 		if err := ValidateSanitizedEgressArtifacts(f.rawArtifact, f.requestArtifact, f.receiptArtifact, expected); err == nil {
 			t.Fatal("wrong nonzero binary digest accepted")
@@ -398,8 +395,8 @@ func TestSanitizedEgressReceiptConstructorRejectsInvalidCountsAndEvidence(t *tes
 		{"ruleset", func(input *SanitizedEgressReceiptInput) { input.Scanner.RulesetIdentity = strings.Repeat("d", 64) }},
 		{"rule count", func(input *SanitizedEgressReceiptInput) { input.Scanner.RulesetRuleCount-- }},
 		{"profile", func(input *SanitizedEgressReceiptInput) { input.Scanner.BuildProfile = "other" }},
-		{"launcher", func(input *SanitizedEgressReceiptInput) { input.Scanner.LauncherSHA256 = strings.Repeat("0", 64) }},
-		{"worker", func(input *SanitizedEgressReceiptInput) { input.Scanner.WorkerSHA256 = strings.Repeat("0", 64) }},
+		{"launcher", func(input *SanitizedEgressReceiptInput) { input.Scanner.HelperSHA256 = strings.Repeat("0", 64) }},
+		{"worker", func(input *SanitizedEgressReceiptInput) { input.Scanner.HelperSHA256 = strings.Repeat("0", 64) }},
 	}
 	for _, test := range mutations {
 		t.Run(test.name, func(t *testing.T) {
@@ -562,11 +559,11 @@ func TestFixedGenerationSanitizerClosesMixedCleanAndDetectedFields(t *testing.T)
 			masked += len(secret)
 		}
 	}
-	launcher, worker := strings.Repeat("b", 64), strings.Repeat("c", 64)
-	metadata := secretscan.ScanMetadata{Scanner: secretscan.ScannerName, ScannerVersion: secretscan.ScannerVersion, ScannerCommit: secretscan.ScannerCommit, RulesetIdentity: secretscan.RulesetIdentity, BuildProfile: secretscan.BuildProfile, LauncherSHA256: launcher, WorkerSHA256: worker, SourceCount: len(sources), ScannedByteCount: total}
+	helper := strings.Repeat("b", 64)
+	metadata := secretscan.ScanMetadata{Scanner: secretscan.ScannerName, ScannerVersion: secretscan.ScannerVersion, ScannerCommit: secretscan.ScannerCommit, RulesetIdentity: secretscan.RulesetIdentity, BuildProfile: secretscan.BuildProfile, HelperSHA256: helper, SourceCount: len(sources), ScannedByteCount: total}
 	initial, residual := metadata, metadata
 	initial.MatchCount = len(matches)
-	client := &fixedGenerationClientFixture{launcher: launcher, worker: worker, projection: fixedGenerationProjectionFixture{complete: true, sources: sanitizedSources, matches: matches, initial: initial, residual: residual, masked: masked}}
+	client := &fixedGenerationClientFixture{helper: helper, projection: fixedGenerationProjectionFixture{complete: true, sources: sanitizedSources, matches: matches, initial: initial, residual: residual, masked: masked}}
 	sanitizer := newFixedGenerationRequestSanitizer(client)
 	request, receipt, err := sanitizer.SanitizeGeneration(context.Background(), f.rawRequest, f.scope.Identity())
 	if err != nil || client.calls != 1 || len(client.observed) != len(sources) {
@@ -596,12 +593,12 @@ func TestFixedGenerationSanitizerClosesMixedCleanAndDetectedFields(t *testing.T)
 	}
 }
 
-func TestFixedGenerationSanitizerFailsClosedWithoutPackagedWorkerIdentity(t *testing.T) {
+func TestFixedGenerationSanitizerFailsClosedWithoutScanHelper(t *testing.T) {
 	f := sanitizedFixture(t)
-	sanitizer := NewFixedGenerationRequestSanitizer()
+	sanitizer := NewFixedGenerationRequestSanitizer(nil)
 	request, receipt, err := sanitizer.SanitizeGeneration(context.Background(), f.rawRequest, f.scope.Identity())
 	if err == nil || request.Identity() != "" || receipt.Identity() != "" {
-		t.Fatal("unpackaged fixed scanner produced generation authority")
+		t.Fatal("a sanitizer without a scan helper produced generation authority")
 	}
 }
 
@@ -679,7 +676,11 @@ func mutateJSONPath(t *testing.T, encoded []byte, path string, value any) []byte
 	if len(last) == 1 && last[0] >= '0' && last[0] <= '9' {
 		current.([]any)[int(last[0]-'0')] = value
 	} else {
-		current.(map[string]any)[last] = value
+		object := current.(map[string]any)
+		if _, ok := object[last]; !ok {
+			t.Fatalf("no field at %s", path)
+		}
+		object[last] = value
 	}
 	changed, _ := json.Marshal(root)
 	return changed
@@ -777,11 +778,11 @@ func TestFixedVerificationSanitizerScansEveryTypedUntrustedFieldIndependently(t 
 			t.Fatalf("typed verifier field %s was not scanned", role)
 		}
 	}
-	launcher, worker := strings.Repeat("b", 64), strings.Repeat("c", 64)
-	metadata := secretscan.ScanMetadata{Scanner: secretscan.ScannerName, ScannerVersion: secretscan.ScannerVersion, ScannerCommit: secretscan.ScannerCommit, RulesetIdentity: secretscan.RulesetIdentity, BuildProfile: secretscan.BuildProfile, LauncherSHA256: launcher, WorkerSHA256: worker, SourceCount: len(document.fields), ScannedByteCount: total}
+	helper := strings.Repeat("b", 64)
+	metadata := secretscan.ScanMetadata{Scanner: secretscan.ScannerName, ScannerVersion: secretscan.ScannerVersion, ScannerCommit: secretscan.ScannerCommit, RulesetIdentity: secretscan.RulesetIdentity, BuildProfile: secretscan.BuildProfile, HelperSHA256: helper, SourceCount: len(document.fields), ScannedByteCount: total}
 	initial, residual := metadata, metadata
 	initial.MatchCount = len(matches)
-	client := &fixedGenerationClientFixture{launcher: launcher, worker: worker, projection: fixedGenerationProjectionFixture{complete: true, sources: sanitizedSources, matches: matches, initial: initial, residual: residual, masked: masked}}
+	client := &fixedGenerationClientFixture{helper: helper, projection: fixedGenerationProjectionFixture{complete: true, sources: sanitizedSources, matches: matches, initial: initial, residual: residual, masked: masked}}
 	sanitizer := newFixedVerificationRequestSanitizer(client)
 	request, receipt, err := sanitizer.SanitizeVerification(context.Background(), raw, packet.ReviewScopeIdentity())
 	if err != nil || client.calls != 1 || receipt.Initial().FieldCount != len(document.fields) {

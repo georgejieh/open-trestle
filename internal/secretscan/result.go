@@ -40,10 +40,7 @@ type ScanMetadata struct {
 	ScannerCommit   string
 	RulesetIdentity string
 	BuildProfile    string
-	LauncherSHA256  string
-	WorkerSHA256    string
-	// HelperSHA256 identifies the session helper executable for scans run
-	// through a Session; it is empty for scans run through Client.
+	// HelperSHA256 is the SHA-256 of the scan helper that ran the scan.
 	HelperSHA256     string
 	Duration         time.Duration
 	SourceCount      int
@@ -70,15 +67,6 @@ func (result ScanResult) Format(state fmt.State, verb rune) {
 		return
 	}
 	_, _ = fmt.Fprint(state, result.String())
-}
-
-// ReceiptBuildProfile reports whether a review receipt may name profile:
-// BuildProfile, which the native worker emits, or the recorded go1.26.10
-// profile. KnownBuildProfile also accepts HostRE2BuildProfile, because the
-// scan helper's responses carry it, but reviews do not run the scan helper,
-// so no receipt may claim its profile.
-func ReceiptBuildProfile(profile string) bool {
-	return profile == BuildProfile || profile == go12610BuildProfile
 }
 
 type sourceScanner interface {

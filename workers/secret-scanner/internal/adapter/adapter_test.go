@@ -28,9 +28,8 @@ import (
 
 func newTestAdapter(run func(context.Context, sources.Source) iter.Seq[detect.Result], totalBytes func() uint64, deadline time.Duration) *Adapter {
 	return &Adapter{
-		runtime:      detectorRuntime{run: run, totalBytes: totalBytes},
-		deadline:     deadline,
-		buildProfile: protocol.BuildProfile,
+		runtime:  detectorRuntime{run: run, totalBytes: totalBytes},
+		deadline: deadline,
 	}
 }
 
@@ -114,8 +113,8 @@ func TestPinnedInitializationAndDisabledFeatures(t *testing.T) {
 	if got := len(adapter.detector.Config.Rules); got != protocol.RulesetRuleCount {
 		t.Fatalf("got %d rules, want %d", got, protocol.RulesetRuleCount)
 	}
-	if adapter.deadline != internalScanDeadline || adapter.buildProfile != protocol.BuildProfile {
-		t.Fatal("native adapter does not use the native deadline and profile")
+	if adapter.deadline != internalScanDeadline {
+		t.Fatal("native adapter does not use the native deadline")
 	}
 }
 
@@ -125,7 +124,7 @@ type hostTestEngine struct{ re2.RE2 }
 
 func (hostTestEngine) Version() string { return regexabi.EngineVersion }
 
-func TestHostEngineAdapterUsesTheGuestDeadlineAndProfile(t *testing.T) {
+func TestHostEngineAdapterUsesTheGuestDeadline(t *testing.T) {
 	if HostEngineScanDeadline != 40*time.Second {
 		t.Fatal("guest scan deadline is not forty seconds")
 	}
@@ -138,8 +137,8 @@ func TestHostEngineAdapterUsesTheGuestDeadlineAndProfile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if adapter.deadline != HostEngineScanDeadline || adapter.buildProfile != protocol.HostRE2BuildProfile {
-		t.Fatal("host engine adapter does not use the guest deadline and profile")
+	if adapter.deadline != HostEngineScanDeadline {
+		t.Fatal("host engine adapter does not use the guest deadline")
 	}
 	if _, err := NewWithHostEngine(re2.RE2{}); !errors.Is(err, ErrInitialization) {
 		t.Fatal("host engine adapter accepted an engine with another version")

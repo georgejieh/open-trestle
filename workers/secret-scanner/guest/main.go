@@ -22,7 +22,6 @@ import (
 	"github.com/georgejieh/open-trestle/workers/secret-scanner/guest/internal/hostre2"
 	"github.com/georgejieh/open-trestle/workers/secret-scanner/internal/adapter"
 	"github.com/georgejieh/open-trestle/workers/secret-scanner/internal/protocol"
-	"github.com/georgejieh/open-trestle/workers/secret-scanner/internal/sandbox"
 	"github.com/georgejieh/open-trestle/workers/secret-scanner/internal/workerio"
 )
 
@@ -45,12 +44,6 @@ func runSafely(arguments []string, input io.Reader, output io.Writer) (exitCode 
 func run(arguments []string, input io.Reader, output io.Writer) int {
 	if len(arguments) != 2 || arguments[1] != singleArgument {
 		return 64
-	}
-	if err := sandbox.Install(); err != nil {
-		return 70
-	}
-	if err := sandbox.SilenceStandardError(); err != nil {
-		return 70
 	}
 	detect.BpeLoader = bpe.Loader{}
 	scanner, err := adapter.NewWithHostEngine(hostre2.Engine{})

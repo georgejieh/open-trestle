@@ -17,7 +17,7 @@ func NewCleanGenerationSanitizer() CleanGenerationSanitizer     { return CleanGe
 func NewCleanVerificationSanitizer() CleanVerificationSanitizer { return CleanVerificationSanitizer{} }
 func (CleanVerificationSanitizer) Identity() string             { return strings.Repeat("9", 64) }
 func (CleanVerificationSanitizer) ExpectedBinaryDigests() review.ScannerBinaryDigests {
-	return review.ScannerBinaryDigests{LauncherSHA256: strings.Repeat("b", 64), WorkerSHA256: strings.Repeat("c", 64)}
+	return review.ScannerBinaryDigests{HelperSHA256: strings.Repeat("b", 64)}
 }
 func (value CleanVerificationSanitizer) SanitizeVerification(_ context.Context, raw provider.Request, scopeIdentity string) (review.SanitizedModelRequest, review.SanitizedEgressReceipt, error) {
 	return cleanSanitizedRequest(raw, scopeIdentity, value.ExpectedBinaryDigests())
@@ -27,7 +27,7 @@ func (CleanGenerationSanitizer) PublicationContentScanner() review.PublicationCo
 }
 func (CleanGenerationSanitizer) Identity() string { return strings.Repeat("8", 64) }
 func (CleanGenerationSanitizer) ExpectedBinaryDigests() review.ScannerBinaryDigests {
-	return review.ScannerBinaryDigests{LauncherSHA256: strings.Repeat("b", 64), WorkerSHA256: strings.Repeat("c", 64)}
+	return review.ScannerBinaryDigests{HelperSHA256: strings.Repeat("b", 64)}
 }
 func (value CleanGenerationSanitizer) SanitizeGeneration(_ context.Context, raw provider.Request, scopeIdentity string) (review.SanitizedModelRequest, review.SanitizedEgressReceipt, error) {
 	return cleanSanitizedRequest(raw, scopeIdentity, value.ExpectedBinaryDigests())
@@ -116,7 +116,7 @@ func cleanSanitizedRequest(raw provider.Request, scopeIdentity string, expected 
 	}
 	receipt, err := review.NewSanitizedEgressReceipt(review.SanitizedEgressReceiptInput{
 		ReviewScopeIdentity: scopeIdentity, RawRequestIdentity: raw.Identity(), SanitizedRequestIdentity: request.SanitizedRequestIdentity(),
-		Scanner: review.ScannerProfile{WorkerProtocol: 1, Scanner: secretscan.ScannerName, ScannerVersion: secretscan.ScannerVersion, ScannerCommit: secretscan.ScannerCommit, RulesetIdentity: secretscan.RulesetIdentity, RulesetRuleCount: secretscan.RulesetRuleCount, BuildProfile: secretscan.BuildProfile, LauncherSHA256: expected.LauncherSHA256, WorkerSHA256: expected.WorkerSHA256},
+		Scanner: review.ScannerProfile{WorkerProtocol: 1, Scanner: secretscan.ScannerName, ScannerVersion: secretscan.ScannerVersion, ScannerCommit: secretscan.ScannerCommit, RulesetIdentity: secretscan.RulesetIdentity, RulesetRuleCount: secretscan.RulesetRuleCount, BuildProfile: secretscan.BuildProfile, HelperSHA256: expected.HelperSHA256},
 		Initial: review.ScanCompletion{Complete: true, FieldCount: len(fields), ScannedByteCount: total}, Residual: review.ScanCompletion{Complete: true, FieldCount: len(fields), ScannedByteCount: total}, Fields: fields,
 	})
 	return request, receipt, err

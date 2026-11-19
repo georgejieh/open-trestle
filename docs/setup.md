@@ -462,9 +462,9 @@ This setup receipt alone does not enable sending repository content to a remote 
 - more than 256 KiB in one field
 - more than 2 MiB decoded in total
 - scanner or residual findings that cannot be completed
-- a timeout of five seconds for the worker, or six seconds for the parent
+- a deadline or fault of the secret scan helper
 
-A normal development build from the root has no injected scanner digests, so it cannot enable this path.
+A plain `go build` from the root pins no secret scan helper, so it cannot enable this path. Build with `tools/package_secret_scanner.py` instead.
 
 ### Credentials and DNS
 
@@ -474,7 +474,7 @@ The authorization makes no DNS lookup, network request or model call. Setup stat
 
 ### What a pass proves
 
-A pass means that the named recovery owner authorized one remote-provider configuration, and that its protected snapshot satisfied the declared policy constraints. Credential availability, provider connectivity and scanner packaging are not checked. The separate policy receipt, the packaged scanner evidence and the dry run remain required.
+A pass means that the named recovery owner authorized one remote-provider configuration, and that its protected snapshot satisfied the declared policy constraints. Credential availability, provider connectivity and the scan helper are not checked. The separate policy receipt, the scan helper release evidence and the dry run remain required.
 
 The pinned Betterleaks v1.8.1 profile detected 11 of 14 expected occurrences in its reviewed corpus. It missed bearer credentials, AWS secret keys and AWS session tokens, and it redacted one near miss as a `generic-api-key` at `[7,51)`. See the [secret scanner section](operations.md#secret-scanner-runtime-boundary) for the scanner's limits. Changing either protected file, or any approved identity, invalidates the authorization.
 

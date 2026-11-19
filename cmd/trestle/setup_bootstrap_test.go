@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/georgejieh/open-trestle/internal/secretscan"
 	setupcore "github.com/georgejieh/open-trestle/setup"
 )
 
@@ -172,6 +173,38 @@ func TestSetupBootstrapOwnedCheckoutFirstReview(t *testing.T) {
 	plan, errPlan := setupcore.InspectStateFile(context.Background(), filepath.Join(dir, "runs", "setup", "plan.json"))
 	if errPlan != nil || !plan.Ready() {
 		t.Fatal("no canonical ready setup", errPlan)
+	}
+}
+
+// TestSetupBootstrapLocalCheckNeedsTheScanner checks that a local setup is
+// not ready without a usable secret scanner, since every review scans.
+func TestSetupBootstrapLocalCheckNeedsTheScanner(t *testing.T) {
+	args, dir, _, _ := bootstrapFixture(t)
+	bootstrapInvoke(t, args, 3)
+	t.Setenv("OPEN_TRESTLE_API_TOKEN", "operator-"+strings.Repeat("a", 32))
+	t.Setenv("OPEN_TRESTLE_OBSERVER_TOKEN", "observer-"+strings.Repeat("b", 32))
+	backup := t.TempDir()
+	_ = os.Chmod(backup, 0700)
+	check := []string{"check", "--directory", dir, "--approved-by", "owner", "--allow-local-probe", "--backup-directory", backup}
+	previous := setupBootstrapScannerPrerequisite
+	t.Cleanup(func() { setupBootstrapScannerPrerequisite = previous })
+	for _, test := range []struct {
+		err    error
+		code   int
+		status string
+	}{
+		{secretscan.ErrHelperNotPinned, 4, "refused"},
+		{secretscan.ErrHelperNotInstalled, 3, "pending"},
+	} {
+		setupBootstrapScannerPrerequisite = func() error { return test.err }
+		result := bootstrapInvoke(t, check, test.code)
+		if result.Ready || result.Status != test.status || !slices.Equal(result.Pending, []string{setupScannerCheck}) || !slices.Contains(result.Messages, setupScannerCheck+": "+test.err.Error()) {
+			t.Fatalf("%v: %+v", test.err, result)
+		}
+	}
+	setupBootstrapScannerPrerequisite = previous
+	if ready := bootstrapInvoke(t, check, 0); !ready.Ready {
+		t.Fatalf("ready with the scanner: %+v", ready)
 	}
 }
 

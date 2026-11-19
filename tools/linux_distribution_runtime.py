@@ -50,15 +50,13 @@ EXECUTABLE_PATHS = frozenset(
     {
         "usr/local/bin/trestle",
         "usr/local/bin/trestled",
-        "usr/local/libexec/open-trestle/open-trestle-secret-scanner",
-        "usr/local/libexec/open-trestle/open-trestle-secret-scanner-worker",
+        "usr/local/libexec/open-trestle/open-trestle-scan-helper",
     }
 )
 EXECUTABLE_SOURCES = {
     "trestle": "usr/local/bin/trestle",
     "trestled": "usr/local/bin/trestled",
-    "libexec/open-trestle/open-trestle-secret-scanner": "usr/local/libexec/open-trestle/open-trestle-secret-scanner",
-    "libexec/open-trestle/open-trestle-secret-scanner-worker": "usr/local/libexec/open-trestle/open-trestle-secret-scanner-worker",
+    "libexec/open-trestle/open-trestle-scan-helper": "usr/local/libexec/open-trestle/open-trestle-scan-helper",
 }
 RELEASE_SOURCES = frozenset(
     {
@@ -542,8 +540,7 @@ def _validate_elf(body: bytes, label: str) -> None:
     if len(body) < 64 or body[:16] != b"\x7fELF\x02\x01\x01\x00" + (b"\x00" * 8):
         raise ValueError(f"{label} is not a canonical ELF64 file")
     elf_type, machine, version = struct.unpack_from("<HHI", body, 16)
-    expected_type = 3 if label.endswith("open-trestle-secret-scanner") else 2
-    if elf_type != expected_type or machine != 62 or version != 1:
+    if elf_type != 2 or machine != 62 or version != 1:
         raise ValueError(f"{label} is not the expected Linux amd64 executable")
     program_offset = struct.unpack_from("<Q", body, 32)[0]
     program_entry_size, program_count = struct.unpack_from("<HH", body, 54)

@@ -603,7 +603,7 @@ func TestLocalVerificationEnvelopeIsClosedAndCannotAuthorizeSanitizedEgress(t *t
 			t.Fatalf("local verification envelope contains forbidden field %s", field)
 		}
 	}
-	for _, forbidden := range []string{"receipt", "scanner", "ruleset", "launcher_sha256", "worker_sha256", "sanitization_policy_identity"} {
+	for _, forbidden := range []string{"receipt", "scanner", "ruleset", "helper_sha256", "sanitization_policy_identity"} {
 		if bytes.Contains(envelope.Payload(), []byte(`"`+forbidden+`"`)) {
 			t.Fatalf("local verification envelope contains %s authority", forbidden)
 		}

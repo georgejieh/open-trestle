@@ -13,8 +13,10 @@ GitHub webhook and publication make further requests. These are described in
   provider your setup names. `trestle init` asks before it runs the first one.
 - With a model server on your machine, a review sends your source only to that
   server.
-- Before a request to a remote provider, Open Trestle scans it for secrets in a
-  sandboxed process. A request that fails the scan is not sent.
+- Before every model request, with a local server or a remote provider, Open
+  Trestle scans it for secrets twice in the secret scan helper. A secret is
+  masked. If the scan cannot complete, the request is refused and nothing is
+  sent.
 - Open Trestle has no telemetry and no analytics.
 - The update check makes one unauthenticated request, at most once a day, and
   sends nothing about you or your repository.
@@ -48,10 +50,11 @@ ledger holds amounts, not a key, source, prompt or reply.
 
 ## Secret scanning
 
-Every request to a remote route passes two sandboxed Betterleaks scans. The first
-scans the request fields and redacts any finding. A second, fresh process must
-then find nothing left. A binary without the packaged scanner refuses to send to
-a remote route. The scanner is a pattern scanner: on the reviewed corpus it
+Every model request, to a model server on this machine or to a remote provider,
+passes two Betterleaks scans in the secret scan helper before it is sent. The
+first scans the request fields and masks any finding. The masked request must
+then scan clean. A binary that pins no helper, or a missing or changed helper,
+refuses the review and sends nothing. The scanner is a pattern scanner: on the reviewed corpus it
 found 11 of 14 expected occurrences, and it misses bearer credentials, AWS
 secret keys and AWS session tokens. Do not rely on it to make a secret safe to
 send. Details are in the

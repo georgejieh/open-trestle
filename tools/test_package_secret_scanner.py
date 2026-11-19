@@ -1,248 +1,414 @@
-"""Tests for the isolated secret-scanner release package."""
+"""Tests for the secret-scanner release package and development build."""
 
 import hashlib
 import json
+import os
 import stat
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import package_secret_scanner
 
-
-class LinkedLicenseTest(unittest.TestCase):
-    def test_exact_binary_module_closure_is_required(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            license_file = root / "example-LICENSE"
-            license_file.write_text("license text")
-            manifest = {
-                "schema_version": 1,
-                "modules": [{
-                    "module": "example.org/runtime",
-                    "version": "v1.2.3",
-                    "license": "MIT",
-                    "files": [{
-                        "file": license_file.name,
-                        "sha256": hashlib.sha256(b"license text").hexdigest(),
-                        "upstream_path": "LICENSE",
-                    }],
-                }],
-            }
-            build_info = "\tdep\texample.org/runtime\tv1.2.3\th1:sum\n"
-
-            modules = package_secret_scanner.verify_linked_licenses(
-                build_info, manifest, root
-            )
-
-            self.assertEqual(modules[0]["module_sum"], "h1:sum")
-            with self.assertRaisesRegex(ValueError, "linked module inventory mismatch"):
-                package_secret_scanner.verify_linked_licenses(
-                    build_info + "\tdep\texample.org/missing\tv1.0.0\th1:other\n",
-                    manifest,
-                    root,
-                )
-
-    def test_license_paths_cannot_escape_the_reviewed_directory(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            outside = root.parent / "outside-license"
-            outside.write_text("private")
-            manifest = {
-                "schema_version": 1,
-                "modules": [{
-                    "module": "example.org/runtime",
-                    "version": "v1.2.3",
-                    "license": "MIT",
-                    "files": [{
-                        "file": "../outside-license",
-                        "sha256": hashlib.sha256(b"private").hexdigest(),
-                        "upstream_path": "LICENSE",
-                    }],
-                }],
-            }
-            try:
-                with self.assertRaisesRegex(ValueError, "license file path is invalid"):
-                    package_secret_scanner.verify_linked_licenses(
-                        "\tdep\texample.org/runtime\tv1.2.3\th1:sum\n",
-                        manifest,
-                        root,
-                    )
-            finally:
-                outside.unlink(missing_ok=True)
-
-    def test_root_build_metadata_uses_the_pinned_toolchain(self):
-        package_secret_scanner.verify_root_build_info("trestled: go1.26.11\n")
-
-        with self.assertRaisesRegex(ValueError, "root Go toolchain metadata mismatch"):
-            package_secret_scanner.verify_root_build_info("trestled: go1.26.10\n")
-
-    def test_worker_build_metadata_is_closed(self):
-        valid = """worker: go1.26.11
-\tbuild\t-trimpath=true
-\tbuild\tCGO_ENABLED=0
-\tbuild\tGOARCH=amd64
-\tbuild\tGOOS=linux
-"""
-        package_secret_scanner.verify_worker_build_info(valid)
-        for changed in (
-            valid.replace("go1.26.11", "go1.26.10"),
-            valid.replace("CGO_ENABLED=0", "CGO_ENABLED=1"),
-            valid.replace("GOARCH=amd64", "GOARCH=arm64"),
-        ):
-            with self.assertRaisesRegex(ValueError, "worker .* metadata mismatch"):
-                package_secret_scanner.verify_worker_build_info(changed)
-
-    def test_missing_or_changed_license_file_is_rejected(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root / "LICENSE").write_text("changed")
-            manifest = {
-                "schema_version": 1,
-                "modules": [{
-                    "module": "example.org/runtime",
-                    "version": "v1.2.3",
-                    "license": "MIT",
-                    "files": [{
-                        "file": "LICENSE",
-                        "sha256": "0" * 64,
-                        "upstream_path": "LICENSE",
-                    }],
-                }],
-            }
-
-            with self.assertRaisesRegex(ValueError, "license digest mismatch"):
-                package_secret_scanner.verify_linked_licenses(
-                    "\tdep\texample.org/runtime\tv1.2.3\th1:sum\n",
-                    manifest,
-                    root,
-                )
+REPOSITORY = Path(__file__).resolve().parent.parent
+SCANNER = package_secret_scanner.SCANNER_DIRECTORY
+GUEST = package_secret_scanner.GUEST_DIRECTORY
+PATCHED_PATH = "workers/secret-scanner/third_party/example"
+PATCH_FILE = "workers/secret-scanner/third_party/example-v1.0.0.patch"
+HELPER_INFO = (
+    "helper: go1.26.11\n"
+    f"\tpath\t{package_secret_scanner.HELPER_PACKAGE}\n"
+    f"\tmod\t{package_secret_scanner.SCANNER_MODULE}\t(devel)\t\n"
+    "\tdep\texample.org/runtime\tv1.2.3\th1:runtime\n"
+    "\tbuild\t-trimpath=true\n\tbuild\tCGO_ENABLED=0\n"
+    "\tbuild\tGOARCH=amd64\n\tbuild\tGOOS=linux\n"
+)
+GUEST_INFO = (
+    f"path\t{package_secret_scanner.GUEST_PACKAGE}\n"
+    f"mod\t{package_secret_scanner.GUEST_PACKAGE}\t(devel)\t\n"
+    "dep\texample.org/patched\tv1.0.0\n"
+    "=>\t../third_party/example\t(devel)\t\n"
+    f"dep\t{package_secret_scanner.SCANNER_MODULE}\tv0.0.0\n"
+    "=>\t../\t(devel)\t\n"
+    "dep\texample.org/shared\tv0.1.0\th1:shared\n"
+    "build\t-trimpath=true\nbuild\tCGO_ENABLED=0\n"
+    "build\tGOARCH=wasm\nbuild\tGOOS=wasip1\n"
+)
 
 
-class RootBinaryPackageTest(unittest.TestCase):
-    def _package(self, root, *, missing_digest=None, wrong_toolchain=None, wrong_provenance=None, changed_source=False):
-        root_mod = b"module example.org/test\n\ngo 1.25.0\ntoolchain go1.26.11\n"
-        files = {
-            "go.mod": root_mod,
-            "workers/secret-scanner/go.mod": root_mod,
-            "workers/secret-scanner/go.sum": b"",
-            "workers/secret-scanner/launcher/launcher.c": b"launcher source",
-            "workers/secret-scanner/launcher/build.mk": b"launcher build",
-            "THIRD_PARTY_LICENSES/secret-scanner/MODULES.json": b"{}",
-            "tools/model_catalog.py": b"# catalog\n",
-            "LICENSE": b"license",
-            "NOTICE": b"notice",
+def _write(root: Path, relative: str, content: bytes) -> None:
+    path = root / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(content)
+
+
+def _license_fixture(root: Path) -> tuple[dict, Path]:
+    """Create a repository with go.sum files, one patch and reviewed licenses."""
+    _write(root, f"{SCANNER}/go.sum", (
+        "example.org/patched v1.0.0 h1:upstream\n"
+        "example.org/patched v1.0.0/go.mod h1:patched-mod\n"
+        "example.org/runtime v1.2.3 h1:runtime\n"
+        "example.org/runtime v1.2.3/go.mod h1:runtime-mod\n"
+    ).encode())
+    _write(root, f"{GUEST}/go.sum", (
+        "example.org/shared v0.1.0 h1:shared\n"
+        "example.org/shared v0.1.0/go.mod h1:shared-mod\n"
+    ).encode())
+    _write(root, PATCH_FILE, b"patch")
+    license_root = root / "licenses"
+    modules = []
+    for module, version in (("example.org/patched", "v1.0.0"), ("example.org/runtime", "v1.2.3"), ("example.org/shared", "v0.1.0")):
+        name = module.replace("/", "_") + "_" + version + "/LICENSE"
+        _write(license_root, name, module.encode())
+        entry = {
+            "module": module, "version": version, "license": "MIT",
+            "files": [{"file": name, "sha256": hashlib.sha256(module.encode()).hexdigest(), "upstream_path": "LICENSE"}],
         }
-        for relative, content in files.items():
-            path = root / relative
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(content)
-        launcher_digest = hashlib.sha256(b"launcher").hexdigest()
-        worker_digest = hashlib.sha256(b"worker").hexdigest()
-        builds = {}
+        if module == "example.org/patched":
+            entry["patched_copies"] = [{
+                "linked_by": GUEST, "path": PATCHED_PATH, "patch": PATCH_FILE,
+                "patch_sha256": hashlib.sha256(b"patch").hexdigest(),
+            }]
+        modules.append(entry)
+    _write(license_root, "MODULES.json", b"{}")
+    return {"schema_version": 1, "modules": modules}, license_root
 
-        binding = {"source_revision": "a" * 40, "source_tree": "b" * 40}
+
+def _linked(root: Path, manifest: dict, license_root: Path, guest_info: str = GUEST_INFO) -> list[dict]:
+    return package_secret_scanner.linked_modules(
+        root, {SCANNER: HELPER_INFO, GUEST: guest_info}, manifest, license_root,
+    )
+
+
+class LinkedModulesTest(unittest.TestCase):
+    def test_helper_and_guest_closure_records_sums_and_patched_copies(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest, license_root = _license_fixture(root)
+
+            modules = _linked(root, manifest, license_root)
+
+            self.assertEqual(modules, [
+                {
+                    "module": "example.org/patched", "version": "v1.0.0", "license": "MIT",
+                    "linked_by": [GUEST],
+                    "patched_copy": {
+                        "path": PATCHED_PATH, "patch": PATCH_FILE,
+                        "patch_sha256": hashlib.sha256(b"patch").hexdigest(),
+                    },
+                    "upstream_module_sum": "h1:upstream", "go_mod_sum": "h1:patched-mod",
+                },
+                {
+                    "module": "example.org/runtime", "version": "v1.2.3", "license": "MIT",
+                    "linked_by": [SCANNER], "module_sum": "h1:runtime", "go_mod_sum": "h1:runtime-mod",
+                },
+                {
+                    "module": "example.org/shared", "version": "v0.1.0", "license": "MIT",
+                    "linked_by": [GUEST], "module_sum": "h1:shared", "go_mod_sum": "h1:shared-mod",
+                },
+            ])
+
+    def test_inventory_must_match_the_reviewed_licenses_exactly(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest, license_root = _license_fixture(root)
+            with self.assertRaisesRegex(ValueError, r"unreviewed \['example.org/missing@v1.0.0'\]"):
+                _linked(root, manifest, license_root, GUEST_INFO + "dep\texample.org/missing\tv1.0.0\th1:x\n")
+            without_shared = GUEST_INFO.replace("dep\texample.org/shared\tv0.1.0\th1:shared\n", "")
+            with self.assertRaisesRegex(ValueError, r"unlinked \['example.org/shared@v0.1.0'\]"):
+                _linked(root, manifest, license_root, without_shared)
+
+    def test_replacements_must_be_reviewed_patched_copies(self):
+        cases = {
+            "other path": GUEST_INFO.replace("../third_party/example", "../third_party/other"),
+            "versioned": GUEST_INFO.replace("=>\t../third_party/example\t(devel)", "=>\texample.org/fork\tv1.0.0\th1:fork"),
+            "scanner elsewhere": GUEST_INFO.replace("=>\t../\t(devel)", "=>\t../../other\t(devel)"),
+            "upstream release": GUEST_INFO.replace(
+                "dep\texample.org/patched\tv1.0.0\n=>\t../third_party/example\t(devel)\t\n",
+                "dep\texample.org/patched\tv1.0.0\th1:upstream\n",
+            ),
+        }
+        for name, guest_info in cases.items():
+            with self.subTest(case=name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                manifest, license_root = _license_fixture(root)
+                with self.assertRaises(ValueError):
+                    _linked(root, manifest, license_root, guest_info)
+
+    def test_changed_patch_or_module_sum_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest, license_root = _license_fixture(root)
+            _write(root, PATCH_FILE, b"changed patch")
+            with self.assertRaisesRegex(ValueError, "patch digest mismatch"):
+                _linked(root, manifest, license_root)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest, license_root = _license_fixture(root)
+            with self.assertRaisesRegex(ValueError, "module sum does not match go.sum"):
+                _linked(root, manifest, license_root, GUEST_INFO.replace("h1:shared", "h1:other"))
+
+    def test_license_files_are_verified_and_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest, license_root = _license_fixture(root)
+            _write(license_root, "unreviewed/LICENSE", b"extra")
+            with self.assertRaisesRegex(ValueError, "unreviewed files"):
+                package_secret_scanner.reviewed_licenses(manifest, license_root)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest, license_root = _license_fixture(root)
+            (license_root / manifest["modules"][0]["files"][0]["file"]).write_bytes(b"changed")
+            with self.assertRaisesRegex(ValueError, "license digest mismatch"):
+                package_secret_scanner.reviewed_licenses(manifest, license_root)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest, license_root = _license_fixture(root)
+            manifest["modules"][0]["files"][0]["file"] = "../outside"
+            with self.assertRaisesRegex(ValueError, "license file path is invalid"):
+                package_secret_scanner.reviewed_licenses(manifest, license_root)
+
+    def test_repository_license_inventory_and_patches_are_consistent(self):
+        license_root = REPOSITORY / "THIRD_PARTY_LICENSES/secret-scanner"
+        manifest = json.loads((license_root / "MODULES.json").read_text())
+        reviewed = package_secret_scanner.reviewed_licenses(manifest, license_root)
+        patched = {module for (module, _), entry in reviewed.items() if entry.get("patched_copies")}
+        self.assertEqual(patched, {"github.com/betterleaks/betterleaks", "github.com/pkoukk/tiktoken-go"})
+        for entry in reviewed.values():
+            for copy in entry.get("patched_copies", []):
+                with self.subTest(module=entry["module"]):
+                    replacement = "../" + copy["path"].removeprefix("workers/secret-scanner/")
+                    self.assertEqual(
+                        package_secret_scanner._patched_copy(REPOSITORY, GUEST, replacement, entry)["patch"],
+                        copy["patch"],
+                    )
+
+
+class BuildInfoTest(unittest.TestCase):
+    def test_embedded_build_info_is_read_between_the_linker_markers(self):
+        start, end = package_secret_scanner.MODINFO_START, package_secret_scanner.MODINFO_END
+        program = b"\x00asm" + start + GUEST_INFO.encode() + end + b"data"
+        self.assertEqual(package_secret_scanner.embedded_build_info(program), GUEST_INFO)
+        for broken in (b"\x00asm", program + start + b"again" + end, b"\x00asm" + start + b"open"):
+            with self.subTest(program=broken[:12]):
+                with self.assertRaisesRegex(ValueError, "guest build metadata"):
+                    package_secret_scanner.embedded_build_info(broken)
+
+    def test_build_settings_and_toolchain_are_required(self):
+        package_secret_scanner.verify_go_toolchain(HELPER_INFO, "scan helper")
+        package_secret_scanner.verify_build_settings(HELPER_INFO, package_secret_scanner.HELPER_PACKAGE, ("linux", "amd64"))
+        package_secret_scanner.verify_build_settings(GUEST_INFO, package_secret_scanner.GUEST_PACKAGE, ("wasip1", "wasm"))
+        with self.assertRaisesRegex(ValueError, "scan helper Go toolchain metadata mismatch"):
+            package_secret_scanner.verify_go_toolchain(HELPER_INFO.replace("go1.26.11", "go1.26.10"), "scan helper")
+        for changed in (
+            HELPER_INFO.replace("CGO_ENABLED=0", "CGO_ENABLED=1"),
+            HELPER_INFO.replace("-trimpath=true", "-trimpath=false"),
+            HELPER_INFO.replace("GOARCH=amd64", "GOARCH=arm64"),
+            HELPER_INFO.replace("cmd/open-trestle-scan-helper", "cmd/other"),
+        ):
+            with self.subTest(changed=changed), self.assertRaisesRegex(ValueError, "build metadata mismatch"):
+                package_secret_scanner.verify_build_settings(changed, package_secret_scanner.HELPER_PACKAGE, ("linux", "amd64"))
+
+    def test_target_parsing(self):
+        self.assertEqual(package_secret_scanner.parse_target("windows/amd64"), ("windows", "amd64"))
+        for value in ("windows", "windows/amd64/v2", "../amd64", "Windows/AMD64"):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "GOOS/GOARCH"):
+                package_secret_scanner.parse_target(value)
+        with patch("sys.stderr"), self.assertRaises(SystemExit):
+            package_secret_scanner.main(["--target", "linux/amd64"])
+
+
+class _FakeGo:
+    """Stand in for go builds: binaries contain their link flags."""
+
+    def __init__(self, test, *, missing_pin=None, wrong_toolchain=None, wrong_provenance=None, binding=None):
+        self.test = test
+        self.missing_pin = missing_pin
+        self.wrong_toolchain = wrong_toolchain
+        self.wrong_provenance = wrong_provenance
+        self.binding = binding or {}
+        self.builds = {}
+
+    def run(self, arguments, **kwargs):
+        if arguments[-1:] == ["build-info"]:
+            name = Path(arguments[0]).name
+            return json.dumps({
+                "contract": "open-trestle/build-info", "schema_version": 1,
+                "program": name, "source_bound": True, **self.binding,
+                **({"source_revision": "c" * 40} if name == self.wrong_provenance else {}),
+            })
+        if arguments[:2] == ["go", "build"]:
+            output = Path(arguments[arguments.index("-o") + 1])
+            self.builds[output.name] = (arguments, kwargs["environment"])
+            flags = next(item for item in arguments if item.startswith("-ldflags="))
+            if output.stem == self.missing_pin:
+                flags = flags.split(package_secret_scanner.HELPER_PIN)[0]
+            output.write_bytes(flags.encode("ascii"))
+            return ""
+        self.test.assertEqual(arguments[:3], ["go", "version", "-m"])
+        name = Path(arguments[-1]).name
+        if name.startswith(package_secret_scanner.HELPER_NAME):
+            return HELPER_INFO.replace("GOARCH=amd64\n\tbuild\tGOOS=linux", self.helper_target)
+        version = "go1.26.10" if name == self.wrong_toolchain else "go1.26.11"
+        return f"{name}: {version}\n"
+
+    helper_target = "GOARCH=amd64\n\tbuild\tGOOS=linux"
+
+    @staticmethod
+    def build_helper(nondeterministic=False, unpinned=False):
+        guest = (
+            b"\x00asm" + package_secret_scanner.MODINFO_START + GUEST_INFO.encode()
+            + package_secret_scanner.MODINFO_END
+        )
+        calls = []
+
+        def build(_repository, output, target, _go_tmp):
+            calls.append(target)
+            output.mkdir(parents=True)
+            guest_path = output / package_secret_scanner.GUEST_NAME
+            guest_path.write_bytes(guest)
+            pin = b"" if unpinned else hashlib.sha256(guest).hexdigest().encode()
+            name = package_secret_scanner._executable_name(package_secret_scanner.HELPER_NAME, target[0])
+            helper = output / name
+            helper.write_bytes(b"helper" + pin + guest + (str(len(calls)).encode() if nondeterministic else b""))
+            return helper, guest_path
+
+        return build, calls
+
+
+class ReleasePackageTest(unittest.TestCase):
+    binding = {"source_revision": "a" * 40, "source_tree": "b" * 40}
+
+    def _package(self, root, *, changed_source=False, nondeterministic=False, unpinned=False, **fake):
+        go = _FakeGo(self, binding=self.binding, **fake)
+        build_helper, calls = _FakeGo.build_helper(nondeterministic, unpinned)
         source_calls = []
 
         def capture(_root):
             source_calls.append(True)
-            return {**binding, "verified_source": "changed" if changed_source and len(source_calls) > 1 else "stable"}
+            changed = changed_source and len(source_calls) > 1
+            return {**self.binding, "verified_source": "changed" if changed else "stable"}
 
-        def run(arguments, **_kwargs):
-            if arguments[-1:] == ["build-info"]:
-                name = Path(arguments[0]).name
-                return json.dumps({
-                    "contract": "open-trestle/build-info", "schema_version": 1,
-                    "program": name, "source_bound": True, **binding,
-                    **({"source_revision": "c" * 40} if name == wrong_provenance else {}),
-                })
-            if arguments[:2] == ["go", "build"]:
-                output = Path(arguments[arguments.index("-o") + 1])
-                builds[output.name] = arguments
-                content = next(
-                    item for item in arguments if item.startswith("-ldflags=")
-                ).encode("ascii")
-                if missing_digest and output.name == missing_digest[0]:
-                    content = content.replace(missing_digest[1].encode("ascii"), b"")
-                output.write_bytes(content)
-                return ""
-            self.assertEqual(arguments[:3], ["go", "version", "-m"])
-            name = Path(arguments[-1]).name
-            version = "go1.26.10" if name == wrong_toolchain else "go1.26.11"
-            return (
-                f"{name}: {version}\n"
-                "\tbuild\t-trimpath=true\n\tbuild\tCGO_ENABLED=0\n"
-                "\tbuild\tGOARCH=amd64\n\tbuild\tGOOS=linux\n"
-            )
-
-        # Replace compiler/toolchain work, not root build argument construction
-        # or its artifact and metadata checks.
+        go_mod = b"module example.org/test\n\ngo 1.25.0\ntoolchain go1.26.11\n"
+        for relative in ("go.mod", f"{SCANNER}/go.mod", f"{GUEST}/go.mod"):
+            _write(root, relative, go_mod)
+        for relative in ("THIRD_PARTY_LICENSES/secret-scanner/MODULES.json", "tools/model_catalog.py", "LICENSE", "NOTICE"):
+            _write(root, relative, b"{}")
         with patch.multiple(
             package_secret_scanner,
-            create=True,
             release_input_digests=lambda _root: {},
             source_binding=capture,
-            verify_launcher_build_contract=lambda _root: None,
-            provision_launcher_toolchain=lambda *_args: (root, {}, "0" * 64),
-            verify_launcher_licenses=lambda *_args: [],
-            _build_launcher=lambda _root, path, *_args: path.write_bytes(b"launcher"),
-            _build_worker=lambda _root, path, *_args: path.write_bytes(b"worker"),
-            verify_static_pie_launcher=lambda _path: None,
-            verify_linked_licenses=lambda *_args: [],
-            encode_release_evidence=lambda **_kwargs: (b"{}", b"{}"),
+            build_helper=build_helper,
+            linked_modules=lambda *_args: [],
             validate_staging=lambda *_args: None,
-            _run=run,
+            _run=go.run,
         ):
             package_secret_scanner.package(root, root / "staging")
-        return builds, launcher_digest, worker_digest
+        return go, calls
 
-    def test_both_root_binaries_receive_scanner_digest_linker_flags(self):
+    def test_root_binaries_pin_the_helper_and_bind_source(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            builds, launcher, worker = self._package(root)
-            self.assertEqual(set(builds), {"trestle", "trestled"})
-            for name, arguments in builds.items():
+            go, calls = self._package(root)
+            staging = root / "staging"
+            helper = staging / package_secret_scanner.HELPER_PATH
+            digest = hashlib.sha256(helper.read_bytes()).hexdigest()
+            self.assertEqual(calls, [("linux", "amd64"), ("linux", "amd64")])
+            self.assertEqual(stat.S_IMODE(helper.stat().st_mode), 0o555)
+            self.assertEqual(set(go.builds), {"trestle", "trestled"})
+            for name, (arguments, environment) in go.builds.items():
                 with self.subTest(binary=name):
                     flags = next(item for item in arguments if item.startswith("-ldflags="))
-                    self.assertIn(f"expectedSecretScannerLauncherSHA256={launcher}", flags)
-                    self.assertIn(f"expectedSecretScannerWorkerSHA256={worker}", flags)
-                    self.assertIn("-s -w -buildid=", flags)
-                    self.assertIn("internal/buildinfo.sourceRevision=" + "a" * 40, flags)
-                    self.assertIn("internal/buildinfo.sourceTree=" + "b" * 40, flags)
-                    self.assertIn("-trimpath", arguments)
-                    self.assertIn("-buildvcs=false", arguments)
+                    self.assertEqual(
+                        flags,
+                        f"-ldflags=-s -w -buildid= -X {package_secret_scanner.HELPER_PIN}={digest}"
+                        f" -X {package_secret_scanner.BUILDINFO_PACKAGE}.sourceRevision={'a' * 40}"
+                        f" -X {package_secret_scanner.BUILDINFO_PACKAGE}.sourceTree={'b' * 40}",
+                    )
+                    self.assertEqual(arguments[:4], ["go", "build", "-trimpath", "-buildvcs=false"])
                     self.assertEqual(arguments[-1], f"./cmd/{name}")
-                    self.assertEqual(stat.S_IMODE((root / "staging" / name).stat().st_mode), 0o555)
+                    self.assertEqual((environment["GOOS"], environment["GOARCH"], environment["CGO_ENABLED"]), ("linux", "amd64", "0"))
+                    self.assertEqual(stat.S_IMODE((staging / name).stat().st_mode), 0o555)
+            evidence = json.loads((staging / "release/secret-scanner-release.json").read_text())
+            self.assertEqual(evidence["helper"]["sha256"], digest)
+            self.assertEqual(evidence["root_client"]["helper_sha256"], digest)
 
-    def test_either_missing_scanner_digest_rejects_either_root_binary(self):
+    def test_helper_failures_are_refused(self):
+        for options, message in (
+            ({"nondeterministic": True}, "not deterministic"),
+            ({"unpinned": True}, "does not embed and pin the built guest"),
+            ({"changed_source": True}, "source changed during packaging"),
+        ):
+            with self.subTest(options=options), tempfile.TemporaryDirectory() as directory:
+                with self.assertRaisesRegex(ValueError, message):
+                    self._package(Path(directory), **options)
+
+    def test_each_root_binary_is_checked(self):
         for name in ("trestle", "trestled"):
-            for source in (b"launcher", b"worker"):
-                with self.subTest(binary=name, scanner=source):
-                    with tempfile.TemporaryDirectory() as directory:
-                        with self.assertRaisesRegex(ValueError, f"{name} does not contain both scanner digests"):
-                            self._package(
-                                Path(directory),
-                                missing_digest=(name, hashlib.sha256(source).hexdigest()),
-                            )
+            for options, message in (
+                ({"missing_pin": name}, f"{name} does not contain the scan helper digest"),
+                ({"wrong_toolchain": name}, f"{name} Go toolchain metadata mismatch"),
+                ({"wrong_provenance": name}, "provenance mismatch"),
+            ):
+                with self.subTest(binary=name, options=options), tempfile.TemporaryDirectory() as directory:
+                    with self.assertRaisesRegex(ValueError, message):
+                        self._package(Path(directory), **options)
 
-    def test_wrong_embedded_source_rejects_either_root_binary(self):
-        for name in ("trestle", "trestled"):
-            with self.subTest(binary=name), tempfile.TemporaryDirectory() as directory:
-                with self.assertRaisesRegex(ValueError, "provenance mismatch"):
-                    self._package(Path(directory), wrong_provenance=name)
 
-    def test_source_changed_during_packaging_is_refused(self):
+class DevelopmentBuildTest(unittest.TestCase):
+    def test_development_build_pins_the_helper_for_another_target(self):
         with tempfile.TemporaryDirectory() as directory:
-            with self.assertRaisesRegex(ValueError, "source changed during packaging"):
-                self._package(Path(directory), changed_source=True)
+            root = Path(directory)
+            go_mod = b"module example.org/test\n\ngo 1.25.0\ntoolchain go1.26.11\n"
+            for relative in ("go.mod", f"{SCANNER}/go.mod", f"{GUEST}/go.mod"):
+                _write(root, relative, go_mod)
+            go = _FakeGo(self)
+            go.helper_target = "GOARCH=amd64\n\tbuild\tGOOS=windows"
+            build_helper, calls = _FakeGo.build_helper()
+            output = root / "dev"
+            moves = []
+            replace = os.replace
 
-    def test_wrong_toolchain_rejects_either_root_binary(self):
-        for name in ("trestle", "trestled"):
-            with self.subTest(binary=name):
-                with tempfile.TemporaryDirectory() as directory:
-                    with self.assertRaisesRegex(ValueError, "root Go toolchain metadata mismatch"):
-                        self._package(Path(directory), wrong_toolchain=name)
+            def recording_replace(source, destination):
+                moves.append(Path(source))
+                replace(source, destination)
+
+            with patch.multiple(package_secret_scanner, build_helper=build_helper, _run=go.run), \
+                    patch.object(package_secret_scanner.os, "replace", recording_replace):
+                package_secret_scanner.build_development(root, output, ("windows", "amd64"))
+            self.assertEqual(len(moves), 3)
+            for source in moves:
+                self.assertTrue(source.relative_to(root.resolve()).parts[0].startswith(".open-trestle-development-"))
+            self.assertFalse([path for path in root.iterdir() if path.name.startswith(".open-trestle-development-")])
+            helper = output / "libexec/open-trestle/open-trestle-scan-helper.exe"
+            digest = hashlib.sha256(helper.read_bytes()).hexdigest()
+            self.assertEqual(calls, [("windows", "amd64")])
+            self.assertEqual(
+                {path.relative_to(output).as_posix() for path in output.rglob("*") if path.is_file()},
+                {"bin/trestle.exe", "bin/trestled.exe", "libexec/open-trestle/open-trestle-scan-helper.exe"},
+            )
+            for name in ("trestle.exe", "trestled.exe"):
+                with self.subTest(binary=name):
+                    arguments, environment = go.builds[name]
+                    flags = next(item for item in arguments if item.startswith("-ldflags="))
+                    self.assertEqual(flags, f"-ldflags=-s -w -buildid= -X {package_secret_scanner.HELPER_PIN}={digest}")
+                    self.assertEqual((environment["GOOS"], environment["GOARCH"]), ("windows", "amd64"))
+                    if os.name != "nt":
+                        self.assertEqual(stat.S_IMODE((output / "bin" / name).stat().st_mode), 0o555)
+
+    def test_development_build_rejects_a_helper_for_another_target(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            go_mod = b"module example.org/test\n\ngo 1.25.0\ntoolchain go1.26.11\n"
+            for relative in ("go.mod", f"{SCANNER}/go.mod", f"{GUEST}/go.mod"):
+                _write(root, relative, go_mod)
+            build_helper, _ = _FakeGo.build_helper()
+            with patch.multiple(package_secret_scanner, build_helper=build_helper, _run=_FakeGo(self).run):
+                with self.assertRaisesRegex(ValueError, "build metadata mismatch"):
+                    package_secret_scanner.build_development(root, root / "dev", ("darwin", "arm64"))
+            self.assertFalse((root / "dev").exists())
 
 
 class PackageInventoryTest(unittest.TestCase):
@@ -253,8 +419,7 @@ class PackageInventoryTest(unittest.TestCase):
             "NOTICE",
             "trestle",
             "trestled",
-            "libexec/open-trestle/open-trestle-secret-scanner",
-            "libexec/open-trestle/open-trestle-secret-scanner-worker",
+            package_secret_scanner.HELPER_PATH,
             "licenses/secret-scanner/MODULES.json",
             "licenses/secret-scanner/example-LICENSE",
             "release/secret-scanner-release.json",
@@ -277,7 +442,6 @@ class PackageInventoryTest(unittest.TestCase):
             inventory = package_secret_scanner.validate_staging(root, expected)
 
             self.assertEqual(set(inventory), expected)
-            self.assertTrue(all(not path.endswith((".go", ".c", ".py")) for path in inventory))
 
     def test_catalog_wrapper_is_the_only_admitted_script(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -317,12 +481,11 @@ class PackageInventoryTest(unittest.TestCase):
 
     def test_source_tests_private_references_and_build_tools_are_rejected(self):
         forbidden = (
-            "workers/secret-scanner/launcher/launcher.c",
+            "libexec/open-trestle/open-trestle-scan-guest.wasm",
             "internal/adapter/adapter_test.go",
             "references/private-corpus.json",
             "tools/package_secret_scanner.py",
             "usr/bin/go",
-            "usr/bin/zig",
         )
         for relative in forbidden:
             with self.subTest(relative=relative), tempfile.TemporaryDirectory() as directory:
@@ -333,142 +496,17 @@ class PackageInventoryTest(unittest.TestCase):
                 path.write_text("must not ship")
                 with self.assertRaisesRegex(ValueError, "staging inventory mismatch"):
                     package_secret_scanner.validate_staging(root, expected)
+                with self.assertRaisesRegex(ValueError, "source, test, private reference, or build tool"):
+                    package_secret_scanner.validate_staging(root, expected | {relative})
 
-    def test_scanner_executables_must_be_read_only(self):
+    def test_scan_helper_must_be_read_only(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             expected = self._make_staging(root)
-            scanner = root / "libexec/open-trestle/open-trestle-secret-scanner"
-            scanner.chmod(0o755)
+            (root / package_secret_scanner.HELPER_PATH).chmod(0o755)
 
             with self.assertRaisesRegex(ValueError, "scanner executable mode"):
                 package_secret_scanner.validate_staging(root, expected)
-
-
-class LauncherToolchainTest(unittest.TestCase):
-    def test_launcher_invocation_uses_only_the_pinned_zig_musl_toolchain(self):
-        command = package_secret_scanner.launcher_build_command(
-            Path("/verified-toolchain/zig"), Path("/output/launcher")
-        )
-
-        self.assertEqual(
-            command,
-            [
-                "/verified-toolchain/zig",
-                "cc",
-                "-target",
-                "x86_64-linux-musl",
-                "-DOPEN_TRESTLE_PRODUCTION_BUILD=1",
-                "-std=c17",
-                "-O2",
-                "-pipe",
-                "-fPIE",
-                "-fstack-protector-strong",
-                "-D_FORTIFY_SOURCE=3",
-                "-Wall",
-                "-Wextra",
-                "-Werror",
-                "-Wformat=2",
-                "-Wconversion",
-                "-Wshadow",
-                "-Wstrict-prototypes",
-                "-static",
-                "-pie",
-                "-s",
-                "-Wl,-z,relro,-z,now,-z,noexecstack,--build-id=none",
-                "-o",
-                "/output/launcher",
-                "launcher.c",
-            ],
-        )
-        self.assertNotIn("gcc", " ".join(command).lower())
-        self.assertNotIn("glibc", " ".join(command).lower())
-
-    @patch("package_secret_scanner._run")
-    def test_launcher_build_environment_has_no_host_path_or_compiler(self, run):
-        repository = Path("/repository")
-        output = Path("/output/launcher")
-        toolchain = Path("/verified-toolchain")
-        cache = Path("/isolated-cache")
-
-        package_secret_scanner._build_launcher(
-            repository, output, toolchain, cache
-        )
-
-        arguments, = run.call_args.args
-        self.assertEqual(arguments[0], "/verified-toolchain/zig")
-        self.assertNotIn("gcc", " ".join(arguments).lower())
-        self.assertEqual(
-            run.call_args.kwargs["environment"],
-            {
-                "LC_ALL": "C",
-                "SOURCE_DATE_EPOCH": "0",
-                "ZIG_GLOBAL_CACHE_DIR": "/isolated-cache/global",
-                "ZIG_LOCAL_CACHE_DIR": "/isolated-cache/local",
-            },
-        )
-        self.assertNotIn("PATH", run.call_args.kwargs["environment"])
-
-    def test_toolchain_manifest_binds_the_complete_archive_and_extracted_tree(self):
-        repository = Path(__file__).resolve().parent.parent
-
-        manifest, manifest_sha256 = package_secret_scanner._launcher_toolchain_manifest(
-            repository
-        )
-        components = package_secret_scanner.verify_launcher_licenses(
-            repository, manifest
-        )
-
-        self.assertRegex(manifest_sha256, r"^[0-9a-f]{64}$")
-        self.assertEqual(manifest["builder_version"], "0.14.1")
-        self.assertEqual(manifest["target"], "x86_64-linux-musl")
-        self.assertEqual(
-            manifest["archive"],
-            {
-                "root": "zig-x86_64-linux-0.14.1",
-                "sha256": "24aeeec8af16c381934a6cd7d95c807a8cb2cf7df9fa40d359aa884195c4716c",
-                "size": 49086504,
-                "url": "https://ziglang.org/download/0.14.1/zig-x86_64-linux-0.14.1.tar.xz",
-            },
-        )
-        self.assertEqual(
-            manifest["extracted_tree"],
-            {
-                "bytes": 311138938,
-                "regular_files": 14673,
-                "sha256": "58e5c7d8fd7b4c2940613201bdae6685fb1f70f879669db913c118cb20bb537a",
-            },
-        )
-        self.assertEqual(
-            [(item["name"], item["version"], item["license"]) for item in components],
-            [("Zig compiler-rt", "0.14.1", "MIT"), ("musl", "1.2.5", "MIT")],
-        )
-        self.assertEqual(
-            manifest["input_closure"]["build_headers"][0]["license"],
-            "GPL-2.0 WITH Linux-syscall-note",
-        )
-
-    def test_launcher_elf_verifier_rejects_truncated_or_dynamic_binaries(self):
-        with tempfile.TemporaryDirectory() as directory:
-            truncated = Path(directory) / "launcher"
-            truncated.write_bytes(b"\x7fELF")
-            with self.assertRaisesRegex(ValueError, "ELF header is truncated"):
-                package_secret_scanner.verify_static_pie_launcher(truncated)
-        if Path("/bin/true").is_file():
-            with self.assertRaisesRegex(ValueError, "dynamic interpreter"):
-                package_secret_scanner.verify_static_pie_launcher(Path("/bin/true"))
-
-    def test_bad_cached_toolchain_is_rejected_without_fallback(self):
-        with tempfile.TemporaryDirectory() as directory:
-            archive = Path(directory) / "zig.tar.xz"
-            archive.write_bytes(b"not the pinned toolchain")
-            expected = {
-                "size": 49086504,
-                "sha256": "24aeeec8af16c381934a6cd7d95c807a8cb2cf7df9fa40d359aa884195c4716c",
-            }
-
-            with self.assertRaisesRegex(ValueError, "toolchain archive identity mismatch"):
-                package_secret_scanner._verify_toolchain_archive(archive, expected)
 
 
 class ReleaseEvidenceTest(unittest.TestCase):
@@ -483,139 +521,73 @@ class ReleaseEvidenceTest(unittest.TestCase):
             self.assertEqual(sha1, hashlib.sha1(b"scanner").hexdigest())
             self.assertEqual(sha256, hashlib.sha256(b"scanner").hexdigest())
 
-    def test_release_evidence_binds_both_binaries_and_profile(self):
-        launcher = hashlib.sha256(b"launcher").hexdigest()
-        worker = hashlib.sha256(b"worker").hexdigest()
-        modules = [{
-            "module": "example.org/runtime",
-            "version": "v1.2.3",
-            "module_sum": "h1:module",
-            "go_mod_sum": "h1:gomod",
-            "license": "MIT",
-        }]
-
-        repository = Path(__file__).resolve().parent.parent
-        toolchain = json.loads(
-            (repository / "workers/secret-scanner/launcher/toolchain-v1.json").read_text()
-        )
-        runtime_components = package_secret_scanner.verify_launcher_licenses(
-            repository, toolchain
-        )
+    def test_release_evidence_binds_helper_guest_modules_and_profile(self):
+        helper = hashlib.sha256(b"helper").hexdigest()
+        guest = hashlib.sha256(b"guest").hexdigest()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest, license_root = _license_fixture(root)
+            modules = _linked(root, manifest, license_root)
         evidence, spdx = package_secret_scanner.encode_release_evidence(
-            launcher_sha1=hashlib.sha1(b"launcher").hexdigest(),
-            launcher_sha256=launcher,
-            worker_sha1=hashlib.sha1(b"worker").hexdigest(),
-            worker_sha256=worker,
-            launcher_source_sha256="c" * 64,
-            launcher_build_contract_sha256="e" * 64,
-            launcher_toolchain_manifest_sha256="f" * 64,
-            launcher_toolchain_manifest=toolchain,
-            launcher_runtime_components=runtime_components,
-            modules=modules,
+            helper_sha1=hashlib.sha1(b"helper").hexdigest(), helper_sha256=helper,
+            guest_sha256=guest, modules=modules,
         )
         document = json.loads(evidence)
         sbom = json.loads(spdx)
 
-        self.assertEqual(document["launcher"]["sha256"], launcher)
-        self.assertEqual(document["worker"]["sha256"], worker)
-        self.assertEqual(document["worker"]["go_toolchain"], "go1.26.11")
-        self.assertEqual(document["root_client"]["go_toolchain"], "go1.26.11")
-        self.assertEqual(
-            document["build_profile"],
-            "public_detect_run_re2_purego_go1.26.11_linux_amd64_v1",
-        )
-        self.assertEqual(
-            {item["name"] for item in sbom["packages"]},
-            {
-                "Open Trestle secret scanner",
-                "Zig launcher toolchain",
-                "Zig compiler-rt",
-                "musl",
-                "Linux UAPI headers bundled in Zig 0.14.1",
-                "example.org/runtime",
-            },
-        )
-        self.assertEqual(document["launcher"]["builder"], "zig")
-        self.assertEqual(document["launcher"]["builder_version"], "0.14.1")
-        self.assertEqual(document["launcher"]["target"], "x86_64-linux-musl")
-        self.assertEqual(
-            document["launcher"]["build_environment"],
-            {
-                "base_environment": "empty",
-                "LC_ALL": "C",
-                "SOURCE_DATE_EPOCH": "0",
-                "cache_policy": "fresh isolated global and local caches for each build",
-            },
-        )
-        self.assertEqual(
-            document["launcher"]["toolchain_archive"]["sha256"],
-            "24aeeec8af16c381934a6cd7d95c807a8cb2cf7df9fa40d359aa884195c4716c",
-        )
-        self.assertEqual(
-            document["launcher"]["toolchain_extracted_tree"]["sha256"],
-            "58e5c7d8fd7b4c2940613201bdae6685fb1f70f879669db913c118cb20bb537a",
-        )
-        self.assertNotIn("gcc", evidence.decode().lower())
-        self.assertNotIn("glibc", evidence.decode().lower())
-        launcher_file = next(
-            item for item in sbom["files"]
-            if item["SPDXID"] == "SPDXRef-File-Launcher"
-        )
-        self.assertEqual(launcher_file["licenseConcluded"], "Apache-2.0 AND MIT")
-        self.assertEqual(launcher_file["licenseInfoInFiles"], ["NOASSERTION"])
-        worker_file = next(
-            item for item in sbom["files"]
-            if item["SPDXID"] == "SPDXRef-File-Worker"
-        )
-        self.assertEqual(worker_file["licenseConcluded"], "NOASSERTION")
-        self.assertEqual(worker_file["licenseInfoInFiles"], ["NOASSERTION"])
-        self.assertEqual(
-            launcher_file["checksums"],
-            [
-                {
-                    "algorithm": "SHA1",
-                    "checksumValue": hashlib.sha1(b"launcher").hexdigest(),
-                },
-                {"algorithm": "SHA256", "checksumValue": launcher},
-            ],
-        )
-        self.assertEqual(
-            worker_file["checksums"],
-            [
-                {
-                    "algorithm": "SHA1",
-                    "checksumValue": hashlib.sha1(b"worker").hexdigest(),
-                },
-                {"algorithm": "SHA256", "checksumValue": worker},
-            ],
-        )
-        root_artifacts = [
-            item for item in sbom["relationships"]
-            if item["spdxElementId"] == "SPDXRef-Package-Secret-Scanner"
-            and item["relationshipType"] == "DISTRIBUTION_ARTIFACT"
-        ]
-        self.assertEqual(len(root_artifacts), 2)
-        self.assertFalse(
-            any(
-                item["spdxElementId"] == "SPDXRef-Package-Secret-Scanner"
-                and item["relationshipType"] == "CONTAINS"
-                for item in sbom["relationships"]
+        self.assertEqual(document["build_profile"], "public_detect_run_re2_host_go1.26.11_wasip1_wasm_v1")
+        self.assertEqual(document["helper"]["sha256"], helper)
+        self.assertEqual(document["helper"]["path"], "libexec/open-trestle/open-trestle-scan-helper")
+        self.assertEqual((document["helper"]["goos"], document["helper"]["goarch"]), ("linux", "amd64"))
+        self.assertIn(f"-X main.expectedGuestSHA256={guest}", document["helper"]["build_flags"][-1])
+        self.assertEqual(document["guest"]["sha256"], guest)
+        self.assertEqual((document["guest"]["goos"], document["guest"]["goarch"]), ("wasip1", "wasm"))
+        self.assertEqual(document["root_client"], {
+            "go_toolchain": "go1.26.11", "helper_sha256": helper,
+            "helper_pin": "github.com/georgejieh/open-trestle/internal/secretscan.expectedHelperSHA256",
+        })
+        self.assertEqual(document["modules"], modules)
+        self.assertEqual(evidence, package_secret_scanner.encode_release_evidence(
+            helper_sha1=hashlib.sha1(b"helper").hexdigest(), helper_sha256=helper,
+            guest_sha256=guest, modules=modules,
+        )[0])
+
+        helper_file, = sbom["files"]
+        self.assertEqual(helper_file["fileName"], "./libexec/open-trestle/open-trestle-scan-helper")
+        self.assertEqual(helper_file["checksums"], [
+            {"algorithm": "SHA1", "checksumValue": hashlib.sha1(b"helper").hexdigest()},
+            {"algorithm": "SHA256", "checksumValue": helper},
+        ])
+        packages = {item["name"]: item for item in sbom["packages"]}
+        self.assertEqual(set(packages), {
+            "Open Trestle secret scanner", "Open Trestle scan guest",
+            "example.org/patched", "example.org/runtime", "example.org/shared",
+        })
+        self.assertEqual(packages["Open Trestle scan guest"]["checksums"], [{"algorithm": "SHA256", "checksumValue": guest}])
+        self.assertIn(hashlib.sha256(b"patch").hexdigest(), packages["example.org/patched"]["sourceInfo"])
+        relationships = {
+            (item["spdxElementId"], item["relationshipType"], item["relatedSpdxElement"])
+            for item in sbom["relationships"]
+        }
+        guest_id = packages["Open Trestle scan guest"]["SPDXID"]
+        self.assertEqual(relationships, {
+            ("SPDXRef-Package-Secret-Scanner", "DISTRIBUTION_ARTIFACT", "SPDXRef-File-Scan-Helper"),
+            ("SPDXRef-File-Scan-Helper", "CONTAINS", guest_id),
+            ("SPDXRef-File-Scan-Helper", "STATIC_LINK", packages["example.org/runtime"]["SPDXID"]),
+            (guest_id, "STATIC_LINK", packages["example.org/patched"]["SPDXID"]),
+            (guest_id, "STATIC_LINK", packages["example.org/shared"]["SPDXID"]),
+        })
+
+    def test_invalid_digests_are_rejected(self):
+        with self.assertRaisesRegex(ValueError, "release digest is invalid"):
+            package_secret_scanner.encode_release_evidence(
+                helper_sha1="0" * 40, helper_sha256="0" * 64, guest_sha256="G" * 64, modules=[],
             )
-        )
-        static_links = [
-            item for item in sbom["relationships"]
-            if item["spdxElementId"] == "SPDXRef-File-Launcher"
-            and item["relationshipType"] == "STATIC_LINK"
-        ]
-        self.assertEqual(len(static_links), 2)
-        self.assertIn(launcher, spdx.decode())
-        self.assertIn(worker, spdx.decode())
 
 
 class ReleaseContractTest(unittest.TestCase):
     def test_root_go_dependency_and_legal_closure_is_pinned(self):
-        repository_root = Path(__file__).resolve().parent.parent
-        go_mod = (repository_root / "go.mod").read_text()
+        go_mod = (REPOSITORY / "go.mod").read_text()
         self.assertIn("\ngo 1.25.0\n", go_mod)
         self.assertIn("\ntoolchain go1.26.11\n", go_mod)
         for dependency in (
@@ -640,10 +612,11 @@ class ReleaseContractTest(unittest.TestCase):
             "react-family-19.2.8-MIT.txt",
             "wazero-v1.12.0-Apache-2.0.txt",
         }
-        license_root = repository_root / "THIRD_PARTY_LICENSES"
+        license_root = REPOSITORY / "THIRD_PARTY_LICENSES"
+        self.assertEqual({path.name for path in license_root.iterdir() if path.is_file()}, expected_licenses)
         self.assertEqual(
-            {path.name for path in license_root.iterdir() if path.is_file()},
-            expected_licenses,
+            {path.name for path in license_root.iterdir() if path.is_dir()},
+            {"secret-scanner", "syntax-analysis"},
         )
         expected_license_sha256 = {
             "golang-x-sync-v0.22.0-BSD-3-Clause.txt": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
@@ -651,41 +624,30 @@ class ReleaseContractTest(unittest.TestCase):
             "pgx-v5.9.2-MIT.txt": "467f95e074fe23079a5623ed652619682692041b8551da27e3c2ddb9659a1507",
         }
         for filename, expected in expected_license_sha256.items():
-            self.assertEqual(
-                hashlib.sha256((license_root / filename).read_bytes()).hexdigest(),
-                expected,
-            )
+            self.assertEqual(hashlib.sha256((license_root / filename).read_bytes()).hexdigest(), expected)
 
-        notice = (repository_root / "NOTICE").read_text()
+        notice = (REPOSITORY / "NOTICE").read_text()
         self.assertIn("golang.org/x/sync and golang.org/x/text", notice)
         self.assertNotIn("golang.org/x/crypto", notice)
+        self.assertNotIn("launcher", notice)
 
-    def test_dockerfile_copies_root_owned_read_only_libexec_binaries(self):
-        dockerfile = (Path(__file__).resolve().parent.parent / "Dockerfile").read_text()
-        for binary in (
-            "open-trestle-secret-scanner",
-            "open-trestle-secret-scanner-worker",
-        ):
-            self.assertIn(
-                "COPY --chown=0:0 --chmod=0555 .container/libexec/open-trestle/"
-                + binary,
-                dockerfile,
-            )
-        self.assertTrue(dockerfile.startswith("FROM scratch\n"))
-        self.assertEqual(
-            [line for line in dockerfile.splitlines() if line.startswith("EXPOSE ")],
-            ["EXPOSE 8741"],
+    def test_dockerfile_copies_the_root_owned_read_only_scan_helper(self):
+        dockerfile = (REPOSITORY / "Dockerfile").read_text()
+        self.assertIn(
+            "COPY --chown=0:0 --chmod=0555 .container/libexec/open-trestle/open-trestle-scan-helper"
+            " /usr/local/libexec/open-trestle/open-trestle-scan-helper\n",
+            dockerfile,
         )
+        self.assertEqual(dockerfile.count("libexec/open-trestle/"), 2)
+        self.assertTrue(dockerfile.startswith("FROM scratch\n"))
+        self.assertEqual([line for line in dockerfile.splitlines() if line.startswith("EXPOSE ")], ["EXPOSE 8741"])
         self.assertIn("USER 65532:65532", dockerfile)
         self.assertNotIn("RUN ", dockerfile)
         self.assertNotIn("ADD ", dockerfile)
         self.assertNotIn("/bin/sh", dockerfile)
 
-    def test_ci_uses_both_pinned_go_modules_and_package_verifier(self):
-        repository_root = Path(__file__).resolve().parent.parent
-        workflow = (
-            repository_root / ".github/workflows/verify-runtime.yml"
-        ).read_text()
+    def test_ci_builds_and_runs_the_packaged_scan_helper(self):
+        workflow = (REPOSITORY / ".github/workflows/verify-runtime.yml").read_text()
         self.assertIn("go-version-file: go.mod", workflow)
         self.assertIn("go-version-file: workers/secret-scanner/go.mod", workflow)
         for command in (
@@ -696,46 +658,30 @@ class ReleaseContractTest(unittest.TestCase):
             "GOWORK=off GOTOOLCHAIN=go1.26.11 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go test -run='^$' -exec=true ./...",
             "GOWORK=off GOTOOLCHAIN=go1.26.11 CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go test -run='^$' -exec=true ./...",
             "GOWORK=off GOTOOLCHAIN=go1.26.11 CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go test -run='^$' -exec=true ./...",
-        ):
-            self.assertIn(command, workflow)
-        self.assertIn("GOWORK=off GOTOOLCHAIN=go1.26.11 go test -timeout=15m ./...", workflow)
-        self.assertIn("GOWORK=off GOTOOLCHAIN=go1.26.11 go test -race", workflow)
-        self.assertIn("python3 tools/package_secret_scanner.py", workflow)
-        self.assertIn("python3 tools/package_secret_scanner.py --verify .container", workflow)
-        self.assertIn("umask 022", workflow)
-        self.assertIn("python3 tools/local_alpha_system.py", workflow)
-        self.assertIn("--skip-browser", workflow)
-        self.assertIn("--browser-script web/scripts/daemon-visual-check.mjs", workflow)
-        self.assertIn("open-trestle-local-alpha-system/receipt.json", workflow)
-        self.assertIn("open-trestle-local-alpha-system-visual/receipt.json", workflow)
-        self.assertIn('receipt["browser"]["status"]=="passed"', workflow)
-        self.assertIn(
-            "name: Provision pinned Zig musl builder and build deterministic release staging",
-            workflow,
-        )
-        packager = (repository_root / "tools/package_secret_scanner.py").read_text()
-        build_contract = (
-            repository_root / "workers/secret-scanner/launcher/build.mk"
-        ).read_text()
-        self.assertIn(
-            "24aeeec8af16c381934a6cd7d95c807a8cb2cf7df9fa40d359aa884195c4716c",
-            packager,
-        )
-        self.assertIn('"x86_64-linux-musl"', packager)
-        self.assertNotIn("/usr/bin/gcc", packager)
-        self.assertNotIn("/usr/bin/gcc", build_contract)
-        for required in (
+            "python3 tools/package_secret_scanner.py --output .container",
+            "python3 tools/package_secret_scanner.py --verify .container",
+            "umask 022",
+            "python3 tools/local_alpha_system.py",
+            "--skip-browser",
+            "--browser-script web/scripts/daemon-visual-check.mjs",
+            'receipt["browser"]["status"]=="passed"',
             "docker run --rm --network=none --read-only --cap-drop=ALL",
             "--security-opt=no-new-privileges=true",
-            "--entrypoint /usr/local/libexec/open-trestle/open-trestle-secret-scanner",
+            "--tmpfs /scan-cache:rw,nosuid,nodev,size=256m,mode=0700,uid=65532,gid=65532",
+            "--workdir /scan-cache",
+            "--entrypoint /usr/local/libexec/open-trestle/open-trestle-scan-helper",
             'test ! -s "$RUNNER_TEMP/scanner-stderr"',
+            'doc["build_profile"]=="public_detect_run_re2_host_go1.26.11_wasip1_wasm_v1"',
+            "-run='^(TestScanHelper|TestRemoteReviewScansThroughTheScanHelper)' ./internal/secretscan/ ./cmd/trestle/",
         ):
-            self.assertIn(required, workflow)
+            with self.subTest(command=command):
+                self.assertIn(command, workflow)
+        for retired in ("zig", "Zig", "open-trestle-secret-scanner"):
+            self.assertNotIn(retired, workflow)
 
 
 class SourceProvenanceTest(unittest.TestCase):
     def test_source_binding_uses_verified_state_not_caller_revision(self):
-        from types import SimpleNamespace
         state = SimpleNamespace(
             revision="a" * 40, tree_identity="b" * 40, clean=True,
             git_authority_sha256="authority", committed_tree_sha256="committed",

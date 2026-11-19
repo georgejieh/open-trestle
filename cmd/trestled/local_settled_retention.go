@@ -107,7 +107,7 @@ func (a *localGenerationStartupAuthority) observeRetired(ctx context.Context, st
 	linked, _ := fact.LinkedInputEvent()
 	descriptor := linked.InputDescriptor()
 	candidate, ok := fact.Plan().Task("candidates")
-	if !ok || candidate.HandlerIdentity() != handler || descriptor.ScannerLauncherDigest != scanner.LauncherSHA256 || descriptor.ScannerWorkerDigest != scanner.WorkerSHA256 || fact.Plan().PolicyIdentity() != a.configuration.ReviewPolicyIdentity() {
+	if !ok || candidate.HandlerIdentity() != handler || descriptor.ScannerHelperDigest != scanner.HelperSHA256 || fact.Plan().PolicyIdentity() != a.configuration.ReviewPolicyIdentity() {
 		return errRetiredSettledInput
 	}
 	scope := fact.Plan().Scope()

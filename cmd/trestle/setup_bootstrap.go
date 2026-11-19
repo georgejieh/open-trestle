@@ -26,6 +26,7 @@ import (
 	"github.com/georgejieh/open-trestle/internal/provider"
 	"github.com/georgejieh/open-trestle/internal/routehint"
 	"github.com/georgejieh/open-trestle/internal/scm"
+	"github.com/georgejieh/open-trestle/internal/secretscan"
 	"github.com/georgejieh/open-trestle/runtimecatalog"
 	"github.com/georgejieh/open-trestle/runtimeconfig"
 	setupcore "github.com/georgejieh/open-trestle/setup"
@@ -273,6 +274,16 @@ func runSetupBootstrapWithContext(ctx context.Context, args []string, stdout, st
 			if requirement.State() == setupcore.CheckBlocked {
 				result.Status = "refused"
 			}
+		}
+	}
+	// Every review scans its model requests, so a local setup without a
+	// usable secret scanner is not ready either.
+	if err := setupBootstrapScannerPrerequisite(); err != nil {
+		result.Ready = false
+		result.Pending = append(result.Pending, setupScannerCheck)
+		result.Messages = append(result.Messages, setupScannerCheck+": "+err.Error())
+		if !errors.Is(err, secretscan.ErrHelperNotInstalled) {
+			result.Status = "refused"
 		}
 	}
 	if result.Ready {

@@ -22,8 +22,10 @@ type FixedVerificationRequestSanitizer struct {
 	identity string
 }
 
-func NewFixedVerificationRequestSanitizer() *FixedVerificationRequestSanitizer {
-	return newFixedVerificationRequestSanitizer(fixedSecretScanClient{client: secretscan.NewClient()})
+// NewFixedVerificationRequestSanitizer returns the verification sanitizer
+// that scans through sanitizer. A nil sanitizer refuses every request.
+func NewFixedVerificationRequestSanitizer(sanitizer secretscan.Sanitizer) *FixedVerificationRequestSanitizer {
+	return newFixedVerificationRequestSanitizer(newHelperScanClient(sanitizer))
 }
 
 func newFixedVerificationRequestSanitizer(client sanitizedScanClient) *FixedVerificationRequestSanitizer {
@@ -43,8 +45,7 @@ func (value *FixedVerificationRequestSanitizer) ExpectedBinaryDigests() ScannerB
 	if value == nil || value.client == nil {
 		return ScannerBinaryDigests{}
 	}
-	launcher, worker := value.client.BinaryDigests()
-	return ScannerBinaryDigests{LauncherSHA256: launcher, WorkerSHA256: worker}
+	return ScannerBinaryDigests{HelperSHA256: value.client.HelperSHA256()}
 }
 
 func (value *FixedVerificationRequestSanitizer) SanitizeVerification(ctx context.Context, raw provider.Request, reviewScopeIdentity string) (SanitizedModelRequest, SanitizedEgressReceipt, error) {
@@ -77,9 +78,8 @@ func deriveVerificationRequestSanitizerIdentity(expected ScannerBinaryDigests) s
 		Policy   string `json:"policy"`
 		Scanner  string `json:"scanner"`
 		Profile  string `json:"profile"`
-		Launcher string `json:"launcher"`
-		Worker   string `json:"worker"`
-	}{"open-trestle/verification-request-sanitizer", 1, SanitizationPolicyIdentity, secretscan.ScannerName, secretscan.BuildProfile, expected.LauncherSHA256, expected.WorkerSHA256})
+		Helper   string `json:"helper"`
+	}{"open-trestle/verification-request-sanitizer", 1, SanitizationPolicyIdentity, secretscan.ScannerName, secretscan.BuildProfile, expected.HelperSHA256})
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:])
 }

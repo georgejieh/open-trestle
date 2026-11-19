@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -74,8 +73,8 @@ func TestSecretScannerSchemasPinBetterleaksAndDecodedUTF8(t *testing.T) {
 		}
 	}
 	buildProfile := responseProperties["build_profile"].(map[string]any)
-	if _, pinned := buildProfile["const"]; pinned || !reflect.DeepEqual(buildProfile["enum"], []any{BuildProfile, HostRE2BuildProfile, go12610BuildProfile}) {
-		t.Fatalf("response schema build_profile = %v, want exactly the native, host RE2 and recorded go1.26.10 profiles", buildProfile)
+	if _, listed := buildProfile["enum"]; listed || buildProfile["const"] != BuildProfile {
+		t.Fatalf("response schema build_profile = %v, want exactly the scan helper profile", buildProfile)
 	}
 	if strings.TrimSpace(buildProfile["description"].(string)) == "" {
 		t.Fatal("response schema build_profile has no description")

@@ -76,7 +76,7 @@ func contentScanReceiptFixture(t *testing.T, independent IndependentVerification
 		initial: initial, residual: residual,
 	}
 	client := &fixedGenerationClientFixture{
-		projection: projection, launcher: strings.Repeat("a", 64), worker: strings.Repeat("b", 64),
+		projection: projection, helper: strings.Repeat("a", 64),
 	}
 	scanner := newFixedPublicationContentScanner(client)
 	receipt, err := scanner.Scan(context.Background(), independent, set, verificationContext, selection)
@@ -103,8 +103,7 @@ func publicationScanMetadata(count int, sources [][]byte, matches int) secretsca
 	return secretscan.ScanMetadata{
 		Scanner: secretscan.ScannerName, ScannerVersion: secretscan.ScannerVersion,
 		ScannerCommit: secretscan.ScannerCommit, RulesetIdentity: secretscan.RulesetIdentity,
-		BuildProfile: secretscan.BuildProfile, LauncherSHA256: strings.Repeat("a", 64),
-		WorkerSHA256: strings.Repeat("b", 64), SourceCount: count,
+		BuildProfile: secretscan.BuildProfile, HelperSHA256: strings.Repeat("a", 64), SourceCount: count,
 		ScannedByteCount: bytes, MatchCount: matches,
 	}
 }
@@ -183,7 +182,7 @@ func TestPublicationSelectionScanAndRendererUseExactFilteredOrder(t *testing.T) 
 	for index := range fields {
 		sources[index] = append([]byte(nil), fields[index].content...)
 	}
-	client := &fixedGenerationClientFixture{launcher: strings.Repeat("a", 64), worker: strings.Repeat("b", 64), projection: fixedGenerationProjectionFixture{complete: true, sources: sources, matches: []secretscan.Match{}, initial: publicationScanMetadata(len(sources), sources, 0), residual: publicationScanMetadata(len(sources), sources, 0)}}
+	client := &fixedGenerationClientFixture{helper: strings.Repeat("a", 64), projection: fixedGenerationProjectionFixture{complete: true, sources: sources, matches: []secretscan.Match{}, initial: publicationScanMetadata(len(sources), sources, 0), residual: publicationScanMetadata(len(sources), sources, 0)}}
 	scan, err := newFixedPublicationContentScanner(client).Scan(context.Background(), independent, set, verificationContext, selection)
 	if err != nil {
 		t.Fatal(err)
@@ -327,9 +326,9 @@ func TestPublicationReadinessRequiresExactCompleteContentScanReceipt(t *testing.
 			value.publicationPolicyIdentity = strings.Repeat("8", 64)
 			return value
 		}(),
-		"cross launcher digest": func() PublicationContentScanReceipt {
+		"cross helper digest": func() PublicationContentScanReceipt {
 			value := clean
-			value.scanner.LauncherSHA256 = strings.Repeat("e", 64)
+			value.scanner.HelperSHA256 = strings.Repeat("e", 64)
 			return value
 		}(),
 		"incomplete initial": func() PublicationContentScanReceipt { value := clean; value.initial.Complete = false; return value }(),
@@ -379,7 +378,7 @@ func TestFixedPublicationContentScannerFailsClosedWithoutReceipt(t *testing.T) {
 	for _, failure := range []secretscan.FailureClass{secretscan.FailurePolicy, secretscan.FailureResourceLimit, secretscan.FailureCanceled} {
 		client := &fixedGenerationClientFixture{
 			projection: fixedGenerationProjectionFixture{failure: failure},
-			launcher:   strings.Repeat("a", 64), worker: strings.Repeat("b", 64),
+			helper:     strings.Repeat("a", 64),
 		}
 		receipt, err := newFixedPublicationContentScanner(client).Scan(context.Background(), independent, set, verificationContext, selection)
 		if err == nil || receipt.Identity() != "" {

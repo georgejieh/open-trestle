@@ -30,9 +30,10 @@ const (
 
 // HostEngineScanDeadline bounds one scan in the WebAssembly guest. The guest
 // runs the same Betterleaks code compiled to WebAssembly, on one thread, and
-// takes up to six times as long as the native worker for the same request,
-// most for requests of many small sources. Every request that the native
-// worker completes, or stops at the match limit, within internalScanDeadline
+// takes up to six times as long as the native reference adapter for the
+// same request, most for requests of many small sources. Every request that
+// the native adapter completes, or stops at the match limit, within
+// internalScanDeadline
 // must end the same way in the guest, so the guest gets internalScanDeadline
 // times that factor and a third more.
 const HostEngineScanDeadline = 40 * time.Second
@@ -45,21 +46,19 @@ type detectorRuntime struct {
 }
 
 type Adapter struct {
-	detector     *detect.Detector
-	runtime      detectorRuntime
-	deadline     time.Duration
-	buildProfile string
-	mu           sync.Mutex
+	detector *detect.Detector
+	runtime  detectorRuntime
+	deadline time.Duration
+	mu       sync.Mutex
 }
 
 // NewWithHostEngine returns an adapter whose regular expressions run in the
-// host of a WebAssembly guest. engine must report regexabi.EngineVersion, and
-// responses carry protocol.HostRE2BuildProfile.
+// host of a WebAssembly guest. engine must report regexabi.EngineVersion.
 func NewWithHostEngine(engine blregexp.Engine) (*Adapter, error) {
-	return newWithEngine(engine, regexabi.EngineVersion, protocol.HostRE2BuildProfile, HostEngineScanDeadline)
+	return newWithEngine(engine, regexabi.EngineVersion, HostEngineScanDeadline)
 }
 
-func newWithEngine(engine blregexp.Engine, version, buildProfile string, deadline time.Duration) (adapter *Adapter, err error) {
+func newWithEngine(engine blregexp.Engine, version string, deadline time.Duration) (adapter *Adapter, err error) {
 	defer func() {
 		if recover() != nil {
 			adapter = nil
@@ -68,7 +67,7 @@ func newWithEngine(engine blregexp.Engine, version, buildProfile string, deadlin
 	}()
 
 	logging.Logger = zerolog.Nop()
-	if engine == nil || !protocol.KnownBuildProfile(buildProfile) {
+	if engine == nil {
 		return nil, ErrInitialization
 	}
 	blregexp.SetEngine(engine)
@@ -109,8 +108,7 @@ func newWithEngine(engine blregexp.Engine, version, buildProfile string, deadlin
 			run:        detector.Run,
 			totalBytes: detector.TotalBytes.Load,
 		},
-		deadline:     deadline,
-		buildProfile: buildProfile,
+		deadline: deadline,
 	}, nil
 }
 
@@ -144,16 +142,12 @@ func PinnedRuleIDs() map[string]struct{} {
 }
 
 func (a *Adapter) Scan(ctx context.Context, request protocol.Request) protocol.Response {
-	buildProfile := ""
-	if a != nil {
-		buildProfile = a.buildProfile
-	}
-	response := emptyResponse(request.RequestID, protocol.StatusScanFailed, buildProfile)
+	response := emptyResponse(request.RequestID, protocol.StatusScanFailed)
 	if !validRequest(request) {
 		response.Status = protocol.StatusInputRejected
 		return response
 	}
-	if a == nil || a.runtime.run == nil || a.runtime.totalBytes == nil || a.deadline <= 0 || !protocol.KnownBuildProfile(a.buildProfile) {
+	if a == nil || a.runtime.run == nil || a.runtime.totalBytes == nil || a.deadline <= 0 {
 		return response
 	}
 
@@ -237,7 +231,7 @@ func (a *Adapter) Scan(ctx context.Context, request protocol.Request) protocol.R
 	return response
 }
 
-func emptyResponse(requestID, status, buildProfile string) protocol.Response {
+func emptyResponse(requestID, status string) protocol.Response {
 	return protocol.Response{
 		SchemaVersion:   1,
 		RequestID:       requestID,
@@ -246,7 +240,7 @@ func emptyResponse(requestID, status, buildProfile string) protocol.Response {
 		ScannerVersion:  protocol.ScannerVersion,
 		ScannerCommit:   protocol.ScannerCommit,
 		RulesetIdentity: protocol.RulesetIdentity,
-		BuildProfile:    buildProfile,
+		BuildProfile:    protocol.BuildProfile,
 		Matches:         []protocol.Match{},
 	}
 }

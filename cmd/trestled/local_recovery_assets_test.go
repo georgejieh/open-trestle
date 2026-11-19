@@ -14,7 +14,7 @@ func recoveryAssetFlags(t *testing.T) []string {
 	policy := daemonTestFlagValue(t, args, "--runtime-policy")
 	dir := t.TempDir()
 	flags := []string{}
-	for _, role := range []string{"binary", "scanner", "scanner-worker"} {
+	for _, role := range []string{"binary", "scan-helper"} {
 		path := filepath.Join(dir, role)
 		if err := os.WriteFile(path, []byte("pinned fixture "+role), 0o500); err != nil {
 			t.Fatal(err)
@@ -25,7 +25,7 @@ func recoveryAssetFlags(t *testing.T) []string {
 }
 func recoveryRecordAssets() []localRecoveryAsset {
 	var assets []localRecoveryAsset
-	for _, role := range []string{"binary", "scanner", "scanner-worker", "route-inventory", "runtime-policy"} {
+	for _, role := range localRecoveryAssetRoles {
 		assets = append(assets, localRecoveryAsset{Role: role, Path: "/srv/" + role, SHA256: strings.Repeat("c", 64)})
 	}
 	return assets

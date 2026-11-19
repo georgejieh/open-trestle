@@ -70,7 +70,7 @@ func observeGenerationRejectionPhysicalWindow(ctx context.Context, stateRoot, ar
 		}
 		descriptor := linked.InputDescriptor()
 		candidate, ok := fact.Plan().Task("candidates")
-		if !ok || candidate.HandlerIdentity() != handler || descriptor.ScannerLauncherDigest != scanner.LauncherSHA256 || descriptor.ScannerWorkerDigest != scanner.WorkerSHA256 {
+		if !ok || candidate.HandlerIdentity() != handler || descriptor.ScannerHelperDigest != scanner.HelperSHA256 {
 			return errGenerationRejectionPhysical
 		}
 		recorded := physicalRecordedV4Derivation{fact: fact, binding: binding}

@@ -88,8 +88,7 @@
         "ruleset_identity",
         "ruleset_rule_count",
         "build_profile",
-        "launcher_sha256",
-        "worker_sha256"
+        "helper_sha256"
       ],
       "properties": {
         "worker_protocol": {
@@ -111,19 +110,9 @@
           "const": 417
         },
         "build_profile": {
-          "enum": [
-            "public_detect_run_re2_purego_go1.26.11_linux_amd64_v1",
-            "public_detect_run_re2_purego_go1.26.10_linux_amd64_v1"
-          ]
+          "const": "public_detect_run_re2_host_go1.26.11_wasip1_wasm_v1"
         },
-        "launcher_sha256": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{64}$",
-          "not": {
-            "const": "0000000000000000000000000000000000000000000000000000000000000000"
-          }
-        },
-        "worker_sha256": {
+        "helper_sha256": {
           "type": "string",
           "pattern": "^[0-9a-f]{64}$",
           "not": {

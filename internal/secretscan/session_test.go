@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -194,7 +195,7 @@ func respondSessionTestRequest(request Request, atClose *sessionHelperClose) int
 		ScannerVersion:  ScannerVersion,
 		ScannerCommit:   ScannerCommit,
 		RulesetIdentity: RulesetIdentity,
-		BuildProfile:    HostRE2BuildProfile,
+		BuildProfile:    BuildProfile,
 		Matches:         []Match{},
 	}
 	exitAfterResponse := false
@@ -229,9 +230,7 @@ func respondSessionTestRequest(request Request, atClose *sessionHelperClose) int
 		case "session:wrong-id":
 			response.RequestID = strings.Repeat("0", 64)
 		case "session:native-profile":
-			response.BuildProfile = BuildProfile
-		case "session:recorded-profile":
-			response.BuildProfile = go12610BuildProfile
+			response.BuildProfile = "public_detect_run_re2_purego_go1.26.11_linux_amd64_v1"
 		case "session:unknown-rule":
 			match := Match{SourceOrdinal: 0, RuleID: "not-a-pinned-rule", StartByte: 0, EndByteExclusive: 1}
 			match.OccurrenceID = OccurrenceID(match)
@@ -347,7 +346,7 @@ func (helper sessionTestHelper) settings(watchdog time.Duration) sessionSettings
 }
 
 func (helper sessionTestHelper) config() SessionConfig {
-	return SessionConfig{HelperPath: helper.path, HelperSHA256: helper.digest, BuildProfile: HostRE2BuildProfile, CacheDirectory: helper.cache}
+	return SessionConfig{HelperPath: helper.path, HelperSHA256: helper.digest, CacheDirectory: helper.cache}
 }
 
 func openSessionForTest(t *testing.T, settings sessionSettings) *Session {
@@ -359,6 +358,29 @@ func openSessionForTest(t *testing.T, settings sessionSettings) *Session {
 	t.Cleanup(func() { _ = session.Close() })
 	return session
 }
+
+// processRunning reports whether pid is still a live process. A missing /proc
+// entry or a zombie or dead state means it is gone; any other read error is
+// treated as running, because a process that is exiting can fail one read.
+func processRunning(pid int) bool {
+	status, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "stat"))
+	if errors.Is(err, fs.ErrNotExist) {
+		return false
+	}
+	if err != nil {
+		return true
+	}
+	closing := bytes.LastIndexByte(status, ')')
+	if closing < 0 || closing+2 >= len(status) {
+		return true
+	}
+	state := status[closing+2]
+	return state != 'Z' && state != 'X'
+}
+
+type failingReader struct{}
+
+func (failingReader) Read(_ []byte) (int, error) { return 0, io.ErrUnexpectedEOF }
 
 // countingEntropy yields distinct request IDs for every scan.
 type countingEntropy struct {
@@ -472,7 +494,7 @@ func TestSessionScansSeveralRequestsAndClosesCleanly(t *testing.T) {
 		want := strings.Count(input, "TOKEN")
 		metadata := result.Metadata()
 		if len(result.Matches()) != want || metadata.MatchCount != want || metadata.SourceCount != 2 || metadata.ScannedByteCount != len(input)+len("second source") ||
-			metadata.BuildProfile != HostRE2BuildProfile || metadata.HelperSHA256 != helper.digest || metadata.LauncherSHA256 != "" || metadata.WorkerSHA256 != "" {
+			metadata.BuildProfile != BuildProfile || metadata.HelperSHA256 != helper.digest {
 			t.Fatalf("scan %d returned unexpected result: %d matches, %+v", index, len(result.Matches()), metadata)
 		}
 	}
@@ -592,15 +614,6 @@ func TestOpenSessionRefusesUntrustedHelperBeforeSpawn(t *testing.T) {
 			}
 			settings.config.HelperPath = fifo
 		}, ErrHelperUntrusted},
-		{"recorded build profile", func(_ *testing.T, settings *sessionSettings, _ sessionTestHelper) {
-			settings.config.BuildProfile = go12610BuildProfile
-		}, ErrSessionConfig},
-		{"native build profile", func(_ *testing.T, settings *sessionSettings, _ sessionTestHelper) {
-			settings.config.BuildProfile = BuildProfile
-		}, ErrSessionConfig},
-		{"unknown build profile", func(_ *testing.T, settings *sessionSettings, _ sessionTestHelper) {
-			settings.config.BuildProfile = "public_detect_run_unknown_v1"
-		}, ErrSessionConfig},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -811,7 +824,6 @@ func TestSessionFailsClosedOnEveryHelperFault(t *testing.T) {
 		{"malformed frame", "session:malformed", []error{errHelperResponse}, FailurePolicy, true},
 		{"wrong request id", "session:wrong-id", []error{errHelperResponse}, FailurePolicy, true},
 		{"native build profile", "session:native-profile", []error{errHelperResponse}, FailurePolicy, true},
-		{"recorded build profile", "session:recorded-profile", []error{errHelperResponse}, FailurePolicy, true},
 		{"unpinned rule id", "session:unknown-rule", []error{errHelperResponse}, FailurePolicy, true},
 		{"scan failed status", "session:scan-failed", []error{errScanIncomplete}, FailurePolicy, true},
 		{"resource exhausted status", "session:resource", []error{errScanIncomplete}, FailureResourceLimit, true},
@@ -1122,6 +1134,49 @@ func TestPrewarmRunsTheHelperWithStdinClosedAndReapsIt(t *testing.T) {
 	}
 }
 
+func TestPrepareCachePrewarmsOncePerHelper(t *testing.T) {
+	helper := newSessionTestHelper(t)
+	config := helper.config()
+	config.CacheDirectory = filepath.Join(helper.directory, "user-cache", "open-trestle", "scan-cache")
+	announced := 0
+	for range 2 {
+		if err := PrepareCache(context.Background(), config, func() { announced++ }); err != nil {
+			t.Fatalf("prepare: %v", err)
+		}
+	}
+	if announced != 1 {
+		t.Fatalf("announced %d times, want once", announced)
+	}
+	marker, err := os.Lstat(filepath.Join(config.CacheDirectory, "prepared-"+config.HelperSHA256))
+	if err != nil || !marker.Mode().IsRegular() || marker.Mode().Perm() != 0o600 {
+		t.Fatalf("marker: %v, %v", marker, err)
+	}
+	config.HelperSHA256 = strings.Repeat("0", 64)
+	if err := PrepareCache(context.Background(), config, func() { announced++ }); !errors.Is(err, ErrHelperUntrusted) || announced != 2 {
+		t.Fatalf("prepare for another helper: %v, announced %d", err, announced)
+	}
+}
+
+func TestCheckHelperVerifiesWithoutRunning(t *testing.T) {
+	helper := newSessionTestHelper(t)
+	writeHelperStartFile(t, helper.cache, "pid")
+	if err := checkHelper(helper.path, helper.digest); err != nil {
+		t.Fatalf("installed helper refused: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(helper.cache, "pid")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("the check ran the helper: %v", err)
+	}
+	wrong := helper.config()
+	wrong.HelperSHA256 = strings.Repeat("0", 64)
+	missing := helper.config()
+	missing.HelperPath = filepath.Join(helper.directory, "missing")
+	for name, config := range map[string]SessionConfig{"wrong digest": wrong, "missing": missing} {
+		if err := checkHelper(config.HelperPath, config.HelperSHA256); !errors.Is(err, ErrHelperNotInstalled) {
+			t.Fatalf("%s: %v", name, err)
+		}
+	}
+}
+
 func TestPrewarmCreatesOnlyTheFinalCacheDirectory(t *testing.T) {
 	helper := newSessionTestHelper(t)
 	settings := helper.prewarmSettings(5 * time.Second)
@@ -1210,6 +1265,22 @@ func TestSessionSanitizeMasksAndRescansInTheSession(t *testing.T) {
 	}
 	if err := session.Close(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestPerCallSanitizerRunsASessionPerCall(t *testing.T) {
+	helper := newSessionTestHelper(t)
+	sanitizer := helper.config().PerCallSanitizer()
+	if sanitizer.HelperSHA256() != helper.digest {
+		t.Fatal("per-call sanitizer does not report its helper")
+	}
+	projection := sanitizer.Sanitize(context.Background(), [][]byte{[]byte("a TOKEN b")})
+	if !projection.Complete() || string(projection.Sources()[0]) != "a ***** b" {
+		t.Fatalf("sanitize did not mask: %v", projection.Failure())
+	}
+	failed := sanitizer.Sanitize(context.Background(), [][]byte{[]byte("a TOKEN b session:close-exit71")})
+	if failed.Complete() || failed.Failure() != FailurePolicy || len(failed.Sources()) != 0 {
+		t.Fatalf("a session that failed at close produced a projection: %v", failed.Failure())
 	}
 }
 
@@ -1366,7 +1437,7 @@ func TestSessionHelperDiesWithItsParent(t *testing.T) {
 
 func runSessionParentForTest(pidPath, helperPath, digest, cache string) {
 	settings := sessionSettings{
-		config:         SessionConfig{HelperPath: helperPath, HelperSHA256: digest, BuildProfile: HostRE2BuildProfile, CacheDirectory: cache},
+		config:         SessionConfig{HelperPath: helperPath, HelperSHA256: digest, CacheDirectory: cache},
 		scanWatchdog:   time.Minute,
 		startAllowance: time.Minute,
 		scanLimit:      sessionScanLimit,

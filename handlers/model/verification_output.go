@@ -31,8 +31,7 @@ type verificationEgressBinding struct {
 	receiptArtifactIdentity          string
 	receiptIdentity                  string
 	sanitizerIdentity                string
-	launcherSHA256                   string
-	workerSHA256                     string
+	helperSHA256                     string
 }
 
 func newVerificationEgressBinding(raw, sanitized provider.Request, requestArtifact, receiptArtifact artifact.Artifact, receipt review.SanitizedEgressReceipt, sanitizerIdentity string, expected review.ScannerBinaryDigests) (verificationEgressBinding, error) {
@@ -40,9 +39,9 @@ func newVerificationEgressBinding(raw, sanitized provider.Request, requestArtifa
 		rawRequestIdentity: raw.Identity(), sanitizedRequestIdentity: sanitized.Identity(),
 		sanitizedRequestArtifactIdentity: requestArtifact.Identity(), receiptArtifactIdentity: receiptArtifact.Identity(),
 		receiptIdentity: receipt.Identity(), sanitizerIdentity: sanitizerIdentity,
-		launcherSHA256: expected.LauncherSHA256, workerSHA256: expected.WorkerSHA256,
+		helperSHA256: expected.HelperSHA256,
 	}
-	if !value.valid() || receipt.RawRequestIdentity() != value.rawRequestIdentity || receipt.SanitizedRequestIdentity() != value.sanitizedRequestIdentity || receipt.Scanner().LauncherSHA256 != expected.LauncherSHA256 || receipt.Scanner().WorkerSHA256 != expected.WorkerSHA256 {
+	if !value.valid() || receipt.RawRequestIdentity() != value.rawRequestIdentity || receipt.SanitizedRequestIdentity() != value.sanitizedRequestIdentity || receipt.Scanner().HelperSHA256 != expected.HelperSHA256 {
 		return verificationEgressBinding{}, ErrInvalidVerificationResult
 	}
 	return value, nil
@@ -55,7 +54,7 @@ func (value verificationEgressBinding) empty() bool {
 func (value verificationEgressBinding) valid() bool {
 	return validDigest(value.rawRequestIdentity) && validDigest(value.sanitizedRequestIdentity) && value.rawRequestIdentity != value.sanitizedRequestIdentity &&
 		validDigest(value.sanitizedRequestArtifactIdentity) && validDigest(value.receiptArtifactIdentity) && validDigest(value.receiptIdentity) &&
-		validDigest(value.sanitizerIdentity) && validDigest(value.launcherSHA256) && validDigest(value.workerSHA256)
+		validDigest(value.sanitizerIdentity) && validDigest(value.helperSHA256)
 }
 
 // VerificationResult is one independently checked, promotion-ready review result.
@@ -188,8 +187,7 @@ type verificationResultWire struct {
 	SanitizedReceiptArtifactIdentity     string          `json:"sanitized_receipt_artifact_identity,omitempty"`
 	SanitizedReceiptIdentity             string          `json:"sanitized_receipt_identity,omitempty"`
 	VerificationSanitizerIdentity        string          `json:"verification_sanitizer_identity,omitempty"`
-	ScannerLauncherSHA256                string          `json:"scanner_launcher_sha256,omitempty"`
-	ScannerWorkerSHA256                  string          `json:"scanner_worker_sha256,omitempty"`
+	ScannerHelperSHA256                  string          `json:"scanner_helper_sha256,omitempty"`
 	VerificationBatch                    json.RawMessage `json:"verification_batch"`
 	RouteExecution                       json.RawMessage `json:"route_execution"`
 	VerifiedFindingSet                   json.RawMessage `json:"verified_finding_set"`
@@ -230,8 +228,8 @@ func encodeVerificationResult(result VerificationResult) ([]byte, error) {
 		SanitizedReceiptArtifactIdentity:     result.egress.receiptArtifactIdentity,
 		SanitizedReceiptIdentity:             result.egress.receiptIdentity,
 		VerificationSanitizerIdentity:        result.egress.sanitizerIdentity,
-		ScannerLauncherSHA256:                result.egress.launcherSHA256, ScannerWorkerSHA256: result.egress.workerSHA256,
-		VerificationBatch: verification, RouteExecution: routeExecution, VerifiedFindingSet: findings,
+		ScannerHelperSHA256:                  result.egress.helperSHA256,
+		VerificationBatch:                    verification, RouteExecution: routeExecution, VerifiedFindingSet: findings,
 	})
 	if err != nil || len(encoded) == 0 || len(encoded) > maximumVerificationResultBytes {
 		return nil, ErrInvalidVerificationResult
@@ -383,12 +381,12 @@ func ParseVerificationResultArtifact(
 			}
 		}
 	} else {
-		egress = verificationEgressBinding{wire.RawVerificationRequestIdentity, wire.SanitizedVerificationRequestIdentity, wire.SanitizedRequestArtifactIdentity, wire.SanitizedReceiptArtifactIdentity, wire.SanitizedReceiptIdentity, wire.VerificationSanitizerIdentity, wire.ScannerLauncherSHA256, wire.ScannerWorkerSHA256}
+		egress = verificationEgressBinding{wire.RawVerificationRequestIdentity, wire.SanitizedVerificationRequestIdentity, wire.SanitizedRequestArtifactIdentity, wire.SanitizedReceiptArtifactIdentity, wire.SanitizedReceiptIdentity, wire.VerificationSanitizerIdentity, wire.ScannerHelperSHA256}
 		if !egress.valid() || egress.rawRequestIdentity != verificationRequest.Identity() || egress.sanitizedRequestIdentity != routeExecution.Authorization().RequestIdentity() || len(egressArtifacts) != 1 {
 			return VerificationResult{}, ErrInvalidVerificationResult
 		}
 		authority := egressArtifacts[0]
-		expected := review.ScannerBinaryDigests{LauncherSHA256: egress.launcherSHA256, WorkerSHA256: egress.workerSHA256}
+		expected := review.ScannerBinaryDigests{HelperSHA256: egress.helperSHA256}
 		if authority.SanitizedRequest.Identity() != egress.sanitizedRequestArtifactIdentity || authority.Receipt.Identity() != egress.receiptArtifactIdentity ||
 			review.ValidateSanitizedVerificationEgressArtifacts(verificationRequest, generation.ContextIdentity(), generation.Candidates().Identity(), generationArtifact, generationInputArtifact, generationContextArtifact, authority.SanitizedRequest, authority.Receipt, expected) != nil {
 			return VerificationResult{}, ErrInvalidVerificationResult
@@ -396,7 +394,7 @@ func ParseVerificationResultArtifact(
 		sanitizedAuthority, requestErr := review.ParseSanitizedModelRequest(authority.SanitizedRequest.Payload())
 		receiptAuthority, receiptErr := review.ParseSanitizedEgressReceipt(authority.Receipt.Payload())
 		providerAuthority, providerErr := sanitizedAuthority.ProviderRequest()
-		if requestErr != nil || receiptErr != nil || providerErr != nil || receiptAuthority.Identity() != egress.receiptIdentity || providerAuthority.Identity() != egress.sanitizedRequestIdentity || receiptAuthority.Scanner().LauncherSHA256 != egress.launcherSHA256 || receiptAuthority.Scanner().WorkerSHA256 != egress.workerSHA256 {
+		if requestErr != nil || receiptErr != nil || providerErr != nil || receiptAuthority.Identity() != egress.receiptIdentity || providerAuthority.Identity() != egress.sanitizedRequestIdentity || receiptAuthority.Scanner().HelperSHA256 != egress.helperSHA256 {
 			return VerificationResult{}, ErrInvalidVerificationResult
 		}
 	}
@@ -485,9 +483,8 @@ func deriveVerificationResultIdentity(result VerificationResult) string {
 		ReceiptArtifact     string `json:"receipt_artifact,omitempty"`
 		Receipt             string `json:"receipt,omitempty"`
 		Sanitizer           string `json:"sanitizer,omitempty"`
-		Launcher            string `json:"launcher,omitempty"`
-		Worker              string `json:"worker,omitempty"`
-	}{"open-trestle/model-verification-result", version, result.generationArtifactIdentity, result.verificationContext.Identity(), result.verification.Identity(), result.routeExecution.Identity(), result.routeIndependence.Identity(), result.independentReceipt.Identity(), result.verifiedFindings.Identity(), result.egress.rawRequestIdentity, result.egress.sanitizedRequestIdentity, result.egress.sanitizedRequestArtifactIdentity, result.egress.receiptArtifactIdentity, result.egress.receiptIdentity, result.egress.sanitizerIdentity, result.egress.launcherSHA256, result.egress.workerSHA256})
+		Helper              string `json:"helper,omitempty"`
+	}{"open-trestle/model-verification-result", version, result.generationArtifactIdentity, result.verificationContext.Identity(), result.verification.Identity(), result.routeExecution.Identity(), result.routeIndependence.Identity(), result.independentReceipt.Identity(), result.verifiedFindings.Identity(), result.egress.rawRequestIdentity, result.egress.sanitizedRequestIdentity, result.egress.sanitizedRequestArtifactIdentity, result.egress.receiptArtifactIdentity, result.egress.receiptIdentity, result.egress.sanitizerIdentity, result.egress.helperSHA256})
 	if err != nil {
 		return ""
 	}

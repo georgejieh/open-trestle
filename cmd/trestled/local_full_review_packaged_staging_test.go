@@ -21,21 +21,18 @@ func TestPackagedStagingSelection(t *testing.T) {
 		"ca-certificates.crt":              []byte("selected certificates"),
 		"release/secret-scanner.spdx.json": []byte("selected spdx"),
 		"release/vulnerability-scan.json":  []byte("selected vulnerability evidence"),
-		"libexec/open-trestle/open-trestle-secret-scanner":        []byte("selected launcher"),
-		"libexec/open-trestle/open-trestle-secret-scanner-worker": []byte("selected worker"),
-		"licenses/nested/sentinel.txt":                            []byte("selected nested license"),
+		"libexec/open-trestle/open-trestle-scan-helper": []byte("selected helper"),
+		"licenses/nested/sentinel.txt":                  []byte("selected nested license"),
 	}
 	digest := func(body []byte) string {
 		value := sha256.Sum256(body)
 		return hex.EncodeToString(value[:])
 	}
-	launcher := digest(members["libexec/open-trestle/open-trestle-secret-scanner"])
-	worker := digest(members["libexec/open-trestle/open-trestle-secret-scanner-worker"])
+	helper := digest(members["libexec/open-trestle/open-trestle-scan-helper"])
 	manifest, err := json.Marshal(map[string]any{
 		"schema_version": 1, "scanner": "betterleaks",
-		"launcher":    map[string]string{"sha256": launcher},
-		"worker":      map[string]string{"sha256": worker},
-		"root_client": map[string]string{"launcher_sha256": launcher, "worker_sha256": worker},
+		"helper":      map[string]string{"sha256": helper},
+		"root_client": map[string]string{"helper_sha256": helper},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -63,12 +60,12 @@ func TestPackagedStagingSelection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if staging.root != resolved || !filepath.IsAbs(staging.root) || staging.releaseSHA256 != digest(manifest) || staging.launcherSHA256 != launcher || staging.workerSHA256 != worker {
+	if staging.root != resolved || !filepath.IsAbs(staging.root) || staging.releaseSHA256 != digest(manifest) || staging.helperSHA256 != helper {
 		t.Fatalf("selected staging not bound: %+v", staging)
 	}
-	wantFlags := "-s -w -buildid= -X github.com/georgejieh/open-trestle/internal/secretscan.expectedSecretScannerLauncherSHA256=" + launcher + " -X github.com/georgejieh/open-trestle/internal/secretscan.expectedSecretScannerWorkerSHA256=" + worker
+	wantFlags := "-s -w -buildid= -X github.com/georgejieh/open-trestle/internal/secretscan.expectedHelperSHA256=" + helper
 	if staging.scannerFlags != wantFlags {
-		t.Fatalf("selected pair not bound into flags: %s", staging.scannerFlags)
+		t.Fatalf("selected helper not bound into flags: %s", staging.scannerFlags)
 	}
 	destination := t.TempDir()
 	staging.copyRuntimeMembers(t, destination)
@@ -78,17 +75,17 @@ func TestPackagedStagingSelection(t *testing.T) {
 			t.Fatalf("selected member %s not copied: %v", name, err)
 		}
 	}
-	t.Run("wrong pair digest", func(t *testing.T) {
-		workerPath := filepath.Join(root, "libexec/open-trestle/open-trestle-secret-scanner-worker")
-		if err := os.WriteFile(workerPath, []byte("changed worker"), 0600); err != nil {
+	t.Run("wrong helper digest", func(t *testing.T) {
+		helperPath := filepath.Join(root, "libexec/open-trestle/open-trestle-scan-helper")
+		if err := os.WriteFile(helperPath, []byte("changed helper"), 0600); err != nil {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() {
-			if err := os.WriteFile(workerPath, members["libexec/open-trestle/open-trestle-secret-scanner-worker"], 0600); err != nil {
+			if err := os.WriteFile(helperPath, members["libexec/open-trestle/open-trestle-scan-helper"], 0600); err != nil {
 				t.Error(err)
 			}
 		})
-		if _, err := readPackagedStaging(); err == nil || !strings.Contains(err.Error(), "open-trestle-secret-scanner-worker differs from release digest") {
+		if _, err := readPackagedStaging(); err == nil || !strings.Contains(err.Error(), "open-trestle-scan-helper differs from release digest") {
 			t.Fatalf("selected wrong digest not refused: %v", err)
 		}
 	})

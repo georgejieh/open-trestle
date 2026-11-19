@@ -152,11 +152,15 @@ jobs:
         run: |
           GOWORK=off GOTOOLCHAIN=go1.26.11 CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go test -run='^$' -exec=true ./...
           GOWORK=off GOTOOLCHAIN=go1.26.11 CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go test -run='^$' -exec=true ./...
-      - name: Run scan helper session integration tests
-        run: OPEN_TRESTLE_SCAN_HELPER_INTEGRATION=1 GOWORK=off GOTOOLCHAIN=go1.26.11 go test -count=1 -timeout=15m -run='^TestScanHelper' -v ./internal/secretscan/
-      - name: Provision pinned Zig musl builder and build deterministic release staging
+      - name: Run scan helper session and review integration tests
+        run: OPEN_TRESTLE_SCAN_HELPER_INTEGRATION=1 GOWORK=off GOTOOLCHAIN=go1.26.11 go test -count=1 -timeout=20m -run='^(TestScanHelper|TestRemoteReviewScansThroughTheScanHelper)' ./internal/secretscan/ ./cmd/trestle/
+      - name: Build a development trestle with its scan helper
         run: |
-          python3 tools/package_secret_scanner.py
+          python3 tools/package_secret_scanner.py --development "$RUNNER_TEMP/open-trestle-development"
+          "$RUNNER_TEMP/open-trestle-development/bin/trestle" build-info
+      - name: Build deterministic release staging
+        run: |
+          python3 tools/package_secret_scanner.py --output .container
           python3 tools/package_secret_scanner.py --verify .container
       - name: Run passive dependency vulnerability gate
         run: |
@@ -220,8 +224,7 @@ jobs:
           test "$(cat "$RUNNER_TEMP/open-trestle-linux-root/usr/local/share/open-trestle/sentinel")" = operator-owned
           test ! -e "$RUNNER_TEMP/open-trestle-linux-root/usr/local/bin/trestle"
           test ! -e "$RUNNER_TEMP/open-trestle-linux-root/usr/local/bin/trestled"
-          test ! -e "$RUNNER_TEMP/open-trestle-linux-root/usr/local/libexec/open-trestle/open-trestle-secret-scanner"
-          test ! -e "$RUNNER_TEMP/open-trestle-linux-root/usr/local/libexec/open-trestle/open-trestle-secret-scanner-worker"
+          test ! -e "$RUNNER_TEMP/open-trestle-linux-root/usr/local/libexec/open-trestle/open-trestle-scan-helper"
           test ! -e "$RUNNER_TEMP/open-trestle-linux-root/usr/local/share/open-trestle/distribution/receipt.json"
           test ! -e "$RUNNER_TEMP/open-trestle-linux-root/usr/local/share/open-trestle/distribution/journal.json"
           test ! -e "$RUNNER_TEMP/open-trestle-linux-root/usr/local/share/open-trestle/distribution/previous.pyz"
@@ -247,7 +250,7 @@ jobs:
             --artifact linux-amd64-lifecycle="$GITHUB_WORKSPACE/open-trestle-linux-lifecycle.json" \
             --go-binary .container/trestle \
             --go-binary .container/trestled \
-            --go-binary .container/libexec/open-trestle/open-trestle-secret-scanner-worker \
+            --go-binary .container/libexec/open-trestle/open-trestle-scan-helper \
             --npm-lock web/package-lock.json \
             --npm-lock extensions/vscode/package-lock.json \
             --changelog CHANGELOG.md \
@@ -265,7 +268,7 @@ jobs:
             --artifact linux-amd64-lifecycle="$GITHUB_WORKSPACE/open-trestle-linux-lifecycle.json" \
             --go-binary .container/trestle \
             --go-binary .container/trestled \
-            --go-binary .container/libexec/open-trestle/open-trestle-secret-scanner-worker \
+            --go-binary .container/libexec/open-trestle/open-trestle-scan-helper \
             --npm-lock web/package-lock.json \
             --npm-lock extensions/vscode/package-lock.json \
             --changelog CHANGELOG.md \
@@ -308,12 +311,23 @@ jobs:
           python3 -c 'import json,os,pathlib; receipt=json.loads(pathlib.Path(os.environ["VISUAL_RECEIPT"]).read_text()); b=receipt["browser"]; phases=b["phases"]; runtime=b["runtime"]; assert receipt["schema_version"]==3 and receipt["browser"]["status"]=="passed" and receipt["runtime"]==runtime and [p["phase"] for p in phases]==["before_restart","after_restart"] and len(phases)==2 and runtime["configuration_stable"] is True and runtime["components_stable"] is True and runtime["ready"] is True and len(runtime["components"])==2 and all(len(p["captures"])==5 and p["schema_version"]==3 and p["run_identity"]==receipt["review"]["run_receipt_identity"] and p["diagnostic_set_identity"]==receipt["review"]["diagnostic_set_identity"] and p["deterministic_check_state"]=="failed" and p["observation_count"]==1 and p["runtime"]["phase"]==p["phase"] and p["runtime"]["displayed"]["status"]["configuration_identity"]==runtime["configuration_identity"] and p["runtime"]["runtime_screenshot_sha256"]==next(c["sha256"] for c in p["captures"] if c["view"]=="runtime") for p in phases) and b["provenance"]["source_revision"]==receipt["source_revision"] and b["provenance"]["daemon-visual-check.mjs_head_blob"]==receipt["source_provenance"]["browser_modules"]["script_head_blob"]'
       - name: Build container image without a registry base
         run: docker build --network=none --tag open-trestle:verify .
-      - name: Verify packaged scanner sandbox
+      - name: Verify the packaged scan helper
         run: |
           python3 -c 'import json,struct,sys; body=json.dumps({"schema_version":1,"request_id":"f"*64,"sources":[{"ordinal":0,"content_base64":"eg=="}]},separators=(",",":")).encode(); sys.stdout.buffer.write(struct.pack(">I",len(body))+body)' > "$RUNNER_TEMP/scanner-request"
-          docker run --rm --network=none --read-only --cap-drop=ALL --pids-limit=64 --memory=256m --security-opt=no-new-privileges=true -i --entrypoint /usr/local/libexec/open-trestle/open-trestle-secret-scanner open-trestle:verify --stdio-v1 < "$RUNNER_TEMP/scanner-request" > "$RUNNER_TEMP/scanner-response" 2> "$RUNNER_TEMP/scanner-stderr"
+          docker run --rm --network=none --read-only --cap-drop=ALL --pids-limit=64 --memory=1g --security-opt=no-new-privileges=true --tmpfs /scan-cache:rw,nosuid,nodev,size=256m,mode=0700,uid=65532,gid=65532 --workdir /scan-cache -i --entrypoint /usr/local/libexec/open-trestle/open-trestle-scan-helper open-trestle:verify --stdio-v1 < "$RUNNER_TEMP/scanner-request" > "$RUNNER_TEMP/scanner-response" 2> "$RUNNER_TEMP/scanner-stderr"
           test ! -s "$RUNNER_TEMP/scanner-stderr"
-          python3 -c 'import json,struct,sys; data=open(sys.argv[1],"rb").read(); size=struct.unpack(">I",data[:4])[0]; doc=json.loads(data[4:]); assert size==len(data)-4 and doc["status"]=="complete" and doc["matches"]==[] and doc["scanner"]=="betterleaks" and doc["scanner_version"]=="v1.8.1" and doc["build_profile"]=="public_detect_run_re2_purego_go1.26.11_linux_amd64_v1"' "$RUNNER_TEMP/scanner-response"
+          python3 -c 'import json,struct,sys; data=open(sys.argv[1],"rb").read(); size=struct.unpack(">I",data[:4])[0]; doc=json.loads(data[4:]); assert size==len(data)-4 and doc["status"]=="complete" and doc["matches"]==[] and doc["scanner"]=="betterleaks" and doc["scanner_version"]=="v1.8.1" and doc["build_profile"]=="public_detect_run_re2_host_go1.26.11_wasip1_wasm_v1"' "$RUNNER_TEMP/scanner-response"
+          OPEN_TRESTLE_API_TOKEN="$(head -c 32 /dev/urandom | base64)" docker run --detach --name open-trestle-daemon --network=none --read-only --cap-drop=ALL --pids-limit=64 --memory=1g --security-opt=no-new-privileges=true --tmpfs /var/lib/open-trestle:rw,nosuid,nodev,size=256m,mode=0700,uid=65532,gid=65532 --env OPEN_TRESTLE_API_TOKEN open-trestle:verify --tenant tenant-a --repository repository-a --state-dir /var/lib/open-trestle/state
+          for attempt in $(seq 1 90); do
+            if docker logs open-trestle-daemon 2>&1 | grep -q "trestled listening on"; then break; fi
+            sleep 2
+          done
+          docker logs open-trestle-daemon > "$RUNNER_TEMP/daemon-log" 2>&1
+          docker rm --force open-trestle-daemon
+          cat "$RUNNER_TEMP/daemon-log"
+          grep -q "trestled: preparing the secret scanner for first use" "$RUNNER_TEMP/daemon-log"
+          grep -q "trestled listening on" "$RUNNER_TEMP/daemon-log"
+          if grep -q "secret scanner is unavailable" "$RUNNER_TEMP/daemon-log"; then exit 1; fi
 
   windows-owner-checks:
     name: Verify Windows owner-only checks
@@ -362,13 +376,20 @@ jobs:
           ./modelcatalog/
           ./runtimeconfig/
           ./internal/secretscan/
+          ./internal/scm/
+          ./localreview/
       - name: Build, vet and test the secret-scanner Windows packages
         working-directory: workers/secret-scanner
         run: |
           go build ./...
           go vet ./internal/scanhelper/ ./internal/ownersonly/ ./cmd/...
           go test -count=1 -timeout=15m ./internal/scanhelper/ ./internal/ownersonly/
-      - name: Run scan helper session integration tests
+      # The temporary folder is on another drive than the checkout.
+      - name: Build a development trestle with its scan helper
+        run: |
+          python tools/package_secret_scanner.py --development "$env:TMP\open-trestle-development"
+          & "$env:TMP\open-trestle-development\bin\trestle.exe" build-info
+      - name: Run scan helper session and review integration tests
         env:
           OPEN_TRESTLE_SCAN_HELPER_INTEGRATION: "1"
-        run: go test -count=1 -timeout=30m -run='^TestScanHelper' -v ./internal/secretscan/
+        run: go test -count=1 -timeout=30m -run='^(TestScanHelper|TestRemoteReviewScansThroughTheScanHelper)' ./internal/secretscan/ ./cmd/trestle/

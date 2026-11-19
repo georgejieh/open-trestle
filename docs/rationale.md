@@ -17,7 +17,7 @@ where that code is not kept afterwards, for three reasons.
   endpoints whose providers do not routinely store prompts or responses.
   OpenRouter's [ZDR documentation](https://openrouter.ai/docs/guides/features/zdr)
   lists the exceptions.
-- The secret scanner that checks every review request to a remote provider is a
+- The secret scanner that checks every review request is a
   pattern scanner and misses some credential formats, so a secret in the
   reviewed code can reach the provider. The less a route retains, the less a
   missed secret costs.

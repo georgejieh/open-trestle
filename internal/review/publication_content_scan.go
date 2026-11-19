@@ -481,8 +481,10 @@ type FixedPublicationContentScanner struct {
 	identity string
 }
 
-func NewFixedPublicationContentScanner() *FixedPublicationContentScanner {
-	return newFixedPublicationContentScanner(fixedSecretScanClient{client: secretscan.NewClient()})
+// NewFixedPublicationContentScanner returns the publication scanner that
+// scans through sanitizer. A nil sanitizer refuses every scan.
+func NewFixedPublicationContentScanner(sanitizer secretscan.Sanitizer) *FixedPublicationContentScanner {
+	return newFixedPublicationContentScanner(newHelperScanClient(sanitizer))
 }
 
 func newFixedPublicationContentScanner(client sanitizedScanClient) *FixedPublicationContentScanner {
@@ -495,8 +497,7 @@ func (scanner *FixedPublicationContentScanner) expectedDigests() ScannerBinaryDi
 	if scanner == nil || scanner.client == nil {
 		return ScannerBinaryDigests{}
 	}
-	launcher, worker := scanner.client.BinaryDigests()
-	return ScannerBinaryDigests{LauncherSHA256: launcher, WorkerSHA256: worker}
+	return ScannerBinaryDigests{HelperSHA256: scanner.client.HelperSHA256()}
 }
 
 func (scanner *FixedPublicationContentScanner) Identity() string {
@@ -537,7 +538,7 @@ func (scanner *FixedPublicationContentScanner) Scan(ctx context.Context, indepen
 		independent, set, verificationContext, selection,
 		ScannerProfile{WorkerProtocol: 1, Scanner: initial.Scanner, ScannerVersion: initial.ScannerVersion,
 			ScannerCommit: initial.ScannerCommit, RulesetIdentity: initial.RulesetIdentity, RulesetRuleCount: secretscan.RulesetRuleCount,
-			BuildProfile: initial.BuildProfile, LauncherSHA256: initial.LauncherSHA256, WorkerSHA256: initial.WorkerSHA256},
+			BuildProfile: initial.BuildProfile, HelperSHA256: initial.HelperSHA256},
 		ScanCompletion{Complete: true, FieldCount: initial.SourceCount, ScannedByteCount: initial.ScannedByteCount, MatchCount: initial.MatchCount},
 		ScanCompletion{Complete: true, FieldCount: residual.SourceCount, ScannedByteCount: residual.ScannedByteCount, MatchCount: residual.MatchCount},
 	)
@@ -547,11 +548,10 @@ func (scanner *FixedPublicationContentScanner) Scan(ctx context.Context, indepen
 	return receipt, nil
 }
 
-// PublicationContentScannerIdentity derives the scanner authority from the
-// profile's own build profile, so a receipt recorded under an earlier
-// readable profile keeps the identity it was written with.
+// PublicationContentScannerIdentity derives the scanner authority that a
+// receipt's scanner profile names.
 func PublicationContentScannerIdentity(profile ScannerProfile) string {
-	return publicationContentScannerIdentity(profile.BuildProfile, ScannerBinaryDigests{LauncherSHA256: profile.LauncherSHA256, WorkerSHA256: profile.WorkerSHA256})
+	return publicationContentScannerIdentity(profile.BuildProfile, ScannerBinaryDigests{HelperSHA256: profile.HelperSHA256})
 }
 
 func derivePublicationContentScannerIdentity(digests ScannerBinaryDigests) string {
@@ -564,9 +564,8 @@ func publicationContentScannerIdentity(buildProfile string, digests ScannerBinar
 		Version  int    `json:"version"`
 		Scanner  string `json:"scanner"`
 		Profile  string `json:"profile"`
-		Launcher string `json:"launcher"`
-		Worker   string `json:"worker"`
-	}{"open-trestle/publication-content-scanner", 1, secretscan.ScannerName, buildProfile, digests.LauncherSHA256, digests.WorkerSHA256})
+		Helper   string `json:"helper"`
+	}{"open-trestle/publication-content-scanner", 1, secretscan.ScannerName, buildProfile, digests.HelperSHA256})
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:])
 }
@@ -580,8 +579,7 @@ func derivePublicationContentScanReceiptIdentity(receipt PublicationContentScanR
 		RulesetIdentity  string `json:"ruleset_identity"`
 		RulesetRuleCount int    `json:"ruleset_rule_count"`
 		BuildProfile     string `json:"build_profile"`
-		LauncherSHA256   string `json:"launcher_sha256"`
-		WorkerSHA256     string `json:"worker_sha256"`
+		HelperSHA256     string `json:"helper_sha256"`
 	}
 	type completionWire struct {
 		Complete         bool `json:"complete"`
@@ -628,7 +626,7 @@ func derivePublicationContentScanReceiptIdentity(receipt PublicationContentScanR
 	}{
 		"open-trestle/publication-content-scan-receipt", 1, receipt.reviewScopeIdentity,
 		receipt.verifiedFindingSetIdentity, receipt.selectionIdentity, receipt.publicationPolicyIdentity, receipt.verificationContextIdentity, receipt.scannerAuthorityIdentity,
-		scannerWire{scanner.WorkerProtocol, scanner.Scanner, scanner.ScannerVersion, scanner.ScannerCommit, scanner.RulesetIdentity, scanner.RulesetRuleCount, scanner.BuildProfile, scanner.LauncherSHA256, scanner.WorkerSHA256},
+		scannerWire{scanner.WorkerProtocol, scanner.Scanner, scanner.ScannerVersion, scanner.ScannerCommit, scanner.RulesetIdentity, scanner.RulesetRuleCount, scanner.BuildProfile, scanner.HelperSHA256},
 		completionWire{initial.Complete, initial.FieldCount, initial.ScannedByteCount, initial.MatchCount},
 		completionWire{residual.Complete, residual.FieldCount, residual.ScannedByteCount, residual.MatchCount},
 		fields, receipt.instructionRiskEvidence, riskFields,

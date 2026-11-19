@@ -52,51 +52,15 @@ func TestFrozenBetterleaksIdentity(t *testing.T) {
 	if RulesetIdentity != "27ded783c81940d13c22cc46556a3f8184baf397bff08a69fcfae87991925f42" || RulesetRuleCount != 417 {
 		t.Fatal("unexpected ruleset identity")
 	}
-	if BuildProfile != "public_detect_run_re2_purego_go1.26.11_linux_amd64_v1" {
+	if BuildProfile != "public_detect_run_re2_host_go1.26.11_wasip1_wasm_v1" {
 		t.Fatal("unexpected build profile")
+	}
+	if !bytes.Contains(readFixture(t, "response-v1.json"), []byte(`"build_profile":"`+BuildProfile+`"`)) {
+		t.Fatal("canonical response fixture does not carry the build profile")
 	}
 	match := Match{SourceOrdinal: 0, RuleID: "github-pat", StartByte: 7, EndByteExclusive: 12}
 	if got := OccurrenceID(match); got != "cc35a127e9e7243eb1e2d31391846f5e9288155b136915656fffce5caf594fd4" {
 		t.Fatalf("unexpected occurrence ID: %s", got)
-	}
-}
-
-func TestKnownBuildProfilesAreExactlyCurrentHostAndRecordedGo12610(t *testing.T) {
-	if HostRE2BuildProfile != "public_detect_run_re2_host_go1.26.11_wasip1_wasm_v1" {
-		t.Fatal("unexpected host build profile")
-	}
-	for profile, want := range map[string]bool{
-		"public_detect_run_re2_purego_go1.26.11_linux_amd64_v1": true,
-		"public_detect_run_re2_host_go1.26.11_wasip1_wasm_v1":   true,
-		"public_detect_run_re2_purego_go1.26.10_linux_amd64_v1": true,
-		"public_detect_run_re2_host_go1.26.10_wasip1_wasm_v1":   false,
-		"public_detect_run_re2_host_go1.26.11_linux_amd64_v1":   false,
-		"public_detect_run_re2_purego_go1.26.8_linux_amd64_v1":  false,
-		"public_detect_run_re2_purego_go1.26.12_linux_amd64_v1": false,
-		"": false,
-	} {
-		if got := KnownBuildProfile(profile); got != want {
-			t.Fatalf("KnownBuildProfile(%q) = %v, want %v", profile, got, want)
-		}
-	}
-}
-
-func TestRecordedGo12610ResponseReadsBackByteForByte(t *testing.T) {
-	recorded := readFixture(t, "response-v1-go1.26.10.json")
-	response, err := ParseResponseFrame(frame(recorded), fixtureExpectation())
-	if err != nil || response.BuildProfile != "public_detect_run_re2_purego_go1.26.10_linux_amd64_v1" {
-		t.Fatalf("recorded go1.26.10 response did not read back: %v", err)
-	}
-	encoded, err := EncodeResponseFrame(response, fixtureExpectation())
-	if err != nil || !bytes.Equal(encoded, frame(recorded)) {
-		t.Fatalf("recorded go1.26.10 response changed on re-encode: %v", err)
-	}
-	current := readFixture(t, "response-v1.json")
-	if !bytes.Contains(current, []byte(`"build_profile":"`+BuildProfile+`"`)) {
-		t.Fatal("canonical response fixture does not carry the current build profile")
-	}
-	if !bytes.Equal(bytes.Replace(recorded, []byte("go1.26.10"), []byte("go1.26.11"), 1), current) {
-		t.Fatal("recorded and current response fixtures differ beyond the build profile")
 	}
 }
 
@@ -298,11 +262,11 @@ func TestResponseProtocolRejectsInvalidMetadataMatchesAndSpans(t *testing.T) {
 	})
 	set("ruleset identity", func(response *Response) { response.RulesetIdentity = strings.Repeat("b", 64) })
 	set("build profile", func(response *Response) { response.BuildProfile = "native" })
-	set("unrecorded earlier Go patch profile", func(response *Response) {
-		response.BuildProfile = "public_detect_run_re2_purego_go1.26.8_linux_amd64_v1"
+	set("native reference profile", func(response *Response) {
+		response.BuildProfile = "public_detect_run_re2_purego_go1.26.11_linux_amd64_v1"
 	})
 	set("unreviewed later Go patch profile", func(response *Response) {
-		response.BuildProfile = "public_detect_run_re2_purego_go1.26.12_linux_amd64_v1"
+		response.BuildProfile = "public_detect_run_re2_host_go1.26.12_wasip1_wasm_v1"
 	})
 	set("retired build profile", func(response *Response) { response.BuildProfile = "pure_go_" + "linux_amd64_v1" })
 	set("nil matches", func(response *Response) { response.Matches = nil })
