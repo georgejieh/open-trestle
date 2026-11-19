@@ -316,7 +316,8 @@ func (c *Coordinator) Advance(ctx context.Context, plan ReviewRunPlan, at time.T
 		if err != nil {
 			return ReviewRunState{}, err
 		}
-		if !transitionTimeAllowed(state, at) {
+		at, timely := transitionTime(state, at)
+		if !timely {
 			return ReviewRunState{}, ErrRunTransitionSequenceMismatch
 		}
 		if state.Status() != ReviewRunActive {
@@ -391,7 +392,8 @@ func (c *Coordinator) ClaimTask(ctx context.Context, plan ReviewRunPlan, taskKey
 		if err != nil {
 			return TaskLease{}, false, err
 		}
-		if !transitionTimeAllowed(state, at) {
+		at, timely := transitionTime(state, at)
+		if !timely {
 			return TaskLease{}, false, ErrRunTransitionSequenceMismatch
 		}
 		if state.Status() != ReviewRunActive {
@@ -441,7 +443,8 @@ func (c *Coordinator) RenewTaskLease(ctx context.Context, plan ReviewRunPlan, le
 		if state.Status() != ReviewRunActive {
 			return TaskLease{}, ReviewRunState{}, ErrRunAlreadyTerminal
 		}
-		if !transitionTimeAllowed(state, at) {
+		at, timely := transitionTime(state, at)
+		if !timely {
 			return TaskLease{}, ReviewRunState{}, ErrRunTransitionSequenceMismatch
 		}
 		runtime, exists := state.Task(lease.TaskKey())
@@ -544,7 +547,8 @@ func (c *Coordinator) CompleteTask(ctx context.Context, plan ReviewRunPlan, leas
 		if runtime.preparedEventIdentity != "" && (completion.Status() != TaskCompletionFailed || completion.OutputIdentity() != runtime.preparedEvent.OutputIdentity() || completion.Failure() != runtime.preparedEvent.Failure()) {
 			return ReviewRunState{}, ErrPreparedContextAbstention
 		}
-		if !transitionTimeAllowed(state, at) {
+		at, timely := transitionTime(state, at)
+		if !timely {
 			return ReviewRunState{}, ErrRunTransitionSequenceMismatch
 		}
 		if at.UnixMilli() > runtime.leaseExpiresAtMillis {
@@ -600,7 +604,8 @@ func (c *Coordinator) SucceedRun(ctx context.Context, plan ReviewRunPlan, output
 		if deriveErr != nil || !ready || derived.Status() != TaskCompletionSucceeded || derived.OutputIdentity() != outputIdentity {
 			return ReviewRunState{}, ErrRunTransitionInvalid
 		}
-		if !transitionTimeAllowed(state, at) || !state.canSucceed() {
+		at, timely := transitionTime(state, at)
+		if !timely || !state.canSucceed() {
 			return ReviewRunState{}, ErrRunTransitionInvalid
 		}
 		event, err := NewRunEvent(plan, state.Revision()+1, state.HeadIdentity(), RunEventSucceeded, TaskDefinition{}, 0, "", "", time.Time{}, outputIdentity, 0, time.Time{}, at)
@@ -642,7 +647,8 @@ func (c *Coordinator) FailRun(ctx context.Context, plan ReviewRunPlan, failure R
 		if deriveErr != nil || !ready || derived.Status() != TaskCompletionFailed || derived.Failure() != failure {
 			return ReviewRunState{}, ErrRunTransitionInvalid
 		}
-		if !transitionTimeAllowed(state, at) || !state.canFail() {
+		at, timely := transitionTime(state, at)
+		if !timely || !state.canFail() {
 			return ReviewRunState{}, ErrRunTransitionInvalid
 		}
 		event, err := NewRunEvent(plan, state.Revision()+1, state.HeadIdentity(), RunEventFailed, TaskDefinition{}, 0, "", "", time.Time{}, "", failure, time.Time{}, at)
@@ -674,7 +680,8 @@ func (c *Coordinator) CancelRun(ctx context.Context, plan ReviewRunPlan, at time
 		if state.Status() != ReviewRunActive {
 			return ReviewRunState{}, ErrRunAlreadyTerminal
 		}
-		if !transitionTimeAllowed(state, at) {
+		at, timely := transitionTime(state, at)
+		if !timely {
 			return ReviewRunState{}, ErrRunTransitionSequenceMismatch
 		}
 		event, err := NewRunEvent(plan, state.Revision()+1, state.HeadIdentity(), RunEventCanceled, TaskDefinition{}, 0, "", "", time.Time{}, "", RunFailureCanceled, time.Time{}, at)
@@ -690,8 +697,13 @@ func (c *Coordinator) CancelRun(ctx context.Context, plan ReviewRunPlan, at time
 	return ReviewRunState{}, ErrCoordinatorContention
 }
 
-func transitionTimeAllowed(state ReviewRunState, at time.Time) bool {
-	return !at.IsZero() && at.UnixMilli() >= state.lastOccurredAtMillis && validRunMillis(at.UnixMilli())
+// transitionTime refuses an invalid observation time and otherwise returns the
+// time at which the state records a transition observed at that time.
+func transitionTime(state ReviewRunState, at time.Time) (time.Time, bool) {
+	if at.IsZero() || !validRunMillis(at.UnixMilli()) {
+		return time.Time{}, false
+	}
+	return state.TransitionTime(at), true
 }
 
 // Receipt returns the current secret-free state for one exact run scope.
