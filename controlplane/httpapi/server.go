@@ -557,12 +557,17 @@ func (s *Server) submitRun(ctx context.Context, writer http.ResponseWriter, requ
 		writeReservedRunID(writer, requestID)
 		return
 	}
-	state, operationErr := s.coordinator.Open(ctx, plan, at)
-	if operationErr == nil && s.notificationScheduler != nil {
-		state, _, operationErr = s.notificationScheduler.ReconcileRun(ctx, plan.Scope(), at)
-	} else if operationErr == nil {
-		state, operationErr = s.coordinator.Advance(ctx, plan, at)
-	}
+	var state controlplane.ReviewRunState
+	operationErr := s.coordinator.WithScopeGate(ctx, plan.Scope(), func(inner context.Context) error {
+		var err error
+		state, err = s.coordinator.Open(inner, plan, at)
+		if err == nil && s.notificationScheduler != nil {
+			state, _, err = s.notificationScheduler.ReconcileRun(inner, plan.Scope(), at)
+		} else if err == nil {
+			state, err = s.coordinator.Advance(inner, plan, at)
+		}
+		return err
+	})
 	if operationErr != nil {
 		s.writeCoordinatorError(writer, requestID, operationErr)
 		return
