@@ -157,6 +157,7 @@ type LocalDeterministicReviewAdmissionConfig struct {
 	Catalog              PipelineCatalog
 }
 type LocalDeterministicReviewAdmitter struct {
+	journal     controlplane.RunJournal
 	coordinator *controlplane.Coordinator
 	store       artifact.Store
 	config      LocalDeterministicReviewAdmissionConfig
@@ -170,7 +171,7 @@ func NewLocalDeterministicReviewAdmitter(journal controlplane.RunJournal, store 
 	if err != nil {
 		return nil, ErrInvalidLocalDeterministicReview
 	}
-	return &LocalDeterministicReviewAdmitter{coordinator: coordinator, store: store, config: config}, nil
+	return &LocalDeterministicReviewAdmitter{journal: journal, coordinator: coordinator, store: store, config: config}, nil
 }
 func validateLocalAdmissionConfig(c LocalDeterministicReviewAdmissionConfig) error {
 	repository, err := evidence.NewRepositoryIdentity(c.Repository.Authority(), c.Repository.Namespace(), c.Repository.Name())
@@ -199,6 +200,25 @@ func (a *LocalDeterministicReviewAdmitter) Admit(ctx context.Context, intent Loc
 	if err != nil {
 		return controlplane.ReviewRunState{}, err
 	}
+	journal, ok := a.journal.(*controlplane.FileRunJournal)
+	if !ok {
+		return a.admitPrepared(ctx, intent, prepared, at)
+	}
+	// Saving the plan, opening the run and advancing it run under the scope
+	// gate, so a worker's scope effect neither interleaves with these writes
+	// nor observes the plan before its run opens.
+	var state controlplane.ReviewRunState
+	err = journal.WithScopeGate(ctx, intent.Scope(), func(inner context.Context) error {
+		var admitErr error
+		state, admitErr = a.admitPrepared(inner, intent, prepared, at)
+		return admitErr
+	})
+	if err != nil {
+		return controlplane.ReviewRunState{}, err
+	}
+	return state, nil
+}
+func (a *LocalDeterministicReviewAdmitter) admitPrepared(ctx context.Context, intent LocalDeterministicReviewIntent, prepared PreparedReviewRun, at time.Time) (controlplane.ReviewRunState, error) {
 	plan := prepared.Plan()
 	existingPlan, _, resumeErr := a.coordinator.Resume(ctx, intent.Scope())
 	if resumeErr == nil {
