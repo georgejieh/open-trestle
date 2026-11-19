@@ -676,6 +676,11 @@ func (s *RepositorySupervisor) runOnce(ctx context.Context) (bool, error) {
 			settled := false
 			for {
 				worked, runSettled, runErr := runner.RunOnce(ctx)
+				if isPureError(runErr, controlplane.ErrRunNotOpened) {
+					// The plan is saved before its run opens. Its admission
+					// opens the run, so there is no work yet.
+					break
+				}
 				if runErr != nil {
 					return workedAny, fmt.Errorf("execute repository run: %w", runErr)
 				}

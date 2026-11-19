@@ -199,6 +199,18 @@ func (a *LocalDeterministicReviewAdmitter) Admit(ctx context.Context, intent Loc
 	if err != nil {
 		return controlplane.ReviewRunState{}, err
 	}
+	var state controlplane.ReviewRunState
+	err = a.coordinator.WithScopeGate(ctx, intent.Scope(), func(inner context.Context) error {
+		var admitErr error
+		state, admitErr = a.admitPrepared(inner, intent, prepared, at)
+		return admitErr
+	})
+	if err != nil {
+		return controlplane.ReviewRunState{}, err
+	}
+	return state, nil
+}
+func (a *LocalDeterministicReviewAdmitter) admitPrepared(ctx context.Context, intent LocalDeterministicReviewIntent, prepared PreparedReviewRun, at time.Time) (controlplane.ReviewRunState, error) {
 	plan := prepared.Plan()
 	existingPlan, _, resumeErr := a.coordinator.Resume(ctx, intent.Scope())
 	if resumeErr == nil {
