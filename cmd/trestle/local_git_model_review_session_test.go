@@ -372,7 +372,7 @@ func TestLocalModelSessionCapacityAndTimingRemainBounded(t *testing.T) {
 }
 
 func TestLocalModelSessionCannotReceiveForgeOrCustomHandlerCapabilities(t *testing.T) {
-	allowed := map[string]bool{"TenantID": true, "RepositoryID": true, "Repository": true, "ObjectsRoot": true, "ObjectStoreProfile": true, "ObjectAlgorithm": true, "Inventory": true, "Policy": true, "Egress": true, "Credentials": true, "Clock": true, "Timeout": true, "ArtifactCapacity": true, "RenewalInterval": true, "Retention": true, "RetainedMemoryInput": true, "GenerationSanitizer": true, "VerificationSanitizer": true, "ModelHTTPClient": true, "ModelHTTPClientIdentity": true, "IndexContext": true}
+	allowed := map[string]bool{"TenantID": true, "RepositoryID": true, "Repository": true, "ObjectsRoot": true, "ObjectStoreProfile": true, "ObjectAlgorithm": true, "Inventory": true, "Policy": true, "Egress": true, "Credentials": true, "Clock": true, "Timeout": true, "ArtifactCapacity": true, "RenewalInterval": true, "Retention": true, "RetainedMemoryInput": true, "GenerationSanitizer": true, "VerificationSanitizer": true, "ModelHTTPClient": true, "ModelHTTPClientIdentity": true, "IndexContext": true, "Scanner": true}
 	options := reflect.TypeOf(localreview.SessionOptions{})
 	// The policy-approved transport is a plain identity-bound HTTP client, not a handler.
 	if field, ok := options.FieldByName("ModelHTTPClient"); !ok || field.Type != reflect.TypeOf((*http.Client)(nil)) {

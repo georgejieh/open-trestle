@@ -51,6 +51,9 @@ func TestMain(m *testing.M) {
 	updateSudoPaths = []string{filepath.Join(os.TempDir(), "open-trestle-test-no-sudo")}
 	updateTrestlePath = filepath.Join(os.TempDir(), "open-trestle-test-no-trestle")
 	updateDaemonRunning = func() bool { return false }
+	// No test binary pins a scan helper; tests of the scanner check install
+	// their own probe.
+	setupBootstrapScannerPrerequisite = func() error { return nil }
 	// Reviews record their spend in the usage folder under XDG_STATE_HOME, so
 	// every test of this package writes to a private temporary folder, never
 	// to the operator's ~/.local/state. A test that inspects the ledger sets

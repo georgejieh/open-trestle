@@ -29,7 +29,7 @@ type failingVerificationSanitizer struct{}
 
 func (failingVerificationSanitizer) Identity() string { return strings.Repeat("8", 64) }
 func (failingVerificationSanitizer) ExpectedBinaryDigests() review.ScannerBinaryDigests {
-	return review.ScannerBinaryDigests{LauncherSHA256: strings.Repeat("b", 64), WorkerSHA256: strings.Repeat("c", 64)}
+	return review.ScannerBinaryDigests{HelperSHA256: strings.Repeat("b", 64)}
 }
 func (failingVerificationSanitizer) SanitizeVerification(context.Context, provider.Request, string) (review.SanitizedModelRequest, review.SanitizedEgressReceipt, error) {
 	return review.SanitizedModelRequest{}, review.SanitizedEgressReceipt{}, review.ErrSanitizedEgressUnavailable
@@ -464,7 +464,7 @@ func TestVerificationResultSchemaClosesVersionedEgressFields(t *testing.T) {
 			} `json:"else"`
 		} `json:"allOf"`
 	}
-	if json.Unmarshal(encoded, &schema) != nil || len(schema.Properties.SchemaVersion.Enum) != 2 || len(schema.AllOf) != 1 || len(schema.AllOf[0].Then.Required) != 8 || len(schema.AllOf[0].Else.Not.AnyOf) != 8 {
+	if json.Unmarshal(encoded, &schema) != nil || len(schema.Properties.SchemaVersion.Enum) != 2 || len(schema.AllOf) != 1 || len(schema.AllOf[0].Then.Required) != 7 || len(schema.AllOf[0].Else.Not.AnyOf) != 7 {
 		t.Fatal("verification result schema does not close v1 and v2 egress fields")
 	}
 	for index, field := range schema.AllOf[0].Then.Required {

@@ -7,33 +7,35 @@ on where the models run.
 
 | You want | Use | Systems |
 | --- | --- | --- |
-| A model server on your machine (Ollama, llama.cpp, vLLM, LM Studio) | A development build | Linux; see [platforms](platforms.md) for the others |
-| OpenRouter, Ollama Cloud, OpenCode Go, or Ollama signed in to Ollama Cloud | The packaged Linux amd64 install | Linux amd64 only |
+| Any model, on your machine or remote (Ollama, llama.cpp, vLLM, LM Studio, OpenRouter, Ollama Cloud, OpenCode Go) | A development build | Linux, macOS or Windows; see [platforms](platforms.md) |
+| The same, as an installed package | The packaged Linux amd64 install | Linux amd64 only |
 
 Other systems are planned for the first release: native packages or
-installers for macOS and Windows, a secret scanner that runs there, and
-`trestle update` on each. See the [roadmap](roadmap.md#next-release).
+installers for macOS and Windows, and `trestle update` on each. See the [roadmap](roadmap.md#next-release).
 
 ## A development build
 
-You need a clone of this repository and Go. The `go.mod` file names the Go
-version.
+You need a clone of this repository, Go 1.26.11 and Python 3.
 
 ```sh
-go build -o trestle ./cmd/trestle
-./trestle build-info
+python3 tools/package_secret_scanner.py --development DIR
+DIR/bin/trestle build-info
 ```
 
-Run the binary by its path, or put it on your `PATH`. A plain `go build` has no
-secret scanner, so the binary works with a model server on your machine and
-refuses to send source to a remote provider. Then continue with
+This writes `DIR/bin/trestle`, `DIR/bin/trestled` and the secret scan helper at
+`DIR/libexec/open-trestle/open-trestle-scan-helper` (`.exe` names on Windows).
+Keep the helper where it is: the program looks for it at
+`../libexec/open-trestle/open-trestle-scan-helper` next to its own folder.
+`DIR` is relative to the current directory. Add `--target GOOS/GOARCH` to build
+for another system. Run `DIR/bin/trestle` by its path. A plain `go build` pins no
+helper, so the program it makes refuses every review. Then continue with
 [getting started](getting-started.md).
 
 ## The packaged Linux amd64 install
 
-The package places `trestle`, `trestled` and the sandboxed secret scanner under
-`/usr/local`, owned by root. Remote providers need this install, because every
-request is scanned before it leaves the machine.
+The package places `trestle`, `trestled` and the secret scan helper under
+`/usr/local`, owned by root. Every request is scanned before it leaves the
+machine, and the helper is the program that scans it.
 
 You build the package from a clean committed checkout, because no prebuilt,
 signed archive exists yet. The build, the checks to run first and the install

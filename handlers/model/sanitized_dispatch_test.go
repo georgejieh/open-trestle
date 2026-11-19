@@ -25,7 +25,7 @@ func TestSanitizedDispatchProofRequiresJointArtifactValidation(t *testing.T) {
 		t.Fatal("proof was replayable across scope or request")
 	}
 	wrongExpected := expected
-	wrongExpected.WorkerSHA256 = strings.Repeat("e", 64)
+	wrongExpected.HelperSHA256 = strings.Repeat("e", 64)
 	if forged, err := newGenerationDispatchProof(contextArtifact, requestArtifact, receiptArtifact, wrongExpected); !errors.Is(err, errInvalidSanitizedDispatchProof) || forged.ReceiptIdentity() != "" {
 		t.Fatal("wrong scanner authority constructed a proof")
 	}

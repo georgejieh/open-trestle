@@ -81,7 +81,7 @@ func NewInvestigationReadinessHandler(store artifact.Store, diagnosticStore diag
 
 func selectContentScanner(scanners []review.PublicationContentScanner) review.PublicationContentScanner {
 	if len(scanners) == 0 {
-		return review.NewFixedPublicationContentScanner()
+		return review.NewFixedPublicationContentScanner(nil)
 	}
 	if len(scanners) != 1 {
 		return nil

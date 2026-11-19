@@ -7,9 +7,9 @@
     "scanner_commit": "5eab48332cc48565864514e3bc6de89df091a7c4",
     "ruleset_identity": "27ded783c81940d13c22cc46556a3f8184baf397bff08a69fcfae87991925f42",
     "ruleset_rule_count": 417,
-    "build_profile": "public_detect_run_re2_purego_go1.26.11_linux_amd64_v1"
+    "build_profile": "public_detect_run_re2_host_go1.26.11_wasip1_wasm_v1"
   },
-  "coverage_manifest_sha256": "4f3dd7b454425f98c08f44747b75cd58a5485a62262b0aa2a0f38d4fce355ae1",
+  "coverage_manifest_sha256": "1b28663891c61cb188276524d43938f1b4d6af79c311081785706bea2934408f",
   "fixtures": [
     {
       "id": "github-pat",

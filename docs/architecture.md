@@ -85,13 +85,13 @@ The sanitized request and its egress receipt are immutable artifacts. The egress
 - the field roles and ordinals;
 - the completion of the initial and residual scans;
 - the scanner profile;
-- the exact launcher and worker digests.
+- the SHA-256 of the secret scan helper.
 
 It carries content-free spans and rule IDs. It carries no field text, paths, snippets, matches, source digests or Betterleaks fingerprints. The generation or verification handler reloads both artifacts, validates them together and seals an opaque dispatch proof for the exact authorized request and scope. A non-local adapter cannot create that proof, and it cannot accept a raw request through the generic dispatch boundary.
 
-Each scan uses one new child process at fixed root-owned paths, and the launcher replaces itself with the worker. A static, single-threaded launcher enters the Landlock domain before it runs the fixed Go worker. The worker then installs a process-wide TSYNC seccomp filter before it reads the request. The scan is invoked with fixed arguments, cwd `/`, an empty environment, anonymous pipes and compiled binary digests. The boundary denies network access, filesystem changes, further execution, namespaces, mounts and tracing.
+The scan runs in the secret scan helper: Betterleaks v1.8.1 inside a WebAssembly (wasip1) guest that the helper executes with the wazero runtime, with regular expressions evaluated by RE2. The WebAssembly sandbox and a hard process kill on any deadline or fault are the containment. The program pins the SHA-256 of the helper at link time and checks the helper file and that digest before each start. A review run uses one helper process, and the daemon uses a helper session of its own for each sanitization.
 
-The boundary accepts at most 256 UTF-8 fields and 2 MiB decoded in total. Any of the following blocks dispatch and leaves no partial result: a five-second worker deadline, a six-second parent watchdog, an incomplete scan, a resource limit, abnormal output, or a residual finding. This protects against unprivileged replacement and worker escape paths in the declared Linux boundary. It does not protect against a compromised host root or kernel. Each scan pays the cost of a new launcher and worker, because there is no process pool.
+The boundary accepts at most 256 UTF-8 fields and 2 MiB decoded in total. Any of the following blocks dispatch and leaves no partial result: a deadline, an incomplete scan, a resource limit, abnormal output, or a residual finding. This protects against unprivileged replacement of the helper. It does not protect against a compromised host root or kernel.
 
 This is a narrow confidentiality control, not full secret detection, and the sanitized text still leaves the host for a remote route. For what the scanner misses, see [privacy](privacy.md) and the scanner section of [operations](operations.md).
 

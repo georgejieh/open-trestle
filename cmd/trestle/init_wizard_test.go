@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -283,23 +284,34 @@ func TestInitLocalServerProbedModelsThroughFirstReview(t *testing.T) {
 	}
 }
 
+// TestInitDevelopmentBuildExplainsScannerAndOffersLocal checks that a build
+// without a pinned helper explains the scanner before the provider question
+// and asks before it sets up any provider, a local one included, since every
+// review needs the scanner.
 func TestInitDevelopmentBuildExplainsScannerAndOffersLocal(t *testing.T) {
 	previous := setupBootstrapScannerPrerequisite
-	setupBootstrapScannerPrerequisite = func() error { return secretscan.ErrScannerDigestsMissing }
+	setupBootstrapScannerPrerequisite = func() error { return secretscan.ErrHelperNotPinned }
 	t.Cleanup(func() { setupBootstrapScannerPrerequisite = previous })
 	checkout := remoteBootstrapCheckout(t)
 	dir := filepath.Join(t.TempDir(), "setup")
-	result := runInitScript(t, checkout, []string{"--directory", dir, "--base", "refs/heads/base", "--head", "refs/heads/review"}, "1", "n", "4")
+	result := runInitScript(t, checkout, []string{"--directory", dir, "--base", "refs/heads/base", "--head", "refs/heads/review"}, "1", "n", "4", "y")
 	if result.code != initExitUsage || !initHas(result.stderr, "input ended") {
 		t.Fatalf("exit=%d\n%s\n%s", result.code, result.stdout, result.stderr)
 	}
 	provider := result.stdout[strings.Index(result.stdout, "Step 2 of 6"):]
-	for _, want := range []string{"remote models need the packaged build", "secret-scanned before it", "python3 tools/package_secret_scanner.py --output .container", "sudo ./open-trestle-linux-amd64.pyz install", "(remote, needs an API key) [needs the packaged build]", "This build cannot send source to OpenRouter", "Using: A model server on this machine"} {
+	wants := []string{"development build has no secret scanner", "secret-scanned before it", "python3 tools/package_secret_scanner.py --development DIR", "DIR/bin/trestle init", "This build cannot send source to OpenRouter", "This build cannot send source to your local model server", "Using: A model server on this machine"}
+	if runtime.GOOS == "linux" {
+		wants = append(wants, "python3 tools/package_secret_scanner.py --output .container", "sudo ./open-trestle-linux-amd64.pyz install", "/usr/local/bin/trestle init")
+	}
+	for _, want := range wants {
 		if !initHas(provider, want) {
-			t.Fatalf("step 3 lacks %q:\n%s", want, provider)
+			t.Fatalf("step 2 lacks %q:\n%s", want, provider)
 		}
 	}
-	if strings.Index(provider, "packaged build") > strings.Index(provider, "1) OpenRouter") {
+	if initHas(provider, "packaged build]") {
+		t.Fatalf("a provider is still labelled as needing the packaged build:\n%s", provider)
+	}
+	if strings.Index(provider, "secret-scanned before it") > strings.Index(provider, "1) OpenRouter") {
 		t.Fatal("the scanner explanation came after the provider question")
 	}
 	initAssertAbsent(t, dir)

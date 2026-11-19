@@ -280,6 +280,19 @@ func newCoordinator(journal RunJournal, random io.Reader) (*Coordinator, error) 
 	return &Coordinator{journal: journal, random: random}, nil
 }
 
+// WithScopeGate runs effect under the journal's scope gate when the journal
+// has one, so a worker's scope effect neither interleaves with its writes nor
+// observes a plan before its run opens. Other journals run effect directly.
+func (c *Coordinator) WithScopeGate(ctx context.Context, scope audit.ReviewScope, effect func(context.Context) error) error {
+	if c == nil || effect == nil {
+		return ErrInvalidCoordinator
+	}
+	if journal, ok := c.journal.(*FileRunJournal); ok {
+		return journal.WithScopeGate(ctx, scope, effect)
+	}
+	return effect(ctx)
+}
+
 func (c *Coordinator) Open(ctx context.Context, plan ReviewRunPlan, at time.Time) (ReviewRunState, error) {
 	if err := c.validate(ctx, plan); err != nil {
 		return ReviewRunState{}, err

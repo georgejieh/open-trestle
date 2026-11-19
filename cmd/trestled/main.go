@@ -140,8 +140,17 @@ type daemonCloserFunc func() error
 
 func (f daemonCloserFunc) Close() error { return f() }
 
+// buildDaemon prepares the secret scanner's cache only once the configuration
+// is valid, so a configuration error is reported at once.
 func buildDaemon(ctx context.Context, args []string, getenv func(string) string, stderr io.Writer) (*daemon, error) {
-	return buildDaemonWithDependencies(ctx, args, getenv, stderr, daemonDependencies{openPostgres: postgresstore.Open, clock: httpapi.SystemClock{}, generationSanitizer: reviewcore.NewFixedGenerationRequestSanitizer(), verificationSanitizer: reviewcore.NewFixedVerificationRequestSanitizer()})
+	scanner := installedDaemonScanner(getenv)
+	sanitizer := scanner.sanitizer()
+	d, err := buildDaemonWithDependencies(ctx, args, getenv, stderr, daemonDependencies{openPostgres: postgresstore.Open, clock: httpapi.SystemClock{}, generationSanitizer: reviewcore.NewFixedGenerationRequestSanitizer(sanitizer), verificationSanitizer: reviewcore.NewFixedVerificationRequestSanitizer(sanitizer)})
+	if err != nil {
+		return nil, err
+	}
+	scanner.prepare(ctx, stderr)
+	return d, nil
 }
 func publicationContentScannerFromGenerationSanitizer(sanitizer reviewcore.GenerationRequestSanitizer) reviewcore.PublicationContentScanner {
 	if provider, ok := sanitizer.(interface {
@@ -149,7 +158,7 @@ func publicationContentScannerFromGenerationSanitizer(sanitizer reviewcore.Gener
 	}); ok {
 		return provider.PublicationContentScanner()
 	}
-	return reviewcore.NewFixedPublicationContentScanner()
+	return reviewcore.NewFixedPublicationContentScanner(nil)
 }
 
 func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func(string) string, stderr io.Writer, deps daemonDependencies) (result *daemon, err error) {
@@ -160,10 +169,10 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 		return nil, err
 	}
 	if daemonNilDependency(deps.generationSanitizer) {
-		deps.generationSanitizer = reviewcore.NewFixedGenerationRequestSanitizer()
+		deps.generationSanitizer = reviewcore.NewFixedGenerationRequestSanitizer(nil)
 	}
 	if daemonNilDependency(deps.verificationSanitizer) {
-		deps.verificationSanitizer = reviewcore.NewFixedVerificationRequestSanitizer()
+		deps.verificationSanitizer = reviewcore.NewFixedVerificationRequestSanitizer(nil)
 	}
 	flags := flag.NewFlagSet("trestled", flag.ContinueOnError)
 	flags.SetOutput(stderr)

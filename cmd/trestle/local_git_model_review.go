@@ -12,6 +12,7 @@ import (
 	"github.com/georgejieh/open-trestle/internal/memory"
 	"github.com/georgejieh/open-trestle/internal/review"
 	"github.com/georgejieh/open-trestle/internal/scm"
+	"github.com/georgejieh/open-trestle/internal/secretscan"
 	"github.com/georgejieh/open-trestle/localreview"
 	"github.com/georgejieh/open-trestle/runtimecatalog"
 	"github.com/georgejieh/open-trestle/runtimeconfig"
@@ -58,8 +59,37 @@ func (e errUnknownModelReviewProfile) Error() string {
 	return fmt.Sprintf("unknown %s %q; valid profile ids: %s", flag, e.value, strings.Join(review.ContextSpecialistProfileIDs(), ", "))
 }
 
+// Tests replace the sanitizers with fakes; production leaves both nil, and
+// each review member then scans through a scan helper session of its own.
 var localReviewGenerationSanitizer review.GenerationRequestSanitizer
 var localReviewVerificationSanitizer review.VerificationRequestSanitizer
+
+// localReviewScanner prepares this program's scan helper for one invocation
+// and returns the opener of each member's session. Tests replace it.
+var localReviewScanner = func(ctx context.Context, stderr io.Writer) (secretscan.ReviewSessionOpener, error) {
+	config, err := secretscan.InstalledConfig(os.Getenv)
+	if err != nil {
+		return nil, err
+	}
+	return prepareReviewScanner(ctx, stderr, config)
+}
+
+// prepareReviewScanner fills the helper's cache on first use, with a notice,
+// and returns the opener of a session with config.
+func prepareReviewScanner(ctx context.Context, stderr io.Writer, config secretscan.SessionConfig) (secretscan.ReviewSessionOpener, error) {
+	announce := func() {
+		fmt.Fprintln(stderr, "Preparing the secret scanner for first use; this can take a minute.")
+	}
+	if err := secretscan.PrepareCache(ctx, config, announce); err != nil {
+		return nil, err
+	}
+	return config.Opener(), nil
+}
+
+// reportScanner says why a review sent nothing because its scanner failed.
+func reportScanner(stderr io.Writer, err error) {
+	fmt.Fprintf(stderr, "trestle: the secret scanner is not available, so nothing was sent to a model: %v\n", err)
+}
 
 // Tests replace the policy-approved model transport with an offline fake. Production
 // leaves both empty, so the adapter uses its default bounded HTTPS client.
@@ -165,6 +195,11 @@ func parseLocalModelReview(args []string) (localModelReviewOptions, evidence.Rep
 		return fail()
 	}
 	if values["--retained-memory-input"] != "" && (values["--investigation-policy"] != "" || egress != localreview.EgressLocalOnly) {
+		return fail()
+	}
+	// Investigation requests are not secret-scanned, so they stay on this
+	// machine.
+	if values["--investigation-policy"] != "" && egress != localreview.EgressLocalOnly {
 		return fail()
 	}
 	format := values["--format"]
@@ -321,6 +356,9 @@ type localModelReviewInputs struct {
 	// index is the repository index the review reads context from; nil for
 	// an investigation or when the objects have no usable index.
 	index *reviewIndexContext
+	// scanner opens each member's scan helper session; nil only when tests
+	// replace the sanitizers.
+	scanner secretscan.ReviewSessionOpener
 }
 
 // prepareLocalModelReview loads protected configuration and resolves the source
@@ -393,6 +431,23 @@ func prepareLocalModelReview(execution context.Context, options *localModelRevie
 		}
 		inputs.retainedInput = &input
 	}
+	if localReviewGenerationSanitizer == nil || localReviewVerificationSanitizer == nil {
+		opener, err := localReviewScanner(execution, stderr)
+		if err != nil {
+			if execution.Err() != nil {
+				return inputs, "canceled"
+			}
+			reportScanner(stderr, err)
+			return inputs, "refused"
+		}
+		inputs.scanner = func(ctx context.Context) (secretscan.ReviewSession, error) {
+			session, err := opener(ctx)
+			if err != nil && ctx.Err() == nil {
+				reportScanner(stderr, err)
+			}
+			return session, err
+		}
+	}
 	return inputs, ""
 }
 
@@ -409,7 +464,9 @@ type localModelReviewMember struct {
 }
 
 // runLocalModelReviewMember runs one review session to a terminal result under
-// execution. It owns and closes its own objects root and session. ok is false
+// execution. It owns and closes its own objects root, scan helper session and
+// review session; the scan session opens first and closes last, and a scan
+// session that fails at its close fails the member. ok is false
 // only when not even an unstarted result could be constructed. When
 // wantFeatures is set, the change features are read back from the run's own
 // recorded change and analysis artifacts before the session closes.
@@ -443,7 +500,23 @@ func runLocalModelReviewMember(ctx, execution context.Context, options localMode
 		_ = objects.Close()
 		return unstarted("failed")
 	}
-	sessionOptions := localreview.SessionOptions{TenantID: options.tenant, RepositoryID: options.repository, Repository: inputs.repository, ObjectsRoot: objects, ObjectStoreProfile: options.objectStoreProfile, Inventory: inputs.inventory, Policy: inputs.policy, Egress: options.egress, Credentials: credentials, Clock: localReviewClock{}, Timeout: options.timeout, RetainedMemoryInput: inputs.retainedInput, GenerationSanitizer: localReviewGenerationSanitizer, VerificationSanitizer: localReviewVerificationSanitizer}
+	var scan secretscan.ReviewSession
+	if inputs.scanner != nil {
+		if scan, err = inputs.scanner(execution); err != nil {
+			_ = objects.Close()
+			if execution.Err() != nil {
+				return unstarted("canceled")
+			}
+			return unstarted("refused")
+		}
+	}
+	closeScan := func() error {
+		if scan == nil {
+			return nil
+		}
+		return scan.Close()
+	}
+	sessionOptions := localreview.SessionOptions{TenantID: options.tenant, RepositoryID: options.repository, Repository: inputs.repository, ObjectsRoot: objects, ObjectStoreProfile: options.objectStoreProfile, Inventory: inputs.inventory, Policy: inputs.policy, Egress: options.egress, Credentials: credentials, Clock: localReviewClock{}, Timeout: options.timeout, RetainedMemoryInput: inputs.retainedInput, Scanner: scan, GenerationSanitizer: localReviewGenerationSanitizer, VerificationSanitizer: localReviewVerificationSanitizer}
 	if options.egress == localreview.EgressPolicyApproved {
 		sessionOptions.ModelHTTPClient, sessionOptions.ModelHTTPClientIdentity = localReviewModelHTTPClient, localReviewModelHTTPClientIdentity
 	}
@@ -462,7 +535,7 @@ func runLocalModelReviewMember(ctx, execution context.Context, options localMode
 		session, err = localreview.NewSession(sessionOptions)
 	}
 	if err != nil {
-		if closeErr := objects.Close(); closeErr != nil {
+		if closeErr := errors.Join(objects.Close(), closeScan()); closeErr != nil {
 			return unstarted("failed")
 		}
 		if execution.Err() != nil {
@@ -476,7 +549,7 @@ func runLocalModelReviewMember(ctx, execution context.Context, options localMode
 	closeSession := func() error {
 		cleanup, stop := context.WithTimeout(context.Background(), localModelCleanupTimeout(options.timeout))
 		defer stop()
-		return session.Close(cleanup)
+		return errors.Join(session.Close(cleanup), closeScan())
 	}
 	nonce := make([]byte, 32)
 	if _, err := rand.Read(nonce); err != nil {

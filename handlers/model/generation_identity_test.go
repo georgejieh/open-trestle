@@ -22,7 +22,7 @@ func TestSanitizedGenerationHandlerIdentityMatchesEnrolledHandler(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	expected := review.ScannerBinaryDigests{LauncherSHA256: strings.Repeat("a", 64), WorkerSHA256: strings.Repeat("b", 64)}
+	expected := review.ScannerBinaryDigests{HelperSHA256: strings.Repeat("a", 64)}
 	handler, err := NewGenerationHandler(store, catalog, audit.NewMemoryLedger(), fixedClock{at: time.UnixMilli(1000)}, expected)
 	if err != nil {
 		t.Fatal(err)
@@ -35,7 +35,7 @@ func TestSanitizedGenerationHandlerIdentityMatchesEnrolledHandler(t *testing.T) 
 	if err != nil || identity == legacy.HandlerIdentity() {
 		t.Fatal("sanitized identity aliases legacy handler")
 	}
-	for _, changed := range []review.ScannerBinaryDigests{{LauncherSHA256: strings.Repeat("c", 64), WorkerSHA256: expected.WorkerSHA256}, {LauncherSHA256: expected.LauncherSHA256, WorkerSHA256: strings.Repeat("d", 64)}} {
+	for _, changed := range []review.ScannerBinaryDigests{{HelperSHA256: strings.Repeat("c", 64)}} {
 		current, err := SanitizedGenerationHandlerIdentity(catalog, changed)
 		if err != nil || current == identity {
 			t.Fatal("scanner lineage omitted")

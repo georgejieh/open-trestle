@@ -8,13 +8,14 @@ it tells you what is missing and what to do, then stops without guessing. Every
 command is listed in [commands](commands.md), and every page is in the
 [documentation index](README.md).
 
-Remote providers (OpenRouter, Ollama Cloud, OpenCode Go, and Ollama signed in
-to Ollama Cloud) work only with the packaged Linux amd64 install, which places
-its secret scanner under `/usr/local` as root. A plain `go build`, and any
-platform other than Linux, refuses to send source to them. A model server on
-this machine works with a development build. macOS and Windows are planned for
-the next release; [platforms](platforms.md) says what works on each today. See
-[prerequisite 1](remote-model-review.md#prerequisite-1-a-scanner-bound-binary-and-installed-scanner).
+Every review, with a model server on this machine or a remote provider
+(OpenRouter, Ollama Cloud, OpenCode Go, and Ollama signed in to Ollama Cloud),
+scans each request for secrets in the secret scan helper before it is sent. A
+plain `go build` pins no helper and refuses every review. Build with
+`python3 tools/package_secret_scanner.py --development DIR` on Linux, macOS or
+Windows, or use the packaged Linux amd64 install. [platforms](platforms.md) says
+what works on each system today. See
+[prerequisite 1](remote-model-review.md#prerequisite-1-a-trestle-with-its-secret-scanner).
 
 ```sh
 cd path/to/your-repository
@@ -46,25 +47,21 @@ You need four things.
      This needs no API key, but it is a remote provider: the models run on
      Ollama Cloud, and your source is sent there when you run a review. See
      [Ollama signed in to Ollama Cloud](remote-model-review.md#ollama-signed-in-to-ollama-cloud).
-3. A `trestle` binary. Nothing is released yet. In a clone of this repository,
-   `go build -o trestle ./cmd/trestle` builds a development binary. Run it by
-   its path or put it on your `PATH`. This build works with a model server on
-   this machine.
-4. For remote providers only: the packaged Linux amd64 `trestle` install and its
-   secret scanner. Every request is scanned for secrets before it leaves the
-   machine, and a plain `go build` has no scanner fingerprints, so it refuses to
-   send source.
+3. A `trestle` binary with its secret scan helper. Nothing is released yet. In a
+   clone of this repository (Go 1.26.11 and Python 3),
+   `python3 tools/package_secret_scanner.py --development DIR` builds a
+   development binary at `DIR/bin/trestle`. Run it by its path. Every request is
+   scanned for secrets before it is sent, and a plain `go build` pins no helper,
+   so it refuses every review. On Linux amd64 you can use the packaged install
+   instead.
 
-If you start a remote-provider setup with a development build, the wizard
-detects it before you choose a provider and explains why it cannot continue. It
-shows the packaging and install commands from
+If you start `trestle init` with a plain `go build` binary, the wizard detects
+it before you choose a provider and explains why it cannot continue. It shows
+the `--development` command, and on Linux also the packaged install commands from
 [operations](operations.md#build-and-inspect-the-unsigned-linux-amd64-candidate),
-including the passive vulnerability gate, in the order they run. A local model
-server still works with a development build. If you set up a remote provider
-with one anyway, the setup is saved and its scanner check fails. The wizard then
-shows those commands, and the `/usr/local/bin/trestle init` command that
-continues the same setup. See
-[prerequisite 1](remote-model-review.md#prerequisite-1-a-scanner-bound-binary-and-installed-scanner).
+including the passive vulnerability gate, in the order they run. If the setup is
+saved anyway, its scanner check refuses. See
+[prerequisite 1](remote-model-review.md#prerequisite-1-a-trestle-with-its-secret-scanner).
 
 An ordinary clone is fine. Every mode, local included, uses the direct checkout
 review, which reads loose objects and ordinary pack files and verifies each
@@ -333,7 +330,7 @@ For a remote provider, the checks confirm that:
 - the saved configuration loads;
 - a key is found for the API key variable (the line says where: from the
   environment or saved);
-- the secret scanner is installed.
+- the secret scan helper is present and matches the one the program pins.
 
 For OpenRouter, a last line says whether zero data retention is required on
 every request or not required by Open Trestle. For the Ollama Cloud sign-in
@@ -669,7 +666,7 @@ every command's, including `trestle review`.
 | --- | --- |
 | `0` | Done: setup is ready (review declined), or the first review finished with `findings` or `no_candidates`. |
 | `3` | Pending: something must be fixed before a review can run, or the review was incomplete or canceled. |
-| `4` | Refused: a declaration was declined, setup was refused, a setup check refused (such as the scanner check of a development build set up for a remote provider; the setup is kept), or the review was refused. |
+| `4` | Refused: a declaration was declined, setup was refused, a setup check refused (such as the scanner check of a build that pins no secret scan helper; the setup is kept), or the review was refused. |
 | `2` | Usage: a missing or invalid answer, end of input (Ctrl-D), or three unusable answers in a row. |
 | `1` | Internal error, or the first review failed. |
 

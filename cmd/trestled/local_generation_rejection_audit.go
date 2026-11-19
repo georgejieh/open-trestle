@@ -33,7 +33,7 @@ func validateGenerationRejectionAudit(events []audit.Event, value, inputArtifact
 	if !reflect.DeepEqual(descriptor.Input, localInputArtifactDescriptor(inputArtifact)) || !reflect.DeepEqual(descriptor.Request, localInputArtifactDescriptor(requestArtifact)) || !reflect.DeepEqual(descriptor.Receipt, localInputArtifactDescriptor(receiptArtifact)) {
 		return fail()
 	}
-	if review.ValidateSanitizedEgressArtifacts(packet, requestArtifact, receiptArtifact, review.ScannerBinaryDigests{LauncherSHA256: descriptor.ScannerLauncherDigest, WorkerSHA256: descriptor.ScannerWorkerDigest}) != nil {
+	if review.ValidateSanitizedEgressArtifacts(packet, requestArtifact, receiptArtifact, review.ScannerBinaryDigests{HelperSHA256: descriptor.ScannerHelperDigest}) != nil {
 		return fail()
 	}
 	input, err := modelhandler.ParseGenerationInput(inputArtifact.Payload())

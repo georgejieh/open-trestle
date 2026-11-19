@@ -73,8 +73,7 @@ type scannerProfileWire struct {
 	RulesetIdentity  string `json:"ruleset_identity"`
 	RulesetRuleCount int    `json:"ruleset_rule_count"`
 	BuildProfile     string `json:"build_profile"`
-	LauncherSHA256   string `json:"launcher_sha256"`
-	WorkerSHA256     string `json:"worker_sha256"`
+	HelperSHA256     string `json:"helper_sha256"`
 }
 type scanCompletionWire struct {
 	Complete         bool `json:"complete"`
@@ -168,10 +167,10 @@ func receiptWireValue(value SanitizedEgressReceipt) sanitizedEgressReceiptWire {
 	}
 }
 func scannerProfileToWire(value ScannerProfile) scannerProfileWire {
-	return scannerProfileWire{value.WorkerProtocol, value.Scanner, value.ScannerVersion, value.ScannerCommit, value.RulesetIdentity, value.RulesetRuleCount, value.BuildProfile, value.LauncherSHA256, value.WorkerSHA256}
+	return scannerProfileWire{value.WorkerProtocol, value.Scanner, value.ScannerVersion, value.ScannerCommit, value.RulesetIdentity, value.RulesetRuleCount, value.BuildProfile, value.HelperSHA256}
 }
 func scannerProfileFromWire(value scannerProfileWire) ScannerProfile {
-	return ScannerProfile{value.WorkerProtocol, value.Scanner, value.ScannerVersion, value.ScannerCommit, value.RulesetIdentity, value.RulesetRuleCount, value.BuildProfile, value.LauncherSHA256, value.WorkerSHA256}
+	return ScannerProfile{value.WorkerProtocol, value.Scanner, value.ScannerVersion, value.ScannerCommit, value.RulesetIdentity, value.RulesetRuleCount, value.BuildProfile, value.HelperSHA256}
 }
 func scanCompletionToWire(value ScanCompletion) scanCompletionWire {
 	return scanCompletionWire{value.Complete, value.FieldCount, value.ScannedByteCount, value.MatchCount}

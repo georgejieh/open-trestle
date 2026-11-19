@@ -407,6 +407,16 @@ func writeInvestigationPolicy(t *testing.T, path string, policy map[string]any) 
 	}
 }
 
+func TestLocalGitInvestigationRefusesPolicyApprovedEgress(t *testing.T) {
+	f, _, policy, path := newInvestigationFixture(t, "", func() {})
+	writeInvestigationPolicy(t, path, policy)
+	args := replaceLocalGitChangeValue(f.args, "--egress", "policy-approved")
+	var stdout, stderr bytes.Buffer
+	if code := run(args, &stdout, &stderr); code != 2 || stdout.Len() != 0 {
+		t.Fatalf("investigation with policy-approved egress: exit=%d out=%s", code, stdout.String())
+	}
+}
+
 func TestLocalGitInvestigationReadsUnselectedSnapshotAndVerifies(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

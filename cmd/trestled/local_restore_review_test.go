@@ -58,7 +58,7 @@ func TestRecoveryDiffNamesAsset(t *testing.T) {
 	observed.Assets = append([]localRecoveryAsset(nil), expected.Assets...)
 	observed.Assets[1].SHA256 = strings.Repeat("d", 64)
 	err := compareLocalRecoveryPoint(expected, observed)
-	if err == nil || !strings.Contains(err.Error(), "scanner") || !strings.Contains(err.Error(), "/srv/scanner") {
+	if err == nil || !strings.Contains(err.Error(), "scan-helper") || !strings.Contains(err.Error(), "/srv/scan-helper") {
 		t.Fatalf("asset difference not named: %v", err)
 	}
 }

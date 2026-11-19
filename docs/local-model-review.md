@@ -223,7 +223,7 @@ You supply both the route-inventory and the runtime-policy JSON files. The polic
 - a `private_remote` route;
 - a `brokered_remote` route with a current OpenRouter ZDR, OpenCode Go or OpenCode Console declaration, or with an OpenRouter ZDR witness observed through the API (which has no time window).
 
-They accept such a route only after separate Betterleaks scans, a fresh residual scan with zero findings, a reload of the artifact, and a dispatch proof that the handler seals. A binary without injected scanner digests, or without the installed scanner, therefore refuses remote requests before it retrieves any credential. Use the packaged binary and the installed scanner described in [remote model review](remote-model-review.md), whose bootstrap writes the protected remote configuration. Today, remote routes work only on the packaged Linux amd64 install. macOS and Windows are planned for the next release (see [platforms](platforms.md)).
+They accept such a route only after separate Betterleaks scans, a fresh residual scan with zero findings, a reload of the artifact, and a dispatch proof that the handler seals. A binary that pins no scan helper, or whose helper is missing or changed, therefore refuses remote requests before it retrieves any credential. Use a build with its secret scan helper as described in [remote model review](remote-model-review.md), whose bootstrap writes the protected remote configuration. Remote routes work on Linux, macOS and Windows (see [platforms](platforms.md)).
 
 Investigation and retained-memory requests remain local-only. Route approval, data classification, logging restrictions, provider independence, capacity and per-request cost budgets stay in force. Provider credentials come only from environment references that the protected policy names explicitly, through the existing credential resolver.
 
@@ -488,7 +488,7 @@ The exit policy on the merged set works as follows:
 
 ## Snapshot investigation (opt-in)
 
-Add `--investigation-policy /protected/investigation.json` to the command above to let the generation model request bounded snapshot tools. Without this flag, the original flow with a single generation is unchanged. The runtime policy must pin one generation route and must permit a verifier. The generation route cannot change during an investigation.
+Add `--investigation-policy /protected/investigation.json` to the command above to let the generation model request bounded snapshot tools. Without this flag, the original flow with a single generation is unchanged. The runtime policy must pin one generation route and must permit a verifier. The generation route cannot change during an investigation. Investigation requests are not secret-scanned, so an investigation runs only with `--egress local-only`; `policy-approved` is refused as a usage error.
 
 The investigation policy is a separate protected file of at most 4096 bytes. Its parser requires exact canonical JSON, so the field order, the spelling of integers and the whitespace all matter. Do not pretty-print the file, and do not add a trailing newline. In an existing directory that meets the protection rules above, this example writes the canonical bytes:
 

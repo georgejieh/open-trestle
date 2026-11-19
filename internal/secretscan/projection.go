@@ -44,10 +44,6 @@ func newProjector(scanner sourceScanner) *Projector {
 	return &Projector{scanner: scanner}
 }
 
-func (client *Client) Sanitize(ctx context.Context, sources [][]byte) Projection {
-	return newProjector(client).Sanitize(ctx, sources)
-}
-
 func (projector *Projector) Sanitize(ctx context.Context, sources [][]byte) Projection {
 	if projector == nil || projector.scanner == nil {
 		return Projection{failure: FailurePolicy}

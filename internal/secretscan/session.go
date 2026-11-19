@@ -26,7 +26,7 @@ const (
 	helperSessionArgument = "--stdio-v1-session"
 	// sessionScanWatchdog bounds every exchange with the helper: one scan, or
 	// the wait for a clean exit at Close. The helper's guest stops a scan at
-	// its own deadline of 40 seconds, six times the native worker's 5 s
+	// its own deadline of 40 seconds, six times the native adapter's 5 s
 	// with a third to spare, because it runs Betterleaks up to six times
 	// slower. It notices that deadline only between rules and then still
 	// encodes its response, so the watchdog adds the longest rule pass of a
@@ -53,6 +53,7 @@ var (
 	ErrSessionClosed    = errors.New("secret scan session is closed")
 	ErrSessionPoisoned  = errors.New("secret scan session failed earlier and accepts no further scans")
 	ErrSessionScanLimit = errors.New("secret scan session reached its limit of 64 scans")
+	ErrCacheACL         = errors.New("secret scan cache directory has an access control list, which can give other users access; remove it with chmod -N")
 
 	errHelperStart          = errors.New("secret scan helper could not be started")
 	errHelperDeadline       = errors.New("secret scan helper missed its deadline")
@@ -71,17 +72,14 @@ var (
 	errSanitize             = errors.New("secret scan sanitization did not complete")
 )
 
-// SessionConfig names the helper executable a Session runs, the build profile
-// its responses must carry and the helper's compilation cache.
+// SessionConfig names the helper executable a Session runs and the helper's
+// compilation cache.
 type SessionConfig struct {
 	// HelperPath is the absolute, clean path of the helper executable.
 	HelperPath string
 	// HelperSHA256 is the expected lowercase hexadecimal SHA-256 of the
 	// helper file. The file is hashed before every spawn.
 	HelperSHA256 string
-	// BuildProfile is the only build profile accepted in responses. It must
-	// be HostRE2BuildProfile, the profile the scan helper emits.
-	BuildProfile string
 	// CacheDirectory is the absolute, clean path of the helper's private
 	// compilation cache, which the helper gets as its working directory.
 	// The helper loads native code from it, so it must be a directory, not
@@ -93,8 +91,9 @@ type SessionConfig struct {
 	// than the system's own accounts no access beyond reading its
 	// attributes, also through ACEs that entries created inside it would
 	// inherit; every entry already inside it must grant them nothing; and no
-	// one else may remove or replace a directory above it. Both checks run
-	// before every spawn.
+	// one else may remove or replace a directory above it. On macOS the
+	// directory must also carry no ACL entry, since an entry can grant access
+	// that the mode bits do not show. The checks run before every spawn.
 	// OpenSession never creates it; Prewarm creates the final directory with
 	// mode 0700, or owner-only on Windows, if it is missing.
 	//
@@ -107,12 +106,19 @@ type SessionConfig struct {
 	CacheDirectory string
 }
 
+// Sanitizer masks the secrets in sources through the scan helper whose
+// SHA-256 it reports.
+type Sanitizer interface {
+	Sanitize(ctx context.Context, sources [][]byte) Projection
+	HelperSHA256() string
+}
+
 // ReviewSession is the scanner lifetime of one review: the review opens it at
 // its start, routes every scan through it and closes it at its end. A review
 // must treat a non-nil Close as a failure of the whole review.
 type ReviewSession interface {
+	Sanitizer
 	Scan(ctx context.Context, sources [][]byte) (ScanResult, error)
-	Sanitize(ctx context.Context, sources [][]byte) Projection
 	Close() error
 }
 
@@ -129,6 +135,35 @@ func (config SessionConfig) Opener() ReviewSessionOpener {
 		}
 		return session, nil
 	}
+}
+
+// PerCallSanitizer returns a Sanitizer that runs each Sanitize in a session
+// of its own, for a caller with no review lifetime to tie a session to. Its
+// projection is complete only if the session also closed cleanly.
+func (config SessionConfig) PerCallSanitizer() Sanitizer {
+	return perCallSanitizer{config: config}
+}
+
+type perCallSanitizer struct {
+	config SessionConfig
+}
+
+func (sanitizer perCallSanitizer) HelperSHA256() string { return sanitizer.config.HelperSHA256 }
+
+func (sanitizer perCallSanitizer) Sanitize(ctx context.Context, sources [][]byte) Projection {
+	var projection Projection
+	err := RunReviewSession(ctx, sanitizer.config.Opener(), func(ctx context.Context, session ReviewSession) error {
+		projection = session.Sanitize(ctx, sources)
+		return nil
+	})
+	if err != nil && projection.Complete() {
+		clearSources(projection.sources)
+		return Projection{initial: projection.initial, residual: projection.residual, failure: FailurePolicy}
+	}
+	if err != nil && projection.failure == FailureNone {
+		projection.failure = FailurePolicy
+	}
+	return projection
 }
 
 // RunReviewSession opens a session, runs review with it and always closes
@@ -235,14 +270,10 @@ type processHooks struct {
 // poisons the session; a review must not open its session before Prewarm
 // has succeeded once for the configuration.
 //
-// Sessions run on Linux and Windows. On Windows the cache checks read the
-// owner and access-control list of each directory instead of its mode bits.
-// On macOS the cache check refuses every directory, and the helper refuses
-// every working directory, because owner and mode bits do not prove that a
-// directory is private there: an extended ACL, which a new directory can
-// inherit from its parent, grants access independently of the mode bits.
-// ACLs are not verified on macOS, so neither a session nor Prewarm starts
-// there.
+// Sessions run on Linux, macOS and Windows. On Windows the cache checks read
+// the owner and access-control list of each directory instead of its mode
+// bits. On macOS a cache with an ACL entry is refused, by this check and by
+// the helper.
 func OpenSession(ctx context.Context, config SessionConfig) (*Session, error) {
 	return openSession(ctx, sessionSettings{
 		config:         config,
@@ -317,7 +348,7 @@ func openSession(ctx context.Context, settings sessionSettings) (*Session, error
 
 func validSessionSettings(settings sessionSettings) bool {
 	return validAbsolutePath(settings.config.HelperPath) && validDigest(settings.config.HelperSHA256) &&
-		settings.config.BuildProfile == HostRE2BuildProfile && validAbsolutePath(settings.config.CacheDirectory) &&
+		validAbsolutePath(settings.config.CacheDirectory) &&
 		filepath.Dir(settings.config.CacheDirectory) != settings.config.CacheDirectory &&
 		settings.scanWatchdog > 0 && settings.startAllowance >= 0 && settings.scanLimit > 0 && settings.random != nil
 }
@@ -338,8 +369,8 @@ func (session *Session) Scan(ctx context.Context, sources [][]byte) (ScanResult,
 	return session.scanLocked(ctx, sources)
 }
 
-// Sanitize masks every match and rescans the masked sources, as
-// Client.Sanitize does, with both scans in this session and no other call in
+// Sanitize masks every match and rescans the masked sources, with both
+// scans in this session and no other call in
 // between. A projection that is not complete poisons the session.
 func (session *Session) Sanitize(ctx context.Context, sources [][]byte) Projection {
 	if session == nil {
@@ -375,6 +406,14 @@ func (session *Session) poisonLocked(cause error) error {
 	first := session.process.failWith(cause)
 	_ = session.process.reap()
 	return first
+}
+
+// HelperSHA256 returns the SHA-256 of the helper the session runs.
+func (session *Session) HelperSHA256() string {
+	if session == nil {
+		return ""
+	}
+	return session.settings.config.HelperSHA256
 }
 
 // Err returns the first failure of the session, or nil while it is healthy
@@ -475,7 +514,7 @@ func (session *Session) metadata(sources [][]byte) ScanMetadata {
 		ScannerVersion:  ScannerVersion,
 		ScannerCommit:   ScannerCommit,
 		RulesetIdentity: RulesetIdentity,
-		BuildProfile:    session.settings.config.BuildProfile,
+		BuildProfile:    BuildProfile,
 		HelperSHA256:    session.settings.config.HelperSHA256,
 		SourceCount:     len(sources),
 	}
@@ -549,7 +588,7 @@ func (session *Session) roundTrip(frame []byte, request Request) (Response, erro
 		return Response{}, errHelperStderr
 	}
 	response, err := ParseResponseFrame(responseFrame, ResponseExpectation{Request: request, RulesetIdentity: RulesetIdentity, RuleIDs: session.ruleIDs})
-	if err != nil || response.BuildProfile != session.settings.config.BuildProfile {
+	if err != nil {
 		return Response{}, errHelperResponse
 	}
 	return response, nil

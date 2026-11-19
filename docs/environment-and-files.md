@@ -58,11 +58,16 @@ absolute path.
 | `$XDG_STATE_HOME/open-trestle/usage/`, default `~/.local/state/open-trestle/usage/` | The spending limits and the usage ledger. | folder `0700`, files `0600` |
 | `$XDG_STATE_HOME/open-trestle/update-check.json`, default `~/.local/state/open-trestle/update-check.json` | The update notice's cache: when it last asked and the newest versions it saw. | `0600` |
 | `$XDG_DATA_HOME/open-trestle/updates/`, default `~/.local/share/open-trestle/updates/` | A development build handed over for `trestle update`. | folder `0700`, files `0600` or stricter, regular files owned by you |
+| `$XDG_CACHE_HOME/open-trestle/scan-cache/`, default `~/.cache/open-trestle/scan-cache/` (Windows: `%USERPROFILE%\.cache\open-trestle\scan-cache`) | The compiled secret scanner (about 110 MB). The first review fills it. Deleting the folder is safe; the next review fills it again. | `0700`, owned by you, every folder above it changeable only by you or root |
+| `<folder of the trestle program>/../libexec/open-trestle/open-trestle-scan-helper` (`.exe` on Windows) | The secret scan helper. The Linux package installs it at `/usr/local/libexec/open-trestle/open-trestle-scan-helper`. | not writable, owned by you or root (Windows: you or a system account) |
 | `/usr/local/share/open-trestle/distribution/receipt.json` | The package receipt that marks the packaged install. | written by the package |
 
-On Windows the credential, setup and usage folders and files have an access
-control list in place of these modes, which gives only your account and the
-system's own accounts access. See [platforms](platforms.md#protected-files-on-windows).
+On Windows the credential, setup, usage and scan-cache folders and files have an
+access control list in place of these modes, which gives only your account and
+the system's own accounts access. On macOS the scan cache must also carry no
+access-list entry; if it has one, Open Trestle refuses it and tells you to
+remove it with `chmod -N`. See
+[platforms](platforms.md#protected-files-on-windows).
 
 The setup folder holds:
 

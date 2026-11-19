@@ -56,13 +56,13 @@ large companies build in-house, is planned after that.
 ### Privacy
 
 With a model server on your own machine, a review sends your code only to that
-server. With a remote provider, Open Trestle scans each review request for
-secrets before sending it. It sends no telemetry. The [privacy](docs/privacy.md) page lists what is sent,
+server. Open Trestle scans each review request for secrets twice before
+sending it, whether the server is local or remote. It sends no telemetry. The [privacy](docs/privacy.md) page lists what is sent,
 when, and to whom.
 
 ## Project status
 
-What works today, on Linux:
+What works today, on Linux and Windows (macOS builds but is untested on a real Mac; see [platforms](docs/platforms.md)):
 
 - `trestle init` sets up a repository in one guided pass. It asks where the two
   models run, takes API keys through hidden input, and can store them in an
@@ -75,8 +75,9 @@ What works today, on Linux:
   as JSON, SARIF or Markdown for other tools.
 - Remote providers (OpenRouter, Ollama Cloud and OpenCode Go) and local model
   servers (Ollama, llama.cpp, vLLM, LM Studio and other OpenAI-compatible
-  servers) are supported. Remote providers require the packaged Linux amd64
-  install, because that is the only build that includes the secret scanner.
+  servers) are supported. Every request is scanned for secrets twice by the secret
+  scan helper before it is sent. A development build with the helper runs on
+  Linux, macOS and Windows; the packaged install is Linux amd64 only.
 - You can set a spending limit for each API key. Open Trestle warns you as you
   approach it and stops sending requests when you reach it. Its totals are
   estimates, so your provider's own limits remain the real safeguard.
@@ -107,16 +108,16 @@ codebase, rather than one pull request, is planned after that. The
 
 ## Getting started
 
-You need Linux, Git and Go 1.25 or newer. If your models run on your own
-machine, a development build is enough:
+You need Git, Go 1.26.11 and Python 3, on Linux, macOS or Windows. Build a
+development build, which includes the secret scan helper:
 
 ```sh
-go build -o trestle ./cmd/trestle
+python3 tools/package_secret_scanner.py --development DIR
 ```
 
-Put the resulting `trestle` binary on your `PATH`. To use a remote provider,
-build and install the packaged Linux amd64 archive instead. The
-[install](docs/install.md) guide walks through both options.
+Run `DIR/bin/trestle` by its path. A plain `go build` pins no helper and refuses
+every review. On Linux amd64 you can build and install the packaged archive
+instead. The [install](docs/install.md) guide walks through both options.
 
 Then, inside the Git repository you want to review, with your changes committed
 on a branch:

@@ -38,7 +38,7 @@ func (s countingGenerationSanitizer) SanitizeGeneration(ctx context.Context, req
 func TestDaemonFullLocalReviewBuildsBoundContextWithoutGeneration(t *testing.T) {
 	args, getenv, repository, base, head, policy, inventory := localFullDaemonFixture(t)
 	sanitizerCalls := 0
-	deps := daemonDependencies{openPostgres: postgresstore.Open, clock: httpapi.SystemClock{}, generationSanitizer: countingGenerationSanitizer{GenerationRequestSanitizer: testsupport.NewCleanGenerationSanitizer(), calls: &sanitizerCalls}, verificationSanitizer: reviewcore.NewFixedVerificationRequestSanitizer()}
+	deps := daemonDependencies{openPostgres: postgresstore.Open, clock: httpapi.SystemClock{}, generationSanitizer: countingGenerationSanitizer{GenerationRequestSanitizer: testsupport.NewCleanGenerationSanitizer(), calls: &sanitizerCalls}, verificationSanitizer: reviewcore.NewFixedVerificationRequestSanitizer(nil)}
 	d, err := buildDaemonWithDependencies(context.Background(), args, getenv, &bytes.Buffer{}, deps)
 	if err != nil {
 		t.Fatal(err)

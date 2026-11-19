@@ -23,7 +23,7 @@ type mismatchedGenerationScanner struct {
 
 func (s mismatchedGenerationScanner) ExpectedBinaryDigests() review.ScannerBinaryDigests {
 	d := s.GenerationRequestSanitizer.ExpectedBinaryDigests()
-	d.WorkerSHA256 = strings.Repeat("f", 64)
+	d.HelperSHA256 = strings.Repeat("f", 64)
 	return d
 }
 
@@ -33,7 +33,7 @@ type mismatchedVerificationScanner struct {
 
 func (s mismatchedVerificationScanner) ExpectedBinaryDigests() review.ScannerBinaryDigests {
 	d := s.VerificationRequestSanitizer.ExpectedBinaryDigests()
-	d.WorkerSHA256 = strings.Repeat("e", 64)
+	d.HelperSHA256 = strings.Repeat("e", 64)
 	return d
 }
 

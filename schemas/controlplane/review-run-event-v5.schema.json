@@ -141,8 +141,7 @@
         "receipt",
         "input",
         "receipt_identity",
-        "scanner_launcher_digest",
-        "scanner_worker_digest",
+        "scanner_helper_digest",
         "generation_input_identity",
         "authorization_identity",
         "selection_receipt_identity",
@@ -389,14 +388,7 @@
             "const": "0000000000000000000000000000000000000000000000000000000000000000"
           }
         },
-        "scanner_launcher_digest": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{64}$",
-          "not": {
-            "const": "0000000000000000000000000000000000000000000000000000000000000000"
-          }
-        },
-        "scanner_worker_digest": {
+        "scanner_helper_digest": {
           "type": "string",
           "pattern": "^[0-9a-f]{64}$",
           "not": {

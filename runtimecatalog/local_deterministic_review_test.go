@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -113,6 +114,60 @@ func TestLocalDeterministicReviewAdmissionDoesNotOpenRunWhenInputPersistenceFail
 	}
 	if _, found, loadErr := journal.LoadPlan(context.Background(), intent.Scope()); loadErr != nil || found {
 		t.Fatalf("run opened after failed root input persistence: found=%t err=%v", found, loadErr)
+	}
+}
+
+func TestLocalDeterministicReviewAdmissionWaitsForInFlightScopeEffect(t *testing.T) {
+	intent, config, _, store := deterministicAdmissionFixture(t, "run-gated")
+	journal, err := controlplane.NewFileRunJournal(filepath.Join(t.TempDir(), "journal"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer journal.Close()
+	admitter, err := NewLocalDeterministicReviewAdmitter(journal, store, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A worker holds a scope intent while admission saves, opens and advances
+	// the run. Admission must wait for it instead of reading its transient
+	// marker as an unresolved effect.
+	entered, release := make(chan struct{}), make(chan struct{})
+	effectDone := make(chan error, 1)
+	go func() {
+		effectDone <- journal.WithScopeIntent(context.Background(), intent.Scope(), "test-effect", strings.Repeat("6", 64), func(context.Context) error {
+			close(entered)
+			<-release
+			return nil
+		}, func(context.Context) error { return nil })
+	}()
+	<-entered
+	waiting, stop, err := journal.WatchEffectGateContention()
+	if err != nil {
+		close(release)
+		t.Fatal(err)
+	}
+	defer stop()
+	admitted := make(chan error, 1)
+	go func() {
+		_, err := admitter.Admit(context.Background(), intent, time.UnixMilli(1_001))
+		admitted <- err
+	}()
+	select {
+	case <-waiting:
+	case err := <-admitted:
+		close(release)
+		t.Fatalf("admission did not wait for the in-flight effect: %v", err)
+	}
+	close(release)
+	if err := <-effectDone; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-admitted; err != nil {
+		t.Fatalf("Admit()=%v", err)
+	}
+	coordinator, _ := controlplane.NewCoordinator(journal)
+	if _, state, err := coordinator.Resume(context.Background(), intent.Scope()); err != nil || state.Status() != controlplane.ReviewRunActive {
+		t.Fatalf("Resume()=(%#v,%v)", state, err)
 	}
 }
 

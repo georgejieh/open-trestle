@@ -135,14 +135,7 @@
         "const": "0000000000000000000000000000000000000000000000000000000000000000"
       }
     },
-    "scanner_launcher_sha256": {
-      "type": "string",
-      "pattern": "^[0-9a-f]{64}$",
-      "not": {
-        "const": "0000000000000000000000000000000000000000000000000000000000000000"
-      }
-    },
-    "scanner_worker_sha256": {
+    "scanner_helper_sha256": {
       "type": "string",
       "pattern": "^[0-9a-f]{64}$",
       "not": {
@@ -198,8 +191,7 @@
           "sanitized_receipt_artifact_identity",
           "sanitized_receipt_identity",
           "verification_sanitizer_identity",
-          "scanner_launcher_sha256",
-          "scanner_worker_sha256"
+          "scanner_helper_sha256"
         ]
       },
       "else": {
@@ -237,12 +229,7 @@
             },
             {
               "required": [
-                "scanner_launcher_sha256"
-              ]
-            },
-            {
-              "required": [
-                "scanner_worker_sha256"
+                "scanner_helper_sha256"
               ]
             }
           ]

@@ -295,7 +295,7 @@ func freshnessPublicationFixture(t *testing.T, at time.Time, lifetime time.Durat
 	}
 	fieldCount := int(findings.VerifiedCount()) * 3
 	scan, err := review.NewPublicationContentScanReceipt(receipt, findings, verificationContext, selection,
-		review.ScannerProfile{WorkerProtocol: 1, Scanner: secretscan.ScannerName, ScannerVersion: secretscan.ScannerVersion, ScannerCommit: secretscan.ScannerCommit, RulesetIdentity: secretscan.RulesetIdentity, RulesetRuleCount: secretscan.RulesetRuleCount, BuildProfile: secretscan.BuildProfile, LauncherSHA256: strings.Repeat("c", 64), WorkerSHA256: strings.Repeat("d", 64)},
+		review.ScannerProfile{WorkerProtocol: 1, Scanner: secretscan.ScannerName, ScannerVersion: secretscan.ScannerVersion, ScannerCommit: secretscan.ScannerCommit, RulesetIdentity: secretscan.RulesetIdentity, RulesetRuleCount: secretscan.RulesetRuleCount, BuildProfile: secretscan.BuildProfile, HelperSHA256: strings.Repeat("c", 64)},
 		review.ScanCompletion{Complete: true, FieldCount: fieldCount, ScannedByteCount: fieldBytes},
 		review.ScanCompletion{Complete: true, FieldCount: fieldCount, ScannedByteCount: fieldBytes})
 	check(err)

@@ -31,8 +31,8 @@ func runLocalRecoveryCommand(ctx context.Context, args []string, stdout, stderr 
 	authority := flags.String("repository-authority", "", "local repository authority")
 	namespace := flags.String("repository-namespace", "", "local repository namespace")
 	name := flags.String("repository-name", "", "local repository name")
-	assetPaths := make([]*string, 5)
-	for i, role := range []string{"binary", "scanner", "scanner-worker", "route-inventory", "runtime-policy"} {
+	assetPaths := make([]*string, len(localRecoveryAssetRoles))
+	for i, role := range localRecoveryAssetRoles {
 		assetPaths[i] = flags.String(role, "", "retained recovery input file")
 	}
 	if err := flags.Parse(args[1:]); err != nil {
@@ -81,8 +81,8 @@ func runLocalRecoveryCommand(ctx context.Context, args []string, stdout, stderr 
 	} else if *recordPath != "" {
 		return ErrInvalidDaemonConfiguration
 	}
-	assets := make([]localRecoveryAsset, 5)
-	for i, role := range []string{"binary", "scanner", "scanner-worker", "route-inventory", "runtime-policy"} {
+	assets := make([]localRecoveryAsset, len(localRecoveryAssetRoles))
+	for i, role := range localRecoveryAssetRoles {
 		path, err := filepath.Abs(*assetPaths[i])
 		if err != nil || *assetPaths[i] == "" {
 			return ErrInvalidDaemonConfiguration
