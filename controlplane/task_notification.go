@@ -43,7 +43,8 @@ type TaskNotification struct {
 
 // NewTaskNotification derives a stable hint from one replayed authoritative state.
 func NewTaskNotification(state ReviewRunState, runtime TaskRuntimeState, at time.Time) (TaskNotification, error) {
-	if state.Validate() != nil || runtime.definition.Validate() != nil || state.Status() != ReviewRunActive || !transitionTimeAllowed(state, at) {
+	at, timely := transitionTime(state, at)
+	if state.Validate() != nil || runtime.definition.Validate() != nil || state.Status() != ReviewRunActive || !timely {
 		return TaskNotification{}, ErrInvalidTaskNotification
 	}
 	current, ok := state.Task(runtime.Key())

@@ -29,6 +29,8 @@ Publication, candidate generation and verification each get one orchestration at
 
 Every state change is a canonical event, addressed by its content, in a hash chain. Open Trestle reconstructs state by replaying the immutable plan and its complete event stream. Replay rejects gaps, forks, time reversal, records from another scope, dependency bypass, results from stale leases, attempts beyond the plan's limit, and events after a terminal disposition.
 
+Sequence numbers carry the order. Event times never decrease: a transition observed at a wall-clock time earlier than the last event, because the clock stepped back, is recorded at the last event's time. Lease expiry, renewal and retry delays are measured against recorded times, so a clock step cannot expire or extend a lease, and after a large step leases expire only once the clock passes the recorded time again.
+
 The local file journal stores the canonical plan JSON and the event JSON Lines with private permissions. You can list plans by tenant and repository filters with cursor pagination. A restarted supervisor can therefore find unfinished work without crossing repository scope.
 
 The journal uses an exclusive writer lease, bounded files, atomic replacement, file synchronization and directory synchronization. An unclean stop leaves the writer lease in place, and an operator must recover it explicitly. PostgreSQL and queue-backed implementations must keep the same compare-and-append behavior.
