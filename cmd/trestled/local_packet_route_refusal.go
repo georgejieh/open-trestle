@@ -49,8 +49,8 @@ func (o *localPacketOwner) refusePacketRoute(ctx context.Context, request contro
 		if inner.Err() != nil || plan.Identity() != request.Plan().Identity() || state.Status() != controlplane.ReviewRunActive || !present || head.Kind() != controlplane.RunEventContextPacketPrepared || head.Identity() != prepared.Identity() || state.HeadIdentity() != head.Identity() || state.Revision() != head.Sequence() || !reflect.DeepEqual(head.PacketDescriptor(), descriptor) || !found || !hasPacket || current.Identity() != prepared.Identity() || task.Status() != controlplane.TaskRuntimeLeased || task.Definition().Identity() != request.Task().Identity() || task.Attempts() != request.Lease().Attempt() || task.WorkerIdentity() != request.Lease().WorkerIdentity() || task.LeaseExpiresAt() != request.Lease().ExpiresAt() || task.LeaseTokenIdentity() != head.LeaseTokenIdentity() || descriptor.LeaseIdentity != request.Lease().Identity() || descriptor.LeaseEventIdentity != request.Lease().EventIdentity() {
 			return contexthandler.ErrPacketAuthority
 		}
-		now := o.clock.Now().UTC()
-		if !ownerPacketTimeValid(inner, request, now) || now.UnixMilli() < state.LastOccurredAt().UnixMilli() {
+		now := state.TransitionTime(o.clock.Now().UTC())
+		if !ownerPacketTimeValid(inner, request, now) {
 			return contexthandler.ErrPacketAuthority
 		}
 		_, appendErr := coordinator.RefusePreparedContextPacket(inner, plan, request.Lease(), prepared, reason, shortfall, now)

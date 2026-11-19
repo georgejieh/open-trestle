@@ -55,8 +55,8 @@ func (j *FileRunJournal) TerminateExpiredOwnerContextInput(ctx context.Context, 
 			return err
 		}
 		runtime, ok := before.Task(prepared.event.TaskKey())
-		now := clock.Now().UTC()
-		if !ok || before.Status() != ReviewRunActive || runtime.Status() != TaskRuntimeLeased || runtime.preparedEventIdentity != prepared.Identity() || now.UnixMilli() <= 0 || now.Before(runtime.LeaseExpiresAt()) || !transitionTimeAllowed(state, now) {
+		now, timely := transitionTime(state, clock.Now().UTC())
+		if !ok || before.Status() != ReviewRunActive || runtime.Status() != TaskRuntimeLeased || runtime.preparedEventIdentity != prepared.Identity() || now.UnixMilli() <= 0 || now.Before(runtime.LeaseExpiresAt()) || !timely {
 			return ErrPreparedContextInput
 		}
 		expected, err := NewRunEvent(plan, prepared.event.Sequence()+1, prepared.Identity(), RunEventTaskFailed, runtime.Definition(), runtime.Attempts(), runtime.LeaseTokenIdentity(), "", time.Time{}, "", RunFailurePolicy, time.Time{}, now)

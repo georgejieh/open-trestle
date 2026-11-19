@@ -136,7 +136,8 @@ func (c *Coordinator) PrepareContextInput(ctx context.Context, plan ReviewRunPla
 			return PreparedContextInput{}, ErrPreparedContextInput
 		}
 		current, ok := runtime.PreparedContextPacket()
-		if !ok || current.Identity() != packet.Identity() || current.event.Attempt() != lease.Attempt() || current.event.LeaseTokenIdentity() != lease.tokenIdentity || !exactPacketDependencies(state, runtime, current.Descriptor()) || !transitionTimeAllowed(state, at) || at.UnixMilli() > runtime.leaseExpiresAtMillis || d.Request.CreatedAtMilliseconds > at.UnixMilli() || d.Receipt.CreatedAtMilliseconds > at.UnixMilli() || d.Input.CreatedAtMilliseconds > at.UnixMilli() || d.Input.ExpiresAtMilliseconds <= at.UnixMilli() || !inputMatchesPacket(d, current.Descriptor(), current.event.occurredAtMillis) {
+		at, timely := transitionTime(state, at)
+		if !ok || current.Identity() != packet.Identity() || current.event.Attempt() != lease.Attempt() || current.event.LeaseTokenIdentity() != lease.tokenIdentity || !exactPacketDependencies(state, runtime, current.Descriptor()) || !timely || at.UnixMilli() > runtime.leaseExpiresAtMillis || d.Request.CreatedAtMilliseconds > at.UnixMilli() || d.Receipt.CreatedAtMilliseconds > at.UnixMilli() || d.Input.CreatedAtMilliseconds > at.UnixMilli() || d.Input.ExpiresAtMilliseconds <= at.UnixMilli() || !inputMatchesPacket(d, current.Descriptor(), current.event.occurredAtMillis) {
 			return PreparedContextInput{}, ErrPreparedContextInput
 		}
 		event := RunEvent{planIdentity: plan.Identity(), scope: plan.Scope(), sequence: state.Revision() + 1, previousIdentity: state.HeadIdentity(), kind: RunEventContextInputPrepared, taskKey: runtime.Key(), taskIdentity: runtime.Definition().Identity(), attempt: runtime.Attempts(), leaseTokenIdentity: runtime.leaseTokenIdentity, outputIdentity: d.Input.ArtifactIdentity, occurredAtMillis: at.UnixMilli(), inputDescriptor: d}
@@ -180,7 +181,8 @@ func (c *Coordinator) TerminatePreparedContextInput(ctx context.Context, plan Re
 			return state, nil
 		}
 		current, ok := runtime.PreparedContextInput()
-		if !ok || current.Identity() != prepared.Identity() || !transitionTimeAllowed(state, at) || at.UnixMilli() < runtime.leaseExpiresAtMillis {
+		at, timely := transitionTime(state, at)
+		if !ok || current.Identity() != prepared.Identity() || !timely || at.UnixMilli() < runtime.leaseExpiresAtMillis {
 			return ReviewRunState{}, ErrPreparedContextInput
 		}
 		event, err := NewRunEvent(plan, state.Revision()+1, state.HeadIdentity(), RunEventTaskFailed, runtime.Definition(), runtime.Attempts(), runtime.leaseTokenIdentity, "", time.Time{}, "", RunFailurePolicy, time.Time{}, at)

@@ -154,7 +154,8 @@ func (c *Coordinator) PrepareContextAbstention(ctx context.Context, plan ReviewR
 			}
 			return PreparedContextAbstention{}, ErrPreparedContextAbstention
 		}
-		if !transitionTimeAllowed(state, at) || at.UnixMilli() > runtime.leaseExpiresAtMillis {
+		at, timely := transitionTime(state, at)
+		if !timely || at.UnixMilli() > runtime.leaseExpiresAtMillis {
 			return PreparedContextAbstention{}, ErrRunTransitionLeaseMismatch
 		}
 		event, err := newPreparedRunEvent(plan, state, runtime, encodedArtifact, identity, failure, at)
@@ -196,7 +197,8 @@ func (c *Coordinator) SettlePreparedContextAbstention(ctx context.Context, plan 
 			return state, nil
 		}
 		current, ok := runtime.PreparedContextAbstention()
-		if !ok || current.Identity() != prepared.Identity() || !transitionTimeAllowed(state, at) {
+		at, timely := transitionTime(state, at)
+		if !ok || current.Identity() != prepared.Identity() || !timely {
 			return ReviewRunState{}, ErrPreparedContextAbstention
 		}
 		retry := time.Time{}

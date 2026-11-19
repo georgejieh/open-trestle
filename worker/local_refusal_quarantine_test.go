@@ -87,8 +87,9 @@ func TestLocalControlStaleCompletionDoesNotQuarantineScope(t *testing.T) {
 func TestLocalControlClockRegressionDoesNotQuarantineScope(t *testing.T) {
 	_, local, clock, scope, _ := localRefusalFixture(t, "clock-regression")
 	clock.set(time.UnixMilli(9_000))
-	if _, err := local.GetRun(context.Background(), scope); !errors.Is(err, controlplane.ErrRunTransitionSequenceMismatch) || errors.Is(err, controlplane.ErrScopeIntentUnresolved) {
-		t.Fatalf("regressed read err=%v", err)
+	receipt, err := local.GetRun(context.Background(), scope)
+	if err != nil || receipt.LastOccurredAt().UnixMilli() != 10_000 {
+		t.Fatalf("regressed read last=%v err=%v", receipt.LastOccurredAt(), err)
 	}
 	clock.set(time.UnixMilli(10_002))
 	if _, err := local.GetRun(context.Background(), scope); err != nil {

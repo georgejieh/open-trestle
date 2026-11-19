@@ -40,8 +40,8 @@ func (o *localPacketOwner) terminatePacketRecheckExpiry(ctx context.Context, req
 		if inner.Err() != nil || plan.Identity() != request.Plan().Identity() || state.Status() != controlplane.ReviewRunActive || !present || head.Kind() != controlplane.RunEventContextPacketPrepared || head.Identity() != prepared.Identity() || state.HeadIdentity() != head.Identity() || state.Revision() != head.Sequence() || !reflect.DeepEqual(head.PacketDescriptor(), descriptor) || !found || !hasPacket || current.Identity() != prepared.Identity() || !reflect.DeepEqual(current.Descriptor(), descriptor) || task.Status() != controlplane.TaskRuntimeLeased || task.Definition().Identity() != request.Task().Identity() || task.Definition().HandlerIdentity() != request.Lease().HandlerIdentity() || task.Attempts() != request.Lease().Attempt() || task.WorkerIdentity() != request.Lease().WorkerIdentity() || task.LeaseExpiresAt() != request.Lease().ExpiresAt() || task.LeaseTokenIdentity() != head.LeaseTokenIdentity() || head.Attempt() != request.Lease().Attempt() || head.TaskIdentity() != request.Task().Identity() || descriptor.LeaseIdentity != request.Lease().Identity() || descriptor.LeaseEventIdentity != request.Lease().EventIdentity() {
 			return contexthandler.ErrPacketAuthority
 		}
-		now := o.clock.Now().UTC()
-		if inner.Err() != nil || now.UnixMilli() <= 0 || now.Before(expiry.sampledAt) || now.Before(request.Lease().ExpiresAt()) || now.UnixMilli() < state.LastOccurredAt().UnixMilli() || !now.Before(expiry.packet.Artifact().ExpiresAt()) {
+		now := state.TransitionTime(o.clock.Now().UTC())
+		if inner.Err() != nil || now.UnixMilli() <= 0 || now.Before(expiry.sampledAt) || now.Before(request.Lease().ExpiresAt()) || !now.Before(expiry.packet.Artifact().ExpiresAt()) {
 			return contexthandler.ErrPacketAuthority
 		}
 		expected, err := controlplane.NewRunEvent(plan, state.Revision()+1, state.HeadIdentity(), controlplane.RunEventTaskFailed, task.Definition(), task.Attempts(), task.LeaseTokenIdentity(), "", time.Time{}, "", controlplane.RunFailurePolicy, time.Time{}, now)
