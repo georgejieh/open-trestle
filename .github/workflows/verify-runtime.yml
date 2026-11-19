@@ -94,8 +94,8 @@ jobs:
           "$RUNNER_TEMP/trestle" evaluate deterministic-corpus-candidate > "$RUNNER_TEMP/corpus-candidate-b.json"
           SECOND_STATUS=$?
           set -e
-          test "$FIRST_STATUS" -eq 3
-          test "$SECOND_STATUS" -eq 3
+          test "$FIRST_STATUS" -eq 4
+          test "$SECOND_STATUS" -eq 4
           cmp "$RUNNER_TEMP/corpus-candidate-a.json" "$RUNNER_TEMP/corpus-candidate-b.json"
           PYTHONPATH=python/open_trestle_eval/src python3 -m open_trestle_eval.performance --warmups 1 --samples 10 --output "$RUNNER_TEMP/corpus-performance-observation.json" -- "$RUNNER_TEMP/trestle" evaluate deterministic-corpus-candidate
       - name: Run evaluation-helper tests
