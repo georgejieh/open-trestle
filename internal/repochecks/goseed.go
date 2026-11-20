@@ -110,6 +110,7 @@ var standardPackage = regexp.MustCompile(`^[a-z0-9_]+(/[a-z0-9_]+)*$`)
 // are left out.
 func standardImports(ctx context.Context, goroot string, trees []string) []string {
 	packages := slices.Clone(goSeedRoots)
+	seen := map[string]bool{}
 	files := token.NewFileSet()
 	for _, tree := range trees {
 		_ = filepath.WalkDir(tree, func(name string, entry fs.DirEntry, err error) error {
@@ -133,7 +134,8 @@ func standardImports(ctx context.Context, goroot string, trees []string) []strin
 				return nil
 			}
 			for _, spec := range parsed.Imports {
-				if path, err := strconv.Unquote(spec.Path.Value); err == nil && seedable(goroot, path) {
+				if path, err := strconv.Unquote(spec.Path.Value); err == nil && !seen[path] && seedable(goroot, path) {
+					seen[path] = true
 					packages = append(packages, path)
 				}
 			}
