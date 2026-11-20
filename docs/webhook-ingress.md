@@ -133,7 +133,7 @@ The attempt limits differ by stage:
 
 The version-4 pull-request planner identity binds this behavior, and the prepared planner also binds that base identity. Stored plans keep their original identities and attempt limits. A planner upgrade does not rewrite journals or repair an incompatible stored plan.
 
-Processing does not take a lease on a delivery. If plan creation is repeated after a crash, it produces the same plan, and the run journal makes opening and advancing the run idempotent. Task leases serialize concurrent work later. Publication remains a task with one orchestration attempt, and its publisher uses a stable operation key and the publication retry contract.
+Processing does not take a lease on a delivery. If plan creation is repeated after a crash, it produces the same plan, and the run journal makes opening and advancing the run idempotent. Task leases serialize concurrent work later. Publication remains a task with one orchestration attempt, and its publisher makes one attempt under a stable operation key.
 
 ## PostgreSQL metadata profile
 
