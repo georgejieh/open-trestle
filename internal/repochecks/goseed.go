@@ -70,7 +70,7 @@ func buildGoSeed(ctx context.Context, program string, chain toolchain, trees []s
 		return "", func() {}
 	}
 	packages := standardImports(ctx, goroot, trees)
-	root, err := os.MkdirTemp("", "open-trestle-go-seed-")
+	root, err := os.MkdirTemp("", checksandbox.GoSeedFolderPrefix)
 	if err != nil {
 		return "", func() {}
 	}

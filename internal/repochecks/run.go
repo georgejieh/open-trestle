@@ -64,6 +64,9 @@ type Result struct {
 // Report is the outcome of every detected check.
 type Report struct {
 	Results []Result
+	// Leftovers are the scratch folders that runs could not remove. They
+	// are host paths, for the person running the review, not the models.
+	Leftovers []string
 }
 
 // DefaultBudget bounds all checks of one review.
@@ -89,6 +92,14 @@ func runWith(ctx context.Context, input Input, machine host) (Report, error) {
 	defer cancel()
 	trees := newTrees(input.BaseTree, input.HeadTree)
 	report := Report{}
+	run := input.Runner
+	input.Runner = func(ctx context.Context, spec checksandbox.Spec) (checksandbox.Result, error) {
+		result, err := run(ctx, spec)
+		if result.Leftover != "" {
+			report.Leftovers = append(report.Leftovers, result.Leftover)
+		}
+		return result, err
+	}
 	seeds := &goSeeds{homes: map[string]string{}}
 	defer seeds.close()
 	for _, check := range checks {

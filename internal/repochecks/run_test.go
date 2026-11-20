@@ -312,6 +312,19 @@ func TestRunStopsAtTheBudget(t *testing.T) {
 	}
 }
 
+func TestRunCollectsScratchFoldersThatCouldNotBeRemoved(t *testing.T) {
+	report := runFake(t, func(side string, _ int, _ checksandbox.Spec) (checksandbox.Result, error) {
+		result := checksandbox.Result{Stdout: goEvents(map[string]string{"TestA": "pass"})}
+		if side == "head" {
+			result.Leftover = "/tmp/open-trestle-check-1"
+		}
+		return result, nil
+	})
+	if len(report.Leftovers) != 4 || report.Leftovers[0] != "/tmp/open-trestle-check-1" {
+		t.Fatalf("leftovers %v", report.Leftovers)
+	}
+}
+
 func TestSummary(t *testing.T) {
 	report := Report{Results: []Result{
 		{Name: "go test ./a", Ran: true, Tests: 9, Regressions: []string{"m/a.TestX"}, StoppedRunning: []string{"m/a.TestY"}, Fixed: 2, StillFailing: 1, Flaky: 2},

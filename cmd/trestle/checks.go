@@ -130,6 +130,11 @@ func runChecks(ctx context.Context, args []string, stdout, stderr io.Writer) int
 			return 4
 		}
 	}
+	if args[0] == "off" {
+		if err := checksandbox.RemoveToolchainGrants(); err != nil {
+			fmt.Fprintf(stderr, "trestle checks: some toolchain folders still grant the sandbox read access (%v); run trestle checks off again to retry.\n", withoutHomeFolder(err.Error()))
+		}
+	}
 	allowed, decided := readChecksConsent(dir, repository)
 	switch {
 	case !decided:
@@ -223,6 +228,7 @@ func (w *initWizard) askChecksConsent() {
 // check applies to is an outcome too, so the walkthrough says so.
 func runRepositoryChecks(ctx context.Context, objectsPath string, base, head evidence.RevisionIdentity, index *reviewIndexContext, stderr io.Writer) *review.CheckRuns {
 	fmt.Fprintln(stderr, "Running this repository's checks for the change in a sandbox (twice on each side)...")
+	checksandbox.SweepStale()
 	dependents, scope := index.dependents(ctx)
 	switch scope {
 	case review.CheckRunsChangedOnly:
@@ -235,6 +241,9 @@ func runRepositoryChecks(ctx context.Context, objectsPath string, base, head evi
 		report = repochecks.Report{Results: []repochecks.Result{{Name: "repository checks", Reason: err.Error()}}}
 	}
 	fmt.Fprintln(stderr, terminalText(withoutHomeFolder(report.Summary()), 2000))
+	for _, leftover := range report.Leftovers {
+		fmt.Fprintf(stderr, "A check's scratch folder could not be removed: %s. A later review removes it, or delete it yourself.\n", terminalText(withoutHomeFolder(leftover), 500))
+	}
 	value, err := review.NewCheckRuns(base.Digest(), head.Digest(), scope, checkRunsOf(report))
 	if err != nil {
 		fmt.Fprintln(stderr, "The check results could not be bound to the review; the review continues without them.")
@@ -323,7 +332,7 @@ func repositoryChecksReport(ctx context.Context, objectsPath string, base, head 
 	if err != nil {
 		return repochecks.Report{}, errors.New("the changed files cannot be listed")
 	}
-	scratch, err := os.MkdirTemp("", "open-trestle-trees-")
+	scratch, err := os.MkdirTemp("", checksandbox.TreesFolderPrefix)
 	if err != nil {
 		return repochecks.Report{}, errors.New("a scratch folder cannot be created")
 	}
