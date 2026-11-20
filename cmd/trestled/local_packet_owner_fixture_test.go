@@ -501,9 +501,9 @@ func assertLocalPacketOracle(t *testing.T, fixture localPacketOwnerFixture, stat
 		t.Fatalf("packet trailing JSON: %v", e)
 	}
 	schemaDigest := sha256.Sum256(wire.OutputSchema)
-	// Pinned version 10 candidate instructions identity (the prose travels only
+	// Pinned version 11 candidate instructions identity (the prose travels only
 	// in the trusted system channel) and candidate batch v2 schema.
-	if wire.InstructionsIdentity != "f7df29a084b8237932beace9ef136c6e6dd5d252be251e0d030e1ccce26b5427" || hex.EncodeToString(schemaDigest[:]) != review.ModelCandidateBatchSchemaIdentity {
+	if wire.InstructionsIdentity != "acd77d0d9bdbc9c14a75a5fbe54e7be3d0e0694638c5ef307e4590fc287a1011" || hex.EncodeToString(schemaDigest[:]) != review.ModelCandidateBatchSchemaIdentity {
 		t.Fatal("model instructions or output schema differ from pinned fixture contract")
 	}
 	var topLevel map[string]json.RawMessage
