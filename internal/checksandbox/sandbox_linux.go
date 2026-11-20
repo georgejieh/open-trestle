@@ -80,9 +80,11 @@ func run(ctx context.Context, spec Spec) (Result, error) {
 		"PATH=" + strings.Join(spec.Path, ":"),
 		"HOME=" + sandboxHome, "TMPDIR=" + sandboxTemp, "USER=sandbox", "LANG=C.UTF-8", "TZ=UTC",
 	}, paths.env(spec.Env)...)
+	limits := spec.Limits
+	limits.Processes = processLimit(limits.Processes)
 	config := childConfig{
 		Root: scratch, Tree: spec.Tree, Dir: spec.Dir, Args: paths.args(spec.Args), Path: spec.Path,
-		ReadOnly: spec.ReadOnly, Env: env, Report: spec.Report, HomeSeed: spec.HomeSeed, Limits: spec.Limits,
+		ReadOnly: spec.ReadOnly, Env: env, Report: spec.Report, HomeSeed: spec.HomeSeed, Limits: limits,
 	}
 
 	configRead, configWrite, err := os.Pipe()
