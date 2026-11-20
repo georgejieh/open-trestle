@@ -2,7 +2,7 @@
 
 The adapter in `adapters/providers/openai` sends review requests to the [OpenAI Responses API](https://platform.openai.com/docs/api-reference/responses). Its request and response fields follow the official [`openai/openai-openapi`](https://github.com/openai/openai-openapi) contract. This page is for contributors and operators who need to know what the adapter sends, what it accepts back, and which decisions it leaves to the gateway.
 
-The adapter implements the gateway's `RouteDispatcher` contract, and it only executes requests. Route policy, provider eligibility, privacy classification, budget reservation, retry decisions and fallback selection stay with the gateway.
+The adapter implements the gateway's `RouteDispatcher` contract, and it only executes requests. Route policy, provider eligibility, privacy classification, budget reservation and retry decisions stay with the gateway.
 
 ## Route binding
 
@@ -103,10 +103,6 @@ A 200 response that the adapter refuses is also `invalid_response`, with `outcom
 ### How the gateway and task handlers respond
 
 `payment_required`, `model_unavailable`, `model_retired` and `request_rejected` are not transient, so the gateway does not retry them. None of them counts as a provider outage.
-
-- A payment refusal is not eligible for fallback to another route, just like a spent budget.
-- A model refusal leaves another route's model eligible.
-- A rejected request also leaves another route eligible.
 
 The model handlers fail the task as a `policy` refusal for each of these four classes, as they do for `authentication` and `authorization`. When the provider answered, they record the matching `provider_*` task failure reason. For a rejected request that reason is `provider_request_rejected`.
 

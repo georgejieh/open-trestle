@@ -103,6 +103,7 @@ All notable changes to released versions of Open Trestle will be documented in t
 ### Removed
 
 - Removed the PostgreSQL metadata store, the S3 artifact store, AWS KMS keys, envelope-encrypted artifacts and budgeted artifact erasure. The daemon keeps its state in local files under `--state-dir`, and its `--metadata-store`, `--artifact-store`, `--artifact-erasure-mode`, PostgreSQL, S3 and KMS flags are gone. `trestle admin postgres`, `admin kms`, `admin envelope` and `admin bundle` are gone, and setup keeps only the `local_single_node` profile: `controlled_hybrid`, `kubernetes_ha` and `air_gapped`, with their PostgreSQL, envelope storage, KMS, shared rate limit, replica reconciliation and signed bundle checks, are removed. The daemon no longer publishes reviews to GitHub, because publication needed the PostgreSQL store: `--github-enable-publication` and its policy flags are gone, and `--github-review-mode required` is refused. The pgx and AWS SDK modules are no longer dependencies.
+- Removed code that no command or daemon path called: the gateway's route fallback and continuation planning, the general same-route retry authorization (the retry after a rate limit stays), publication retry decisions, and the `artifactvalidation` package. The audit event kinds `route_continuation_planned` and `publication_retry_authorized`, which nothing wrote, are gone, and so is the route attempt kind `fallback` in `schemas/artifact/route-attempt-authorization-v1.schema.json`.
 
 ### Fixed
 

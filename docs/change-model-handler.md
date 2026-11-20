@@ -51,6 +51,6 @@ The canonical result binds the following:
 
 Its protected artifact has deterministic-tool origin, which marks the output as produced by code and not by a model. Its provenance cites both dependency outputs, both root inputs and the delta.
 
-`ParseResultArtifact` checks the canonical encoding and cross-binds the result to both source snapshots. `artifactvalidation.ValidatedTaskHandler` can require `source_snapshot` dependencies and a `change_model` output.
+`ParseResultArtifact` checks the canonical encoding and cross-binds the result to both source snapshots.
 
 The published schema is `schemas/artifact/change-model-result-v1.schema.json`. The handler identity is the SHA-256 digest of the canonical record of the contract `open-trestle/change-model-handler` at schema version 3, which is `af559535868494caf3a8e78d0df23ebda6f7c186caa06c57b3a9dac7ee78b276`. A run plan records this identity. A run planned under an earlier identity is not executed by this handler.

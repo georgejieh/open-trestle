@@ -24,7 +24,7 @@ The provider adapter sends the context bytes as the user message and `review.Tru
 
 The handler identity includes the identity of the `RouteDispatcherCatalog`. Dispatch resolves the adapter ID in the authorization. Before the handler releases context bytes, it requires an existing route-selection audit event and records an idempotent route-attempt claim. After the call, it records the dispatch outcome and the cost reconciliation, for both success and failure.
 
-A model task must declare `max_attempts: 1`. Control-plane retries cannot issue a new route authorization or reserve another budget. The GitHub planner applies this rule to candidate-generation and verification tasks. Provider retries and fallback need a separately authorized route continuation.
+A model task must declare `max_attempts: 1`. Control-plane retries cannot issue a new route authorization or reserve another budget. The GitHub planner applies this rule to candidate-generation and verification tasks. The only provider retry is the same-route retry after a rate limit, which takes over the refused attempt's reservation.
 
 An ambiguous transport outcome stays visible as a claimed attempt. If a process crashes between the provider dispatch and the terminal audit record, the handler does not replay the attempt automatically.
 
@@ -74,8 +74,6 @@ The `candidate_batch` artifact contains:
 - the lineage of the context and the response.
 
 Its provenance includes the task input, context, candidates, authorization, outcome, reconciliation, output receipt and route execution. `ParseGenerationResultArtifact` requires the input and context artifacts. It revalidates the scope, classification, protection, provenance, candidates, route records and canonical encodings.
-
-You can wrap the handler in `artifactvalidation.ValidatedTaskHandler` with the `task_input` and `candidate_batch` kinds.
 
 ## Published schemas
 

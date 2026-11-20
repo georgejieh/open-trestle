@@ -75,7 +75,7 @@ func testGenerationRejectionAuditProof(t *testing.T, events []audit.Event, value
 			}
 		})
 	}
-	for _, kind := range []audit.EventKind{audit.EventGenerationRejected, audit.EventRouteContinuationPlanned, audit.EventPublicationCompleted, audit.EventRouteAttemptClaimed} {
+	for _, kind := range []audit.EventKind{audit.EventGenerationRejected, audit.EventPublicationCompleted, audit.EventRouteAttemptClaimed} {
 		extra, err := audit.NewEvent(value.Scope(), uint64(len(events)+1), events[len(events)-1].Identity(), kind, events[0].SubjectIdentity(), events[0].CausalParentIdentities(), now)
 		if err != nil {
 			t.Fatal(err)

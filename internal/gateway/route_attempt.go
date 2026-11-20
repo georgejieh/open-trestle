@@ -16,7 +16,7 @@ const (
 )
 
 var (
-	// ErrInvalidRouteAttemptKind identifies an unknown initial, retry, or fallback attempt.
+	// ErrInvalidRouteAttemptKind identifies an attempt kind that is neither initial nor retry.
 	ErrInvalidRouteAttemptKind = errors.New("invalid route attempt kind")
 	// ErrRouteAttemptRequestMismatch identifies request content that does not match the routing decision.
 	ErrRouteAttemptRequestMismatch = errors.New("route attempt request mismatch")
@@ -44,7 +44,6 @@ type RouteAttemptKind uint8
 const (
 	RouteAttemptInitial RouteAttemptKind = iota + 1
 	RouteAttemptRetry
-	RouteAttemptFallback
 )
 
 // String returns the stable attempt-kind token or an empty string for unknown values.
@@ -54,8 +53,6 @@ func (k RouteAttemptKind) String() string {
 		return "initial"
 	case RouteAttemptRetry:
 		return "retry"
-	case RouteAttemptFallback:
-		return "fallback"
 	default:
 		return ""
 	}
@@ -63,7 +60,7 @@ func (k RouteAttemptKind) String() string {
 
 // ParseRouteAttemptKind parses one exact stable attempt-kind token.
 func ParseRouteAttemptKind(value string) (RouteAttemptKind, error) {
-	for candidate := RouteAttemptInitial; candidate <= RouteAttemptFallback; candidate++ {
+	for candidate := RouteAttemptInitial; candidate <= RouteAttemptRetry; candidate++ {
 		if candidate.String() == value {
 			return candidate, nil
 		}
@@ -113,7 +110,7 @@ func NewInitialRouteAttemptAuthorization(request provider.Request, selection Rou
 	if err := ranking.Validate(); err != nil {
 		return RouteAttemptAuthorization{}, err
 	}
-	if !fallbackSelectionMatchesRanking(selection, ranking) {
+	if !selectionMatchesRanking(selection, ranking) {
 		return RouteAttemptAuthorization{}, ErrRouteSelectionBindingMismatch
 	}
 	if request.Identity() != selection.RequestIdentity() {
@@ -224,11 +221,8 @@ func (a RouteAttemptAuthorization) Validate() error {
 		if a.attemptOrdinal != 1 || a.routeAttemptOrdinal != 1 || a.previousOutcomeIdentity != "" || a.continuationDecisionIdentity != "" || a.remainingCostBeforeMicroUSD != a.costBudget.MaxCostMicroUSD() {
 			return ErrInvalidRouteAttemptAuthorization
 		}
-	case RouteAttemptRetry, RouteAttemptFallback:
-		if a.attemptOrdinal < 2 || !validRequestIdentity(a.previousOutcomeIdentity) || !validRequestIdentity(a.continuationDecisionIdentity) {
-			return ErrInvalidRouteAttemptAuthorization
-		}
-		if a.kind == RouteAttemptRetry && a.routeAttemptOrdinal < 2 || a.kind == RouteAttemptFallback && a.routeAttemptOrdinal != 1 {
+	case RouteAttemptRetry:
+		if a.attemptOrdinal < 2 || a.routeAttemptOrdinal < 2 || !validRequestIdentity(a.previousOutcomeIdentity) || !validRequestIdentity(a.continuationDecisionIdentity) {
 			return ErrInvalidRouteAttemptAuthorization
 		}
 	}
@@ -459,4 +453,21 @@ func deriveRouteAttemptOutcomeIdentity(o RouteAttemptOutcome) string {
 	encoded, _ := json.Marshal(preimage)
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:])
+}
+
+func selectionMatchesRanking(selection RouteSelectionReceipt, ranking RouteRankingResult) bool {
+	if selection.RequestIdentity() != ranking.RequestIdentity() || selection.ReviewScopeIdentity() != ranking.ReviewScopeIdentity() || selection.RoutingInputIdentity() != ranking.RoutingInputIdentity() || selection.RegistryRevision() != ranking.RegistryRevision() || selection.PerformanceRevision() != ranking.PerformanceRevision() || selection.CostBudget() != ranking.CostBudget() || selection.RankingPolicyIdentity() != ranking.RankingPolicyIdentity() || selection.SelectedRecordIdentity() != observedRouteIdentity(ranking.rankedRoutes[0].route) {
+		return false
+	}
+	scores := selection.CandidateScores()
+	if len(scores) != len(ranking.rankedRoutes) {
+		return false
+	}
+	for index, ranked := range ranking.rankedRoutes {
+		score := scores[index]
+		if score.RecordIdentity() != observedRouteIdentity(ranked.route) || score.OperationalRevision() != ranked.route.OperationalState().ObservationRevision() || score.Performance() != ranked.performance || score.IsPinned() != ranked.pinned || score.preferenceRank != ranked.preferenceRank || score.QualityTier() != ranked.QualityTier() || score.MaximumCost() != ranked.maximumCost {
+			return false
+		}
+	}
+	return true
 }

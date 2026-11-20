@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/georgejieh/open-trestle/artifact"
-	"github.com/georgejieh/open-trestle/artifactvalidation"
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/controlplane"
 	"github.com/georgejieh/open-trestle/internal/evidence"
@@ -432,14 +431,7 @@ func TestGenerationHandlerDispatchesAuditsAndPersistsAdmittedCandidates(t *testi
 	}
 	_, _ = store.Put(context.Background(), inputArtifact, time.UnixMilli(70))
 	request := generationTaskRequest(t, scope, inputArtifact.Identity(), handler.HandlerIdentity(), 1)
-	validated, err := artifactvalidation.NewValidatedTaskHandler(
-		handler, store, fixedClock{at: time.UnixMilli(201)},
-		[]artifact.Kind{artifact.KindTaskInput}, []artifact.Kind{artifact.KindCandidateBatch},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	completion := validated.Execute(context.Background(), request)
+	completion := handler.Execute(context.Background(), request)
 	if completion.Status() != controlplane.TaskCompletionSucceeded || completion.Validate() != nil || dispatcher.calls != 1 {
 		t.Fatalf("completion=%#v calls=%d", completion, dispatcher.calls)
 	}
@@ -474,7 +466,7 @@ func TestGenerationHandlerDispatchesAuditsAndPersistsAdmittedCandidates(t *testi
 	if len(events) != 4 || events[1].Kind() != audit.EventRouteAttemptClaimed || events[2].Kind() != audit.EventRouteDispatchCompleted || events[3].Kind() != audit.EventRouteCostReconciled {
 		t.Fatalf("events=%#v", events)
 	}
-	replayed := validated.Execute(context.Background(), request)
+	replayed := handler.Execute(context.Background(), request)
 	if replayed.Status() != controlplane.TaskCompletionFailed || dispatcher.calls != 1 {
 		t.Fatalf("existing route claim redispatched: status=%s calls=%d", replayed.Status(), dispatcher.calls)
 	}

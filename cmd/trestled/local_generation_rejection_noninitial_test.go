@@ -32,7 +32,7 @@ func testGenerationRejectionNoninitial(t *testing.T, events []audit.Event, value
 	if err != nil {
 		t.Fatal(err)
 	}
-	failed, err := gateway.NewFailedRouteAttemptOutcome(initial, gateway.RouteFailureTimeout, gateway.RouteReplayNoSideEffect, zero, 0, 1)
+	failed, err := gateway.NewFailedRouteAttemptOutcome(initial, gateway.RouteFailureRateLimited, gateway.RouteReplayNoSideEffect, zero, 0, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +40,7 @@ func testGenerationRejectionNoninitial(t *testing.T, events []audit.Event, value
 	if err != nil {
 		t.Fatal(err)
 	}
-	policy, err := gateway.NewRouteRetryPolicy(3, 100, 1000, 0, 2000)
+	policy, err := gateway.NewRateLimitRetryPolicy(100)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +48,7 @@ func testGenerationRejectionNoninitial(t *testing.T, events []audit.Event, value
 	if err != nil {
 		t.Fatal(err)
 	}
-	retry, err := gateway.NewRouteRetryAttemptAuthorization(initial, failed, settled, decision)
+	retry, err := gateway.NewRateLimitedRetryAttemptAuthorization(initial, failed, settled, decision)
 	if err != nil {
 		t.Fatal(err)
 	}

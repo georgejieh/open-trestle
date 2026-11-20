@@ -109,9 +109,6 @@ func (r PublicationDispatchRequest) ValidateAt(at time.Time) error {
 	if !r.authorization.Authorizes(r.authorization.Plan().Target(), at) {
 		return ErrPublicationNotAuthorized
 	}
-	if !r.attempt.Ready(at) {
-		return ErrPublicationRetryNotAllowed
-	}
 	if !r.headGate.AuthorizesPublication() {
 		return ErrPublicationHeadNotCurrent
 	}

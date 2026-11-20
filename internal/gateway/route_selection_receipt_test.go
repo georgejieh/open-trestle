@@ -181,7 +181,7 @@ func TestRouteSelectionReceiptBindsRoutingPolicyInput(t *testing.T) {
 	otherConstraints, _ := policy.NewProviderDataConstraints(policy.DataClassificationConfidential, zones, false)
 	otherInput, _ := NewReviewRoutingInput(newRoutingScope(t), request, requirements, otherConstraints)
 	free := mustKnownFreePricing(t)
-	route := newFallbackRoute(t, 160_000, provider.ProviderZoneLocal, provider.ContentLoggingDisabled, provider.RouteQualityTier4, free)
+	route := newFixtureRoute(t, 160_000, provider.ProviderZoneLocal, provider.ContentLoggingDisabled, provider.RouteQualityTier4, free)
 	budget, _ := provider.NewModelCostBudget(1, 16_000, 0)
 	baselineEligibility, _ := FilterEligibleRoutes(baselineInput, budget, 21, []ObservedRouteCandidate{route})
 	otherEligibility, _ := FilterEligibleRoutes(otherInput, budget, 21, []ObservedRouteCandidate{route})

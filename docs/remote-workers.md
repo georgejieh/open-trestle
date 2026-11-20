@@ -34,8 +34,6 @@ Approved handlers must stop when their context is canceled. Go cannot forcibly e
 
 The worker API has no endpoint to download or upload artifacts. A deployed handler receives the task recipe identity and the dependency outputs through `TaskExecutionRequest`. A root task reads its static input artifact. A downstream task reads the artifact identities that its declared prerequisites produced.
 
-`artifactvalidation.ValidatedTaskHandler` resolves the static input for a root task, or every available dependency output for a downstream task. Before the completion crosses the lease boundary, it checks that the successful output exists in the same scope and that its provenance cites each resolved input artifact.
-
 This keeps source and model data away from the worker API.
 
 ## Notification and polling bounds
