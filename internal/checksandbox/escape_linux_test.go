@@ -2,12 +2,14 @@ package checksandbox
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -69,6 +71,26 @@ func platformProbe(mode string, _ []string) int {
 		if unix.Unshare(unix.CLONE_NEWUSER|unix.CLONE_NEWNS) == nil {
 			return probeEscaped
 		}
+	case "kill-init":
+		// Ending process 1 would end the run without a report.
+		for _, signal := range []unix.Signal{unix.SIGTERM, unix.SIGINT, unix.SIGHUP, unix.SIGQUIT, unix.SIGUSR1, unix.SIGABRT, unix.SIGSEGV, unix.SIGPIPE} {
+			_ = unix.Kill(1, signal)
+		}
+		time.Sleep(time.Second)
+	case "init-descriptors":
+		// Process 1's status pipe would let the command forge the report.
+		for _, path := range []string{"/proc/1/fd/4", "/proc/1/fd/3"} {
+			if file, err := os.OpenFile(path, os.O_WRONLY, 0); err == nil {
+				file.Close()
+				return probeEscaped
+			}
+		}
+	case "oom-score":
+		if score, err := os.ReadFile("/proc/self/oom_score_adj"); err != nil || strings.TrimSpace(string(score)) != "1000" {
+			fmt.Printf("oom_score_adj %q\n", score)
+			return 1
+		}
+		return 0
 	case "proc":
 		// Other processes' environments and the host's processes are not
 		// visible: only the sandbox's processes have /proc entries.
@@ -144,4 +166,18 @@ func TestEscapeInheritedDescriptors(t *testing.T) {
 
 func TestEscapeHostProcesses(t *testing.T) {
 	requireBlocked(t, runProbe(t, probeSpec(t, "proc")))
+}
+
+func TestEscapeSignalFirstProcess(t *testing.T) {
+	requireBlocked(t, runProbe(t, probeSpec(t, "kill-init")))
+}
+
+func TestEscapeFirstProcessDescriptors(t *testing.T) {
+	requireBlocked(t, runProbe(t, probeSpec(t, "init-descriptors")))
+}
+
+func TestSandboxGoesFirstToTheOutOfMemoryKiller(t *testing.T) {
+	if result := runProbe(t, probeSpec(t, "oom-score")); !result.Succeeded() {
+		t.Fatalf("result %+v stdout %q", result, result.Stdout)
+	}
 }

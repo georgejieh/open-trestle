@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"syscall"
@@ -29,6 +30,11 @@ func RunChildIfRequested() {
 // inside them. It builds the private root, drops every way out, runs the
 // command, reaps every process and reports.
 func child() int {
+	// The command may signal process 1, which receives from inside its
+	// namespace only the signals it handles; the Go runtime's own handlers
+	// would end it, and the run with it. Handled signals, unlike ignored
+	// ones, are reset to their defaults for the command at exec.
+	signal.Notify(make(chan os.Signal, 1))
 	// Inherited descriptors stay open across exec; the command must not get
 	// the status pipe.
 	syscall.CloseOnExec(3)
@@ -58,6 +64,12 @@ func runInSandbox(config childConfig) childStatus {
 	}
 	if err := setLimits(config.Limits); err != nil {
 		return childStatus{Error: "the resource limits could not be set: " + err.Error()}
+	}
+	// Not dumpable, process 1's /proc entries belong to no user of the
+	// namespace, so the command cannot open its status pipe through
+	// /proc/1/fd.
+	if err := unix.Prctl(unix.PR_SET_DUMPABLE, 0, 0, 0, 0); err != nil {
+		return childStatus{Error: "the sandbox's first process could not be hidden from the command"}
 	}
 	if err := lockDown(); err != nil {
 		return childStatus{Error: "the system call filter could not be installed: " + err.Error()}
@@ -164,7 +176,12 @@ func isolateHost() error {
 	return nil
 }
 
+// setLimits sets the resource limits the command inherits and makes the
+// sandbox's processes the first the kernel's out-of-memory killer ends.
 func setLimits(limits Limits) error {
+	if err := os.WriteFile("/proc/self/oom_score_adj", []byte("1000"), 0); err != nil {
+		return err
+	}
 	for _, limit := range []struct {
 		resource int
 		value    uint64
