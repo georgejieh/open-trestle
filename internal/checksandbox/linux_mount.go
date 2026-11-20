@@ -60,6 +60,11 @@ func buildRoot(config childConfig) error {
 	if err := copyTree(config.Tree, filepath.Join(root, sandboxWork), config.Limits.DiskBytes); err != nil {
 		return fmt.Errorf("tree copy: %w", err)
 	}
+	if config.HomeSeed != "" {
+		if err := copyTree(config.HomeSeed, filepath.Join(root, sandboxHome), config.Limits.DiskBytes); err != nil {
+			return fmt.Errorf("home seed copy: %w", err)
+		}
+	}
 	if err := unix.Mount("proc", filepath.Join(root, "proc"), "proc", unix.MS_NOSUID|unix.MS_NODEV|unix.MS_NOEXEC, ""); err != nil {
 		return fmt.Errorf("/proc: %w", err)
 	}

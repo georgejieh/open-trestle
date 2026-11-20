@@ -51,6 +51,11 @@ func run(ctx context.Context, spec Spec) (Result, error) {
 	if err := copyTree(spec.Tree, work, spec.Limits.DiskBytes); err != nil {
 		return Result{}, unavailable("the tree could not be copied into the scratch (%v)", err)
 	}
+	if spec.HomeSeed != "" {
+		if err := copyTree(spec.HomeSeed, home, spec.Limits.DiskBytes); err != nil {
+			return Result{}, unavailable("the home seed could not be copied into the scratch (%v)", err)
+		}
+	}
 	readOnly := make([]string, 0, len(spec.ReadOnly))
 	for _, path := range spec.ReadOnly {
 		if resolved, err := filepath.EvalSymlinks(path); err == nil {

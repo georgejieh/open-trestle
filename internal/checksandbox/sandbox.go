@@ -67,6 +67,10 @@ type Spec struct {
 	// program, $HOME, $TMPDIR and $WORK expand to the sandbox's private
 	// home, temporary folder and tree copy.
 	Env []string
+	// HomeSeed, when set, is a host folder whose contents are copied into
+	// the private home before the run, such as a prebuilt build cache. The
+	// run changes only its own copy.
+	HomeSeed string
 	// Report, when set, is a file path relative to the scratch's temporary
 	// folder that the runner writes its structured results to. Its content
 	// is returned in Result.Report.
@@ -148,6 +152,9 @@ func (spec Spec) validate() error {
 		if !filepath.IsAbs(path) {
 			return unavailable("a toolchain path is not absolute")
 		}
+	}
+	if spec.HomeSeed != "" && !filepath.IsAbs(spec.HomeSeed) {
+		return unavailable("the home seed path is not absolute")
 	}
 	for _, entry := range spec.Env {
 		if key, _, ok := strings.Cut(entry, "="); !ok || key == "" {

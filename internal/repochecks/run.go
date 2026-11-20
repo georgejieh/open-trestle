@@ -90,8 +90,10 @@ func runWith(ctx context.Context, input Input, machine host) (Report, error) {
 	}
 	defer cleanup()
 	report := Report{}
+	seeds := &goSeeds{homes: map[string]string{}}
+	defer seeds.close()
 	for _, check := range checks {
-		report.Results = append(report.Results, runCheck(ctx, machine, input, check, base, head))
+		report.Results = append(report.Results, runCheck(ctx, machine, input, check, base, head, seeds))
 	}
 	return report, nil
 }
@@ -123,7 +125,7 @@ func prepareTrees(input Input) (string, string, func(), error) {
 	return trees[0], trees[1], cleanup, nil
 }
 
-func runCheck(ctx context.Context, machine host, input Input, check Check, base, head string) Result {
+func runCheck(ctx context.Context, machine host, input Input, check Check, base, head string, seeds *goSeeds) Result {
 	result := Result{Name: check.Name, Stack: check.Stack}
 	if check.Missing != "" {
 		result.Reason = check.Missing
@@ -137,6 +139,9 @@ func runCheck(ctx context.Context, machine host, input Input, check Check, base,
 	spec := checksandbox.Spec{
 		Dir: filepath.FromSlash(check.Dir), Args: append(append([]string{program}, platformArgs(check)...), check.Args...),
 		Path: chain.path, ReadOnly: chain.readOnly, Env: chain.env, Report: check.Report, Limits: input.Limits,
+	}
+	if check.Stack == "go" {
+		spec.HomeSeed = seeds.home(ctx, program, chain, []string{base, head})
 	}
 	trees := []string{base, head}
 	var sides [2][2]map[string]Outcome
@@ -191,6 +196,8 @@ func isFile(name string) bool {
 }
 
 // platformArgs are flags a toolchain needs inside this system's sandbox.
+// The go command cannot run there on Windows, where the NUL device grants
+// nothing to sandboxed processes; its checks report that.
 // Inside a Windows AppContainer, Node cannot resolve real paths through
 // the drive root and its per-file test processes do not start, so tests run
 // in one process without path resolution.

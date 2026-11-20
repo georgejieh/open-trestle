@@ -39,6 +39,7 @@ type childConfig struct {
 	ReadOnly []string
 	Env      []string
 	Report   string
+	HomeSeed string
 	Limits   Limits
 }
 
@@ -81,7 +82,7 @@ func run(ctx context.Context, spec Spec) (Result, error) {
 	}, paths.env(spec.Env)...)
 	config := childConfig{
 		Root: scratch, Tree: spec.Tree, Dir: spec.Dir, Args: paths.args(spec.Args), Path: spec.Path,
-		ReadOnly: spec.ReadOnly, Env: env, Report: spec.Report, Limits: spec.Limits,
+		ReadOnly: spec.ReadOnly, Env: env, Report: spec.Report, HomeSeed: spec.HomeSeed, Limits: spec.Limits,
 	}
 
 	configRead, configWrite, err := os.Pipe()

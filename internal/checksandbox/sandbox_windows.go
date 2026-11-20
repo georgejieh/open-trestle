@@ -57,6 +57,11 @@ func run(ctx context.Context, spec Spec) (Result, error) {
 	if err := copyTree(spec.Tree, work, spec.Limits.DiskBytes); err != nil {
 		return Result{}, unavailable("the tree could not be copied into the scratch (%v)", err)
 	}
+	if spec.HomeSeed != "" {
+		if err := copyTree(spec.HomeSeed, home, spec.Limits.DiskBytes); err != nil {
+			return Result{}, unavailable("the home seed could not be copied into the scratch (%v)", err)
+		}
+	}
 	paths := sandboxPaths{home: home, temporary: temporary, work: work}
 	application, commandLine, err := commandFor(paths.args(spec.Args), spec.Path)
 	if err != nil {
