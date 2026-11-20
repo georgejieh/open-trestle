@@ -21,6 +21,7 @@ no release yet, and each page describes what the code does today. The
 - [Local models](named-local-runtimes.md): Ollama, llama.cpp, vLLM, LM Studio and other servers on your machine.
 - [Local servers without a key](local-provider-no-auth.md): declare a local model server that needs no API key.
 - [Model catalog](model-catalog.md): how setup learns model facts.
+- [Repository checks](repository-checks.md): run the repository's own tests in a sandbox during a review.
 - [Review feedback](local-feedback.md): record your own notes on a past review so that later reviews can use them.
 
 ## Integrate

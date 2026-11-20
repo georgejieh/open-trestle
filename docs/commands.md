@@ -40,6 +40,7 @@ Reviews the latest committed change with the setup that `trestle init` made.
 | `--specialists auto\|none\|ID[,ID...]` | Run the general review plus selected specialists. |
 | `--max-specialists N` | Cap the specialists a set runs. |
 | `--exit-code-policy default\|findings\|strict\|always-zero` | Map a completed review to an exit status. See [exit codes](exit-codes.md#exit-code-policy). |
+| `--checks`, `--no-checks` | Run, or skip, the [repository checks](repository-checks.md) for this review, whatever the saved answer. |
 
 You cannot combine `--profile` and `--specialists`. `trestle review PATH`
 reviews a local fixture file instead.
@@ -91,7 +92,7 @@ Every answer has a flag, and `--no-input` never prompts. See
 | Names | `--owner`, `--tenant`, `--repository`, `--repository-authority`, `--repository-namespace`, `--repository-name` |
 | Capacity and price | `--context-tokens`, `--output-tokens`, `--max-output-tokens`, `--input-micro-usd-per-million-tokens`, `--output-micro-usd-per-million-tokens`, `--max-cost-micro-usd` |
 | Spending | `--spending-limit USD`, `--spending-alert PERCENT` |
-| Review | `--specialists auto\|none`, `--run-review`, `--allow-local-probe` |
+| Review | `--specialists auto\|none`, `--run-review`, `--allow-local-probe`, `--checks` |
 | Evidence | `--generation-model-evidence`, `--verification-model-evidence`, `--broker-evidence`, `--account-evidence`, `--evidence-retrieved-at`, `--reviewed-at`, `--valid-from`, `--valid-until` |
 | Declarations | `--declare-remote-route`, `--declare-opencode-go-account`, `--declare-ollama-cloud-signin`, `--declare-local-capabilities`, `--without-zdr` |
 | Mode | `--no-input` |
@@ -105,6 +106,19 @@ See [API keys](keys.md).
 | `trestle keys` or `trestle keys list` | Each key variable and where its key comes from. |
 | `trestle keys set OPEN_TRESTLE_PROVIDER_NAME` | Type the key (hidden) or pipe it in; it is checked and saved. |
 | `trestle keys remove OPEN_TRESTLE_PROVIDER_NAME` | Delete the saved key. |
+
+### `trestle checks`
+
+Allows or stops running the repository's own tests in a sandbox before each
+review. See [repository checks](repository-checks.md).
+
+| Command | Meaning |
+| --- | --- |
+| `trestle checks on` | Run the checks before every review of this repository. |
+| `trestle checks off` | Never run them, and stop asking. |
+| `trestle checks status` | Show the saved answer and whether this machine has what the sandbox needs. |
+
+Each takes `--directory PATH` for a setup in another folder.
 
 ## Integrations
 
@@ -123,7 +137,7 @@ flags.
 
 The other flags are `--tenant`, `--repository`, `--route-inventory PATH`, `--runtime-policy
 PATH`, `--egress local-only|policy-approved`, `--timeout DURATION`, `--format
-json|text|sarif|markdown`, `--all`, `--verbose`, `--exit-code-policy`,
+json|text|sarif|markdown`, `--all`, `--verbose`, `--repository-checks`, `--exit-code-policy`,
 `--investigation-policy PATH` or `--retained-memory-input PATH`, and `--profile`
 or `--specialists` with `--max-specialists`.
 

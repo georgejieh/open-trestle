@@ -19,6 +19,7 @@ what the release adds.
 | Saving a key with `trestle keys set` | Yes | Yes | Untested | Yes |
 | Protected setup, credential and usage files | Yes | Yes | Untested | Yes |
 | Repository index (`trestle index`) | Yes | Yes | Untested | Yes |
+| [Repository checks](repository-checks.md) sandbox | Yes, where unprivileged user namespaces are allowed | Same | Code present, untested | Yes; Go checks cannot run unless an administrator opens the `NUL` device to sandboxed apps |
 | `trestle update` | Yes | Refused | Refused | Refused |
 | Home screen | Yes | Yes | Untested | Untested |
 
