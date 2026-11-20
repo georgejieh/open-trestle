@@ -89,41 +89,79 @@ func TestCheckRunsBoundTextCountsAndLists(t *testing.T) {
 	}
 }
 
-func TestNewCheckRunsRefusesMalformedOutcomes(t *testing.T) {
-	ran := func(mutate func(*CheckRun)) []CheckRun {
-		run := CheckRun{Name: "go test ./...", State: CheckRunRan, Tests: 2, Regressions: []string{"a.TestA"}}
-		mutate(&run)
-		return []CheckRun{run}
-	}
-	cases := map[string]struct {
-		base, head, scope string
-		runs              []CheckRun
-	}{
-		"symbolic base":              {"HEAD", checkRunsHead, CheckRunsChangedOnly, ran(func(*CheckRun) {})},
-		"uppercase head":             {checkRunsBase, strings.Repeat("A", 40), CheckRunsChangedOnly, ran(func(*CheckRun) {})},
-		"mixed object formats":       {checkRunsBase, strings.Repeat("2", 64), CheckRunsChangedOnly, ran(func(*CheckRun) {})},
-		"unknown scope":              {checkRunsBase, checkRunsHead, "everything", ran(func(*CheckRun) {})},
-		"empty scope":                {checkRunsBase, checkRunsHead, "", ran(func(*CheckRun) {})},
-		"unknown state":              {checkRunsBase, checkRunsHead, CheckRunsChangedOnly, ran(func(c *CheckRun) { c.State = "passed" })},
-		"empty name":                 {checkRunsBase, checkRunsHead, CheckRunsChangedOnly, ran(func(c *CheckRun) { c.Name = " \n" })},
-		"reason on a run that ran":   {checkRunsBase, checkRunsHead, CheckRunsChangedOnly, ran(func(c *CheckRun) { c.Reason = "skipped" })},
-		"blank test ID":              {checkRunsBase, checkRunsHead, CheckRunsChangedOnly, ran(func(c *CheckRun) { c.Regressions = []string{" "} })},
-		"more failures than tests":   {checkRunsBase, checkRunsHead, CheckRunsChangedOnly, ran(func(c *CheckRun) { c.NewFailures = []string{"a.TestB", "a.TestC"} })},
-		"omitted IDs past the tests": {checkRunsBase, checkRunsHead, CheckRunsChangedOnly, ran(func(c *CheckRun) { c.RegressionsOmitted = 2 })},
-		"negative flaky count":       {checkRunsBase, checkRunsHead, CheckRunsChangedOnly, ran(func(c *CheckRun) { c.FlakyDropped = -1 })},
-		"negative omitted count":     {checkRunsBase, checkRunsHead, CheckRunsChangedOnly, ran(func(c *CheckRun) { c.RegressionsOmitted = -1 })},
-		"could not run without reason": {checkRunsBase, checkRunsHead, CheckRunsChangedOnly, ran(func(c *CheckRun) {
-			c.State, c.Tests, c.Regressions = CheckRunCouldNotRun, 0, nil
-		})},
-		"could not run with results": {checkRunsBase, checkRunsHead, CheckRunsChangedOnly, ran(func(c *CheckRun) { c.State, c.Reason = CheckRunCouldNotRun, "no runner" })},
-	}
-	for name, value := range cases {
-		if _, err := NewCheckRuns(value.base, value.head, value.scope, value.runs); err == nil {
+func TestNewCheckRunsRefusesAnotherChangeOrScope(t *testing.T) {
+	runs := []CheckRun{{Name: "go test ./...", State: CheckRunRan, Tests: 2, Regressions: []string{"a.TestA"}}}
+	for name, value := range map[string]struct{ base, head, scope string }{
+		"symbolic base":        {"HEAD", checkRunsHead, CheckRunsChangedOnly},
+		"uppercase head":       {checkRunsBase, strings.Repeat("A", 40), CheckRunsChangedOnly},
+		"mixed object formats": {checkRunsBase, strings.Repeat("2", 64), CheckRunsChangedOnly},
+		"unknown scope":        {checkRunsBase, checkRunsHead, "everything"},
+		"empty scope":          {checkRunsBase, checkRunsHead, ""},
+	} {
+		if _, err := NewCheckRuns(value.base, value.head, value.scope, runs); err == nil {
 			t.Fatalf("%s: accepted", name)
 		}
 	}
 	if empty, err := NewCheckRuns(checkRunsBase, checkRunsHead, CheckRunsChangedOnly, nil); err != nil || empty.IsZero() || len(empty.Runs()) != 0 {
 		t.Fatalf("a change no check applies to is not a valid empty outcome: %v", err)
+	}
+}
+
+// A malformed run becomes one that could not run; the other runs keep
+// their outcomes.
+func TestNewCheckRunsKeepsTheOtherRunsOfAMalformedOne(t *testing.T) {
+	good := CheckRun{Name: "go vet ./...", State: CheckRunRan, Tests: 1, Fixed: 1}
+	for name, mutate := range map[string]func(*CheckRun){
+		"unknown state":            func(c *CheckRun) { c.State = "passed" },
+		"empty name":               func(c *CheckRun) { c.Name = " \n" },
+		"reason on a run that ran": func(c *CheckRun) { c.Reason = "skipped" },
+		"blank test ID":            func(c *CheckRun) { c.Regressions = []string{" "} },
+		"more failures than tests": func(c *CheckRun) { c.NewFailures = []string{"a.TestB", "a.TestC"} },
+		"more classified than ran": func(c *CheckRun) { c.Fixed, c.StillFailing = 1, 1 },
+		"omitted IDs past tests":   func(c *CheckRun) { c.RegressionsOmitted = 2 },
+		"negative flaky count":     func(c *CheckRun) { c.FlakyDropped = -1 },
+		"negative omitted count":   func(c *CheckRun) { c.StoppedRunningOmitted = -1 },
+		"count past its bound":     func(c *CheckRun) { c.Tests = maxCheckRunCount + 1 },
+		"could not run with stops": func(c *CheckRun) {
+			c.State, c.Reason, c.Tests, c.Regressions, c.StoppedRunning = CheckRunCouldNotRun, "no runner", 0, nil, []string{"a.TestA"}
+		},
+		"could not run with result": func(c *CheckRun) { c.State, c.Reason = CheckRunCouldNotRun, "no runner" },
+		"could not run without reason": func(c *CheckRun) {
+			c.State, c.Tests, c.Regressions = CheckRunCouldNotRun, 0, nil
+		},
+	} {
+		bad := CheckRun{Name: "go test ./...", State: CheckRunRan, Tests: 2, Regressions: []string{"a.TestA"}}
+		mutate(&bad)
+		value, err := NewCheckRuns(checkRunsBase, checkRunsHead, CheckRunsChangedOnly, []CheckRun{bad, good})
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		listed := value.Runs()
+		wantName := bad.Name
+		if name == "empty name" {
+			wantName = "unnamed check"
+		}
+		if listed[0].State != CheckRunCouldNotRun || listed[0].Reason != checkRunNotBound || listed[0].Name != wantName || !reflect.DeepEqual(listed[1], CheckRun{Name: good.Name, State: CheckRunRan, Tests: 1, Fixed: 1}) {
+			t.Fatalf("%s: runs %+v", name, listed)
+		}
+	}
+}
+
+// Tests that stopped running are listed after the regressions and new
+// failures, within the same bounds, and are not head results.
+func TestCheckRunsListTestsThatStoppedRunning(t *testing.T) {
+	value := mustCheckRuns(t,
+		CheckRun{Name: "go test ./a", State: CheckRunRan, Tests: 1, Regressions: []string{"a.TestR"}, StoppedRunning: checkRunTestIDs("s.", 40)},
+		CheckRun{Name: "pytest", State: CheckRunRan, Tests: 40, NewFailures: checkRunTestIDs("n.", 31), Fixed: 1, StillFailing: 2, StoppedRunning: []string{"t.test_gone"}},
+	)
+	listed := value.Runs()
+	if len(listed[0].StoppedRunning) != 32 || listed[0].StoppedRunningOmitted != 8 || len(listed[1].NewFailures) != 31 || len(listed[1].StoppedRunning) != 0 || listed[1].StoppedRunningOmitted != 1 ||
+		listed[1].Fixed != 1 || listed[1].StillFailing != 2 {
+		t.Fatalf("runs %+v", listed)
+	}
+	partial, err := NewCheckRuns(checkRunsBase, checkRunsHead, CheckRunsChangedAndPartialDependents, nil)
+	if err != nil || partial.Scope() != CheckRunsChangedAndPartialDependents {
+		t.Fatalf("partial dependents scope: %v", err)
 	}
 }
 
@@ -238,6 +276,12 @@ func TestRecordedCheckRunsAreCheckedOnReadback(t *testing.T) {
 		"reason on a run that ran": func(w *checkRunsWire) { w.Runs[0].Reason = "skipped" },
 		"results on a skipped run": func(w *checkRunsWire) { w.Runs[1].Tests = 1 },
 		"more failures than tests": func(w *checkRunsWire) { w.Runs[0].RegressionsOmitted = 3 },
+		"fixed past the tests":     func(w *checkRunsWire) { w.Runs[0].Fixed = 3 },
+		"stopped on a skipped run": func(w *checkRunsWire) { w.Runs[1].StoppedRunning = []string{"a.TestA"} },
+		"oversized stopped ID": func(w *checkRunsWire) {
+			w.Runs[0].StoppedRunning = []string{strings.Repeat("s", maxCheckRunTestIDBytes+1)}
+		},
+		"partial scope relabelled": func(w *checkRunsWire) { w.Scope = "changed_and_some_dependents" },
 		"negative omitted count":   func(w *checkRunsWire) { w.RunsOmitted = -1 },
 		"missing runs list":        func(w *checkRunsWire) { w.Runs = nil },
 		"list past its bound": func(w *checkRunsWire) {
@@ -350,7 +394,7 @@ func maskedCheckRunsProjection(t *testing.T, document sanitizedRequestDocument, 
 func TestCheckRunTextIsSecretScannedBeforeEgress(t *testing.T) {
 	const secret = "sk-proj-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	runs := mustCheckRuns(t,
-		CheckRun{Name: "go test ./calc", State: CheckRunRan, Tests: 3, Regressions: []string{"calc.TestKey_" + secret}, NewFailures: []string{"calc.TestNew"}},
+		CheckRun{Name: "go test ./calc", State: CheckRunRan, Tests: 3, Regressions: []string{"calc.TestKey_" + secret}, NewFailures: []string{"calc.TestNew"}, StoppedRunning: []string{"calc.TestGone"}},
 		CheckRun{Name: "npm test", State: CheckRunCouldNotRun, Reason: "missing dependency: " + secret},
 	)
 	generation, _ := checkRunsPacket(t, runs)
@@ -379,7 +423,7 @@ func TestCheckRunTextIsSecretScannedBeforeEgress(t *testing.T) {
 				roles = append(roles, string(field.role)+"="+*field.value)
 			}
 		}
-		want := []string{"stated_intent_text=fix: key handling\n", "check_run_text=go test ./calc", "check_run_text=calc.TestKey_" + secret, "check_run_text=calc.TestNew", "check_run_text=npm test", "check_run_text=missing dependency: " + secret}
+		want := []string{"stated_intent_text=fix: key handling\n", "check_run_text=go test ./calc", "check_run_text=calc.TestKey_" + secret, "check_run_text=calc.TestNew", "check_run_text=calc.TestGone", "check_run_text=npm test", "check_run_text=missing dependency: " + secret}
 		if name == "verification" {
 			want = append(want, "candidate_title=Candidate")
 		}

@@ -21,12 +21,12 @@ import (
 // host-issued source IDs and numbers, and context_manifest and
 // repository_checks carry only host-issued source IDs, closed tokens and
 // numbers, so they add no scanned field. Each check_runs run name, reason,
-// regression ID and new-failure ID is repository text, scanned as
-// check_run_text; its source, authority, commit IDs, scope, states and
-// counts are host-derived.
+// regression ID, new-failure ID and stopped-running ID is repository text,
+// scanned as check_run_text; its source, authority, commit IDs, scope,
+// states and counts are host-derived.
 const (
-	generationSanitizableWireShapeIdentity   = "fc577adafd076404306185dec71e5f6aa5c615aa67e8d8c8dfe901ed2eb3ccfe"
-	verificationSanitizableWireShapeIdentity = "3f9776a3b35db4e08311ad05c353e98f1004b11f236e47b8aafdc9eee6e39706"
+	generationSanitizableWireShapeIdentity   = "83799952c5ceaf3cdf9949c4cd4b5c876f2f8efd8050795c1ea7683c0c7df9c8"
+	verificationSanitizableWireShapeIdentity = "e44e027d955433d371fa81cbc2ed5ac2178acb05ab387cb97b3f275f8794a22f"
 )
 
 func wireShapeIdentity(root reflect.Type) string {
@@ -163,7 +163,8 @@ func appendStatedIntentFieldReferences(fields []sanitizedFieldReference, intent 
 }
 
 // appendCheckRunsFieldReferences adds, for each run in order, its name, its
-// reason when it has one, then each regression and each new-failure test ID.
+// reason when it has one, then each regression, new-failure and
+// stopped-running test ID.
 // Masking keeps every value's length, so the object stays within its bounds
 // after scanning.
 func appendCheckRunsFieldReferences(fields []sanitizedFieldReference, runs *checkRunsWire) []sanitizedFieldReference {
@@ -176,7 +177,7 @@ func appendCheckRunsFieldReferences(fields []sanitizedFieldReference, runs *chec
 		if run.Reason != "" {
 			fields = append(fields, sanitizedFieldReference{FieldRoleCheckRunText, &run.Reason})
 		}
-		for _, ids := range [][]string{run.Regressions, run.NewFailures} {
+		for _, ids := range [][]string{run.Regressions, run.NewFailures, run.StoppedRunning} {
 			for idIndex := range ids {
 				fields = append(fields, sanitizedFieldReference{FieldRoleCheckRunText, &ids[idIndex]})
 			}

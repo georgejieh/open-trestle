@@ -109,6 +109,29 @@ func TestCheckRunsMustNameTheReviewedRange(t *testing.T) {
 	}
 }
 
+// The line counts tests that stopped running, were fixed or still fail, and
+// says when the index covered only some of the dependents.
+func TestCheckRunsWalkthroughLineCountsEveryOutcome(t *testing.T) {
+	runs, err := review.NewCheckRuns(strings.Repeat("a", 40), strings.Repeat("b", 40), review.CheckRunsChangedAndPartialDependents, []review.CheckRun{
+		{Name: "go test ./a", State: review.CheckRunRan, Tests: 6, Regressions: []string{"a.TestR"}, Fixed: 2, StillFailing: 3, StoppedRunning: []string{"a.TestGone", "a.TestOld"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	value := checkRunsWalkthrough(runs)
+	if !value.valid() || value.StoppedRunning != 2 || value.Fixed != 2 || value.StillFailing != 3 {
+		t.Fatalf("walkthrough %+v", value)
+	}
+	want := "check runs: ran 1 of 1 check in the sandbox (changed files and some of their dependents; the repository index did not cover them all): 1 regression (go test ./a: a.TestR), 2 tests stopped running, 2 fixed, 3 still failing, 0 flaky dropped"
+	if lines := checkRunsText(value, func(s string) string { return s }); len(lines) != 1 || lines[0] != want {
+		t.Fatalf("line = %q", lines)
+	}
+	value.Fixed = -1
+	if value.valid() {
+		t.Fatal("a negative fixed count validated")
+	}
+}
+
 // An investigation session refuses check runs at creation: its pipeline has
 // its own context contract.
 func TestInvestigationSessionRefusesCheckRuns(t *testing.T) {
