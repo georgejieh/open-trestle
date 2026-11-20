@@ -211,6 +211,12 @@ func (paths sandboxPaths) expand(text string) string {
 	})
 }
 
+// ExpandEnv expands $HOME and $TMPDIR in the values of entries as a run
+// does, for a host command that must see the same environment.
+func ExpandEnv(entries []string, home, temporary string) []string {
+	return sandboxPaths{home: home, temporary: temporary}.env(entries)
+}
+
 // env expands the values of entries.
 func (paths sandboxPaths) env(entries []string) []string {
 	expanded := make([]string, 0, len(entries))

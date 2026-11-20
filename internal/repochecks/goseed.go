@@ -8,11 +8,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/georgejieh/open-trestle/internal/checksandbox"
 )
 
 // goSeedTime bounds the standard library build of one review.
@@ -66,7 +69,7 @@ func buildGoSeed(ctx context.Context, program string, chain toolchain, trees []s
 	if goroot == "" {
 		return "", func() {}
 	}
-	packages := standardImports(goroot, trees)
+	packages := standardImports(ctx, goroot, trees)
 	root, err := os.MkdirTemp("", "open-trestle-go-seed-")
 	if err != nil {
 		return "", func() {}
@@ -79,43 +82,40 @@ func buildGoSeed(ctx context.Context, program string, chain toolchain, trees []s
 	}
 	ctx, cancel := context.WithTimeout(ctx, goSeedTime)
 	defer cancel()
-	command := exec.CommandContext(ctx, filepath.Join(chain.path[0], program), append([]string{"build"}, packages...)...)
+	command := exec.CommandContext(ctx, filepath.Join(chain.path[0], program), append([]string{"build", "--"}, packages...)...)
 	command.Dir = root
 	command.Env = append([]string{"PATH=" + strings.Join(chain.path, string(os.PathListSeparator)), "HOME=" + home, "TMPDIR=" + temporary, "TEMP=" + temporary, "TMP=" + temporary},
-		expandSeedEnv(chain.env, home, temporary)...)
-	if command.Run() != nil {
-		cleanup()
-		return "", func() {}
-	}
+		checksandbox.ExpandEnv(chain.env, home, temporary)...)
+	// A package that fails to build leaves the others in the cache, which
+	// is all a run needs from it.
+	_ = command.Run()
 	return home, cleanup
 }
 
-// expandSeedEnv expands $HOME and $TMPDIR in the values of entries, as the
-// sandbox does for its own folders.
-func expandSeedEnv(entries []string, home, temporary string) []string {
-	expanded := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		key, value, _ := strings.Cut(entry, "=")
-		expanded = append(expanded, key+"="+os.Expand(value, func(name string) string {
-			switch name {
-			case "HOME":
-				return home
-			case "TMPDIR":
-				return temporary
-			}
-			return "$" + name
-		}))
-	}
-	return expanded
-}
+// Bounds on reading the trees for import paths.
+const (
+	maxSeedFileBytes = 1 << 20
+	maxSeedPackages  = 1024
+)
+
+// standardPackage matches the import path of a standard library package
+// that a repository may import: lowercase word segments, so nothing in it
+// can read as a flag, a pattern or a path outside GOROOT.
+var standardPackage = regexp.MustCompile(`^[a-z0-9_]+(/[a-z0-9_]+)*$`)
 
 // standardImports lists the standard library packages that the Go files of
-// trees import, plus those every test binary links.
-func standardImports(goroot string, trees []string) []string {
+// trees import, plus those every test binary links. The import paths come
+// from the repository, so each must be a canonical standard library name
+// that exists in GOROOT, and the command, internal and vendored packages
+// are left out.
+func standardImports(ctx context.Context, goroot string, trees []string) []string {
 	packages := slices.Clone(goSeedRoots)
 	files := token.NewFileSet()
 	for _, tree := range trees {
 		_ = filepath.WalkDir(tree, func(name string, entry fs.DirEntry, err error) error {
+			if ctx.Err() != nil || len(packages) >= maxSeedPackages {
+				return filepath.SkipAll
+			}
 			if err != nil {
 				return nil
 			}
@@ -125,12 +125,15 @@ func standardImports(goroot string, trees []string) []string {
 			if !entry.Type().IsRegular() || !strings.HasSuffix(name, ".go") {
 				return nil
 			}
+			if info, err := entry.Info(); err != nil || info.Size() > maxSeedFileBytes {
+				return nil
+			}
 			parsed, err := parser.ParseFile(files, name, nil, parser.ImportsOnly)
 			if err != nil {
 				return nil
 			}
 			for _, spec := range parsed.Imports {
-				if path, err := strconv.Unquote(spec.Path.Value); err == nil && isDir(filepath.Join(goroot, "src", filepath.FromSlash(path))) {
+				if path, err := strconv.Unquote(spec.Path.Value); err == nil && seedable(goroot, path) {
 					packages = append(packages, path)
 				}
 			}
@@ -139,4 +142,11 @@ func standardImports(goroot string, trees []string) []string {
 	}
 	slices.Sort(packages)
 	return slices.Compact(packages)
+}
+
+func seedable(goroot, path string) bool {
+	top := strings.SplitN(path, "/", 2)[0]
+	return standardPackage.MatchString(path) && top != "cmd" && top != "internal" && top != "vendor" &&
+		!strings.Contains(path, "/internal/") && !strings.HasSuffix(path, "/internal") &&
+		isDir(filepath.Join(goroot, "src", filepath.FromSlash(path)))
 }
