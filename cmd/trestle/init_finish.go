@@ -741,7 +741,7 @@ func (w *initWizard) finish(setup initSetup, outcome initOutcome) (int, error) {
 		return initExitDone, nil
 	}
 	command := outcome.reviewCommand
-	if allowed, _ := readChecksConsent(w.a.directory); allowed {
+	if allowed, _ := readChecksConsent(w.a.directory, checksRepository(w.ctx, w.checkout)); allowed {
 		command = append(append([]string{}, command...), "--repository-checks")
 	}
 	return w.review(command), nil

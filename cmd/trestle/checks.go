@@ -3,12 +3,15 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -21,8 +24,10 @@ import (
 )
 
 // Consent to run a repository's own tests and linters is stored per setup
-// in checks.json, a protected 0600 file. Without it a review asks; with it
-// the stored answer holds until `trestle checks on|off` changes it.
+// in checks.json, a protected 0600 file, with the identity of the
+// repository it was given for. Without it, or for another repository, a
+// review asks; with it the stored answer holds until `trestle checks
+// on|off` changes it.
 
 const checksConsentContract = "open-trestle/repository-checks-consent"
 
@@ -31,21 +36,38 @@ const checksQuestion = "Run this repository's tests inside a sandbox on this mac
 type checksConsent struct {
 	Contract   string `json:"contract"`
 	Version    int    `json:"schema_version"`
+	Repository string `json:"repository"`
 	Allowed    bool   `json:"allowed"`
 	RecordedAt string `json:"recorded_at"`
 }
 
-// readChecksConsent returns the stored answer, and false when there is none
-// or it cannot be trusted.
-func readChecksConsent(dir string) (allowed, decided bool) {
+// checksRepository identifies the repository of checkout by its root
+// commits, which another repository cloned into the same folder does not
+// share: the SHA-256 of their sorted IDs. It is "" when there is no commit
+// or Git cannot read them.
+func checksRepository(ctx context.Context, checkout string) string {
+	roots, truncated, err := initGit(ctx, checkout, "rev-list", "--max-parents=0", "HEAD")
+	if err != nil || truncated || strings.TrimSpace(roots) == "" {
+		return ""
+	}
+	ids := strings.Fields(roots)
+	slices.Sort(ids)
+	digest := sha256.Sum256([]byte(strings.Join(ids, "\n")))
+	return hex.EncodeToString(digest[:])
+}
+
+// readChecksConsent returns the answer stored for repository, and false
+// when there is none, it was given for another repository, or it cannot be
+// trusted.
+func readChecksConsent(dir, repository string) (allowed, decided bool) {
 	content, err := readSetupBootstrapFile(filepath.Join(dir, "checks.json"))
-	if err != nil {
+	if err != nil || repository == "" {
 		return false, false
 	}
 	var consent checksConsent
 	decoder := json.NewDecoder(bytes.NewReader(content))
 	decoder.DisallowUnknownFields()
-	if decoder.Decode(&consent) != nil || decoder.Decode(&struct{}{}) != io.EOF || consent.Contract != checksConsentContract || consent.Version != 1 {
+	if decoder.Decode(&consent) != nil || decoder.Decode(&struct{}{}) != io.EOF || consent.Contract != checksConsentContract || consent.Version != 1 || consent.Repository != repository {
 		return false, false
 	}
 	if _, err := time.Parse(time.RFC3339, consent.RecordedAt); err != nil {
@@ -54,8 +76,11 @@ func readChecksConsent(dir string) (allowed, decided bool) {
 	return consent.Allowed, true
 }
 
-func writeChecksConsent(ctx context.Context, dir string, allowed bool) error {
-	encoded, err := json.Marshal(checksConsent{Contract: checksConsentContract, Version: 1, Allowed: allowed, RecordedAt: time.Now().UTC().Format(time.RFC3339)})
+func writeChecksConsent(ctx context.Context, dir, repository string, allowed bool) error {
+	if repository == "" {
+		return errors.New("the repository has no commit to recognise it by")
+	}
+	encoded, err := json.Marshal(checksConsent{Contract: checksConsentContract, Version: 1, Repository: repository, Allowed: allowed, RecordedAt: time.Now().UTC().Format(time.RFC3339)})
 	if err != nil {
 		return err
 	}
@@ -97,14 +122,15 @@ func runChecks(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		fmt.Fprintf(stderr, "trestle checks: this repository has no Open Trestle setup yet (looked in %s). Run trestle init here first.\n", initDisplayPath(dir))
 		return 3
 	}
+	repository := checksRepository(ctx, checkout)
 	switch args[0] {
 	case "on", "off":
-		if err := writeChecksConsent(ctx, dir, args[0] == "on"); err != nil {
+		if err := writeChecksConsent(ctx, dir, repository, args[0] == "on"); err != nil {
 			fmt.Fprintf(stderr, "trestle checks: the answer could not be saved in %s (%v).\n", initDisplayPath(dir), err)
 			return 4
 		}
 	}
-	allowed, decided := readChecksConsent(dir)
+	allowed, decided := readChecksConsent(dir, repository)
 	switch {
 	case !decided:
 		fmt.Fprintln(stdout, "Repository checks: not decided yet. The next review asks before it runs any.")
@@ -132,7 +158,8 @@ func reviewChecksAllowed(ctx context.Context, w *initWizard, dir string, options
 	if options.checks {
 		return true
 	}
-	if allowed, decided := readChecksConsent(dir); decided {
+	repository := checksRepository(ctx, w.checkout)
+	if allowed, decided := readChecksConsent(dir, repository); decided {
 		return allowed
 	}
 	if !interactiveInput(in) || !initTerminal(w.out) {
@@ -147,7 +174,7 @@ func reviewChecksAllowed(ctx context.Context, w *initWizard, dir string, options
 		return false
 	}
 	if choice == 2 {
-		if err := writeChecksConsent(ctx, dir, true); err != nil {
+		if err := writeChecksConsent(ctx, dir, repository, true); err != nil {
 			w.say("  %s The answer could not be saved (%v); this review runs the checks once.", w.wait, err)
 		}
 	}
@@ -168,14 +195,15 @@ func interactiveInput(in io.Reader) bool {
 // questions; with --no-input, --checks answers yes and its absence no. When
 // no answer can be read, nothing is saved and a review asks.
 func (w *initWizard) askChecksConsent() {
-	if _, decided := readChecksConsent(w.a.directory); decided {
+	repository := checksRepository(w.ctx, w.checkout)
+	if _, decided := readChecksConsent(w.a.directory, repository); decided {
 		return
 	}
 	allowed, err := w.confirm(checksQuestion, false, w.bools["checks"])
 	if err != nil {
 		return
 	}
-	if err := writeChecksConsent(w.ctx, w.a.directory, allowed); err != nil {
+	if err := writeChecksConsent(w.ctx, w.a.directory, repository, allowed); err != nil {
 		w.say("  %s Your answer could not be saved; a review will ask again.", w.wait)
 		return
 	}
@@ -189,25 +217,36 @@ func (w *initWizard) askChecksConsent() {
 // runRepositoryChecks runs the repository's checks for the change between
 // base and head, read from the verified object store, and returns them for
 // the model requests. The repository index, when the review has one, adds
-// the files that depend on the change; without it the checks cover the
-// changed files only, and the result says so. A failure to prepare the trees
-// becomes one check that could not run; it never stops the review.
+// the files that depend on the change; without it, or when it covers only
+// some of them, the result says so. A failure to prepare the trees becomes
+// one check that could not run; it never stops the review. A change that no
+// check applies to is an outcome too, so the walkthrough says so.
 func runRepositoryChecks(ctx context.Context, objectsPath string, base, head evidence.RevisionIdentity, index *reviewIndexContext, stderr io.Writer) *review.CheckRuns {
 	fmt.Fprintln(stderr, "Running this repository's checks for the change in a sandbox (twice on each side)...")
-	dependents, known := index.dependents(ctx)
-	scope := review.CheckRunsChangedAndDependents
-	if !known {
-		scope = review.CheckRunsChangedOnly
+	dependents, scope := index.dependents(ctx)
+	switch scope {
+	case review.CheckRunsChangedOnly:
 		fmt.Fprintln(stderr, "The repository index is unavailable, so the checks cover the changed files only.")
+	case review.CheckRunsChangedAndPartialDependents:
+		fmt.Fprintln(stderr, "The repository index does not cover the whole change, so the checks cover only some of its dependents.")
 	}
 	report, err := repositoryChecksReport(ctx, objectsPath, base, head, dependents)
 	if err != nil {
 		report = repochecks.Report{Results: []repochecks.Result{{Name: "repository checks", Reason: err.Error()}}}
 	}
-	fmt.Fprintln(stderr, terminalText(report.Summary(), 2000))
-	if len(report.Results) == 0 {
+	fmt.Fprintln(stderr, terminalText(withoutHomeFolder(report.Summary()), 2000))
+	value, err := review.NewCheckRuns(base.Digest(), head.Digest(), scope, checkRunsOf(report))
+	if err != nil {
+		fmt.Fprintln(stderr, "The check results could not be bound to the review; the review continues without them.")
 		return nil
 	}
+	return &value
+}
+
+// checkRunsOf converts a report for the model requests. Test IDs and
+// reasons may hold the paths of the trees, which can sit below the home
+// folder, so it is shown as ~ in them.
+func checkRunsOf(report repochecks.Report) []review.CheckRun {
 	runs := make([]review.CheckRun, 0, len(report.Results))
 	for _, result := range report.Results {
 		state := review.CheckRunRan
@@ -216,25 +255,26 @@ func runRepositoryChecks(ctx context.Context, objectsPath string, base, head evi
 		}
 		runs = append(runs, review.CheckRun{
 			Name: result.Name, State: state, Reason: withoutHomeFolder(result.Reason), Tests: result.Tests, FlakyDropped: result.Flaky,
-			Regressions: namedTests(result.Regressions), NewFailures: namedTests(result.NewFailures),
+			Fixed: result.Fixed, StillFailing: result.StillFailing,
+			Regressions: namedTests(result.Regressions), NewFailures: namedTests(result.NewFailures), StoppedRunning: namedTests(result.StoppedRunning),
 		})
 	}
-	value, err := review.NewCheckRuns(base.Digest(), head.Digest(), scope, runs)
-	if err != nil {
-		fmt.Fprintln(stderr, "The check results could not be bound to the review; the review continues without them.")
-		return nil
-	}
-	return &value
+	return runs
 }
 
-// withoutHomeFolder shows the home folder as ~ in a reason, so a toolchain
-// path does not carry the account name into model requests.
-func withoutHomeFolder(reason string) string {
+// withoutHomeFolder shows the home folder as ~ in text, so a toolchain or
+// tree path does not carry the account name into model requests. It covers
+// the folder written with either separator, as a file URL writes it.
+func withoutHomeFolder(text string) string {
 	home, err := os.UserHomeDir()
 	if err != nil || len(home) < 2 {
-		return reason
+		return text
 	}
-	return strings.ReplaceAll(reason, home, "~")
+	text = strings.ReplaceAll(text, home, "~")
+	if slashed := filepath.ToSlash(home); slashed != home {
+		text = strings.ReplaceAll(text, slashed, "~")
+	}
+	return text
 }
 
 // terminalText makes repository-derived text safe to print: control and
@@ -256,12 +296,12 @@ func terminalText(text string, limit int) string {
 }
 
 // namedTests drops test IDs that hold no visible text, which the bound
-// outcomes cannot carry.
+// outcomes cannot carry, and shows the home folder as ~ in the others.
 func namedTests(ids []string) []string {
 	var named []string
 	for _, id := range ids {
 		if strings.TrimFunc(id, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) != "" {
-			named = append(named, id)
+			named = append(named, withoutHomeFolder(id))
 		}
 	}
 	return named

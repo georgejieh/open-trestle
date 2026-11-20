@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -42,7 +43,7 @@ func TestReviewRunsAllowedRepositoryChecks(t *testing.T) {
 	}
 	checkout := checksChangeCheckout(t)
 	dir := latestChangeSetupWith(t, checkout, "--specialists", "none", "--checks")
-	if allowed, decided := readChecksConsent(dir); !allowed || !decided {
+	if allowed, decided := readChecksConsent(dir, checksRepository(context.Background(), checkout)); !allowed || !decided {
 		t.Fatalf("init --checks saved %v %v", allowed, decided)
 	}
 	transport := latestFixtureTransport(t)
@@ -60,7 +61,7 @@ func TestReviewRunsAllowedRepositoryChecks(t *testing.T) {
 		t.Fatalf("stderr lacks the summary:\n%s", stderr)
 	}
 	for index, payload := range transport.payloads {
-		if !strings.Contains(payload, `"check_runs"`) || !strings.Contains(payload, "p.TestConsume") || !strings.Contains(payload, `"changed_and_dependents"`) && !strings.Contains(payload, `"changed_only"`) {
+		if !strings.Contains(payload, `"check_runs"`) || !strings.Contains(payload, "p.TestConsume") || !strings.Contains(payload, `"changed_and_dependents"`) && !strings.Contains(payload, `"changed_and_partial_dependents"`) && !strings.Contains(payload, `"changed_only"`) {
 			t.Fatalf("request %d (%s) lacks the regression:\n%s", index, transport.requests[index], payload)
 		}
 	}
@@ -74,7 +75,7 @@ func TestReviewRunsAllowedRepositoryChecks(t *testing.T) {
 func TestReviewWithoutConsentRunsNoChecks(t *testing.T) {
 	checkout := checksChangeCheckout(t)
 	dir := latestChangeSetup(t, checkout)
-	if allowed, decided := readChecksConsent(dir); allowed || !decided {
+	if allowed, decided := readChecksConsent(dir, checksRepository(context.Background(), checkout)); allowed || !decided {
 		t.Fatalf("init --no-input without --checks saved %v %v, want off", allowed, decided)
 	}
 	if err := os.Remove(filepath.Join(dir, "checks.json")); err != nil {

@@ -4,9 +4,15 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/georgejieh/open-trestle/internal/checksandbox"
+	"github.com/georgejieh/open-trestle/internal/repochecks"
+	"github.com/georgejieh/open-trestle/internal/review"
 )
 
 func checksTestDir(t *testing.T) string {
@@ -20,30 +26,62 @@ func checksTestDir(t *testing.T) string {
 
 func TestChecksConsentRoundTrip(t *testing.T) {
 	dir := checksTestDir(t)
-	if _, decided := readChecksConsent(dir); decided {
+	repository := checksRepository(context.Background(), latestChangeCheckout(t))
+	if len(repository) != 64 {
+		t.Fatalf("repository identity %q", repository)
+	}
+	if _, decided := readChecksConsent(dir, repository); decided {
 		t.Fatal("a new setup has an answer")
 	}
 	for _, allowed := range []bool{true, false} {
-		if err := writeChecksConsent(context.Background(), dir, allowed); err != nil {
+		if err := writeChecksConsent(context.Background(), dir, repository, allowed); err != nil {
 			t.Fatal(err)
 		}
-		if got, decided := readChecksConsent(dir); !decided || got != allowed {
+		if got, decided := readChecksConsent(dir, repository); !decided || got != allowed {
 			t.Fatalf("read %v %v, want %v", got, decided, allowed)
 		}
+	}
+	if err := writeChecksConsent(context.Background(), dir, "", true); err == nil {
+		t.Fatal("an answer was saved for a repository without a commit")
+	}
+}
+
+// An answer belongs to the repository it was given for: another repository
+// in the same folder, or using the same setup folder, is asked again.
+func TestChecksConsentFollowsTheRepository(t *testing.T) {
+	dir := checksTestDir(t)
+	first := latestChangeCheckout(t)
+	if err := writeChecksConsent(context.Background(), dir, checksRepository(context.Background(), first), true); err != nil {
+		t.Fatal(err)
+	}
+	other := t.TempDir()
+	checkoutGit(t, other, "init", "-q", "-b", "main")
+	if err := os.WriteFile(filepath.Join(other, "README"), []byte("other\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	checkoutGit(t, other, "add", ".")
+	checkoutGit(t, other, "commit", "-q", "-m", "other")
+	if _, decided := readChecksConsent(dir, checksRepository(context.Background(), other)); decided {
+		t.Fatal("the answer for one repository held for another")
+	}
+	if _, decided := readChecksConsent(dir, checksRepository(context.Background(), t.TempDir())); decided {
+		t.Fatal("the answer held for a folder that is not a repository")
 	}
 }
 
 func TestChecksConsentRefusesAnUnexpectedFile(t *testing.T) {
 	dir := checksTestDir(t)
+	repository := strings.Repeat("a", 64)
 	for _, content := range []string{
-		`{"contract":"open-trestle/repository-checks-consent","schema_version":2,"allowed":true,"recorded_at":"2026-11-18T00:00:00Z"}`,
-		`{"contract":"open-trestle/repository-checks-consent","schema_version":1,"allowed":true,"recorded_at":"2026-11-18T00:00:00Z","extra":1}`,
-		`{"contract":"other","schema_version":1,"allowed":true,"recorded_at":"2026-11-18T00:00:00Z"}`,
+		`{"contract":"open-trestle/repository-checks-consent","schema_version":2,"repository":"` + repository + `","allowed":true,"recorded_at":"2026-11-18T00:00:00Z"}`,
+		`{"contract":"open-trestle/repository-checks-consent","schema_version":1,"repository":"` + repository + `","allowed":true,"recorded_at":"2026-11-18T00:00:00Z","extra":1}`,
+		`{"contract":"other","schema_version":1,"repository":"` + repository + `","allowed":true,"recorded_at":"2026-11-18T00:00:00Z"}`,
+		`{"contract":"open-trestle/repository-checks-consent","schema_version":1,"allowed":true,"recorded_at":"2026-11-18T00:00:00Z"}`,
 	} {
 		if err := replaceProtectedFile(context.Background(), filepath.Join(dir, "checks.json"), []byte(content)); err != nil {
 			t.Fatal(err)
 		}
-		if _, decided := readChecksConsent(dir); decided {
+		if _, decided := readChecksConsent(dir, repository); decided {
 			t.Fatalf("accepted %s", content)
 		}
 	}
@@ -51,7 +89,8 @@ func TestChecksConsentRefusesAnUnexpectedFile(t *testing.T) {
 
 func TestReviewChecksDecision(t *testing.T) {
 	var out bytes.Buffer
-	w := latestReviewPrinter(context.Background(), &out, t.TempDir())
+	checkout := latestChangeCheckout(t)
+	w := latestReviewPrinter(context.Background(), &out, checkout)
 	dir := checksTestDir(t)
 	nobody := strings.NewReader("")
 	if reviewChecksAllowed(context.Background(), w, dir, latestReviewOptions{}, nobody) {
@@ -63,7 +102,7 @@ func TestReviewChecksDecision(t *testing.T) {
 	if !reviewChecksAllowed(context.Background(), w, dir, latestReviewOptions{checks: true}, nobody) {
 		t.Fatal("--checks did not allow the checks")
 	}
-	if err := writeChecksConsent(context.Background(), dir, true); err != nil {
+	if err := writeChecksConsent(context.Background(), dir, checksRepository(context.Background(), checkout), true); err != nil {
 		t.Fatal(err)
 	}
 	if !reviewChecksAllowed(context.Background(), w, dir, latestReviewOptions{}, nobody) {
@@ -96,7 +135,7 @@ func TestModelReviewAcceptsRepositoryChecksOnce(t *testing.T) {
 }
 
 func TestTerminalTextNeutralisesControls(t *testing.T) {
-	if got := terminalText("npm test\x1b]52;c;aGk=\x07 \u202eok", 100); got != "npm test?]52;c;aGk=? ?ok" {
+	if got := terminalText("npm test\x1b]52;c;aGk=\x07 ‮ok", 100); got != "npm test?]52;c;aGk=? ?ok" {
 		t.Fatalf("got %q", got)
 	}
 	if got := terminalText("abcdef", 3); got != "abc..." {
@@ -104,7 +143,7 @@ func TestTerminalTextNeutralisesControls(t *testing.T) {
 	}
 }
 
-func TestReasonsShowTheHomeFolderAsTilde(t *testing.T) {
+func TestReasonsAndTestIDsShowTheHomeFolderAsTilde(t *testing.T) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		t.Skip("no home folder")
@@ -112,11 +151,65 @@ func TestReasonsShowTheHomeFolderAsTilde(t *testing.T) {
 	if got := withoutHomeFolder("the sandbox could not be given read access to " + filepath.Join(home, "sdk", "go")); strings.Contains(got, home) {
 		t.Fatalf("got %q", got)
 	}
+	// A TAP test named by its file carries the tree's path.
+	id := "file:///" + filepath.ToSlash(filepath.Join(home, "AppData", "tree", "a.test.mjs"))
+	if got := namedTests([]string{id, " \n"}); len(got) != 1 || strings.Contains(got[0], filepath.ToSlash(home)) || !strings.Contains(got[0], "~") {
+		t.Fatalf("got %q", got)
+	}
 }
 
 func TestDependentsWithoutAnIndexAreUnknown(t *testing.T) {
 	var index *reviewIndexContext
-	if paths, known := index.dependents(context.Background()); known || paths != nil {
-		t.Fatalf("got %v %v without an index", paths, known)
+	if paths, scope := index.dependents(context.Background()); scope != review.CheckRunsChangedOnly || paths != nil {
+		t.Fatalf("got %v %v without an index", paths, scope)
+	}
+}
+
+// The whole path from runner output to the bound outcomes: ten tests that
+// stop running on head are listed apart from the regressions and keep the
+// run, and a run out of bounds costs only itself.
+func TestCheckRunsFromRunnerOutputKeepEveryRun(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		if _, err := exec.LookPath("python"); err != nil {
+			t.Skip("python is not installed")
+		}
+	}
+	files := map[string]string{"pkg/mod.py": "", "tests/__init__.py": "", "tests/test_a.py": "", "tests/test_b.py": ""}
+	trees := [2]string{t.TempDir(), t.TempDir()}
+	for _, tree := range trees {
+		for name, content := range files {
+			path := filepath.Join(tree, filepath.FromSlash(name))
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	runner := func(_ context.Context, spec checksandbox.Spec) (checksandbox.Result, error) {
+		lines := []string{"test_b (tests.test_b.B.test_b) ... ok"}
+		if spec.Tree == trees[0] {
+			for index := range 10 {
+				lines = append(lines, "test_"+string(rune('a'+index))+" (tests.test_a.A.test_"+string(rune('a'+index))+") ... ok")
+			}
+		}
+		return checksandbox.Result{Stderr: []byte(strings.Join(lines, "\n"))}, nil
+	}
+	report, err := repochecks.Run(context.Background(), repochecks.Input{BaseTree: trees[0], HeadTree: trees[1], Scope: repochecks.Scope{Changed: []string{"pkg/mod.py"}}, Limits: checksandbox.DefaultLimits(), Runner: runner})
+	if err != nil || len(report.Results) != 1 || !report.Results[0].Ran {
+		t.Fatalf("report %+v, %v", report, err)
+	}
+	report.Results = append(report.Results, repochecks.Result{Name: "broken", Ran: true, Tests: 1, Regressions: []string{"x.A", "x.B"}})
+	value, err := review.NewCheckRuns(strings.Repeat("1", 40), strings.Repeat("2", 40), review.CheckRunsChangedOnly, checkRunsOf(report))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runs := value.Runs()
+	if len(runs) != 2 || runs[0].State != review.CheckRunRan || len(runs[0].StoppedRunning) != 10 || len(runs[0].Regressions) != 0 || runs[0].Tests != 2 || runs[1].State != review.CheckRunCouldNotRun {
+		t.Fatalf("runs %+v", runs)
+	}
+	if !slices.Contains(runs[0].StoppedRunning, "tests.test_a.A.test_a") {
+		t.Fatalf("stopped %v", runs[0].StoppedRunning)
 	}
 }
