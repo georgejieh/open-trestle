@@ -236,13 +236,6 @@ Runtime authority schemas:
 - `schemas/runtime/configuration-validation-result-v1.schema.json`
 - `schemas/runtime/route-inventory-identity-result-v1.schema.json`
 - `schemas/runtime/runtime-status-v1.schema.json`
-- `schemas/runtime/postgres-admin-result-v1.schema.json`
-- `schemas/runtime/postgres-rate-limit-admin-result-v1.schema.json`
-- `schemas/runtime/postgres-replica-reconciliation-admin-result-v1.schema.json`
-- `schemas/runtime/signed-bundle-admin-result-v1.schema.json`
-- `schemas/runtime/signed-bundle-statement-admin-result-v1.schema.json`
-- `schemas/runtime/kms-admin-result-v1.schema.json`
-- `schemas/runtime/envelope-admin-result-v1.schema.json`
 - `schemas/runtime/github-permission-admin-result-v1.schema.json`
 - `schemas/runtime/github-permission-admin-result-v2.schema.json`
 - `schemas/runtime/github-source-broker-v1.schema.json`
@@ -340,7 +333,6 @@ Setup schemas:
 - `schemas/setup/setup-init-request-v1.schema.json`
 - `schemas/setup/setup-check-request-v1.schema.json`
 - `schemas/setup/setup-check-request-v2.schema.json`
-- `schemas/setup/offline-bundle-signature-statement-v1.schema.json`
 - `schemas/setup/setup-session-v1.schema.json`
 - `schemas/setup/setup-check-result-v1.schema.json`
 - `schemas/setup/setup-error-v1.schema.json`
@@ -349,7 +341,7 @@ Integration request v2 has exactly nine required fields: `contract`, `schema_ver
 
 Historical integration request v1 remains published but cannot be executed. Unrelated v1 requests keep their semantics. Current plans, receipts, sessions and results keep schema 1. An old Ready state remains readable and historical, and is not upgraded automatically into authority. Migration needs fresh protected state and a rerun of all nondeterministic checks, without importing old receipts.
 
-The admin v2 output has exactly seven fields: the contract, the schema version, the `configuration_only` status, the `identity` operation, and `broker_authority_identity`, `setup_issuance_authority_identity` and `permission_authority_identity`. It grants no observed or executable authority. See [Setup planning](setup.md#github-integration-permissions) and [local setup API](daemon-api.md#local-setup-api).
+The admin v2 output has exactly seven fields: the contract, the schema version, the `configuration_only` status, the `identity` operation, and `broker_authority_identity`, `setup_issuance_authority_identity` and `permission_authority_identity`. It grants no observed or executable authority. See [GitHub integration permission evidence](github-integration-permissions.md) and [local setup API](daemon-api.md#local-setup-api).
 
 Diagnostic schemas:
 

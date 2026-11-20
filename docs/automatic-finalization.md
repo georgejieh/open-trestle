@@ -6,7 +6,7 @@ A review run ends when the control plane records a terminal event for it, either
 
 Every valid plan has one result task. It is the unique required task at the highest review stage in the graph. A plan with two required tasks at that same highest stage is rejected as ambiguous, and it must add an explicit aggregation task.
 
-In required publication mode, the result task is normally `publish_result`. In advisory and local operation, it is normally `evaluate_publication`. A smaller valid plan can end at an earlier task kind. On success, the finalizer uses the output identity that was recorded for the result task.
+The result task is normally `evaluate_publication`. A smaller valid plan can end at an earlier task kind. On success, the finalizer uses the output identity that was recorded for the result task.
 
 Optional work must be terminal before the run can succeed. An optional task's failure or skip does not replace the output of the required result task.
 
@@ -28,6 +28,6 @@ A retryable task is not finalized while an attempt remains. An expired lease, wh
 
 Concurrent finalizers either append the same terminal event or replay the event that another process already stored, so the journal holds one terminal outcome. Finalization has no provider, source-control or publication effect.
 
-`ReconcileRepository` scans at most 10,000 plans through stable pages. The task-notification supervisor runs scheduling reconciliation and finalization for every configured repository before it reports readiness. It then repeats this after local signals, after PostgreSQL wake-ups, and periodically as a fallback.
+`ReconcileRepository` scans at most 10,000 plans through stable pages. The task-notification supervisor runs scheduling reconciliation and finalization for every configured repository before it reports readiness. It then repeats this after local signals and periodically as a fallback.
 
 The daemon API, when runtime is enabled, also runs finalization immediately after a task completes. If a process stops between a task completing and the terminal event being appended, the supervisor closes the run through its startup reconciliation.

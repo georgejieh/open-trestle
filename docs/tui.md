@@ -142,42 +142,13 @@ Navigation, refresh and one-shot rendering only read. Every check receipt needs
 the two-step confirmation: `x`, then `run REQUIREMENT_KEY`. The following checks
 use the same approved checkers, runner, receipt ledger and stale-state fences as
 the non-interactive setup commands: local-administrator approval, protected backup
-snapshot, local and PostgreSQL storage, observer credential posture, runtime policy, local inference, and non-publishing dry-run checks. The
+snapshot, local storage, observer credential posture, runtime policy, local inference, and non-publishing dry-run checks. The
 administrator and backup options contain no secret, and paths and operating-system
 identity details never enter the screen or a receipt.
 
 Each check needs its own flags and reads its credentials only after you confirm:
 
-- PostgreSQL validation requires `--approve-postgres-authority-identity` and
-  `--postgres-approved-by`. It reads the runtime DSN only after confirmation.
-- KMS secret-backend validation requires `--approve-kms-authority-identity`,
-  `--kms-region`, `--kms-key-arn` and `--kms-approved-by`; `--kms-endpoint` is
-  optional. It reads AWS credentials only after confirmation and runs the generate-and-unwrap check without an S3 request.
-- Envelope-storage validation additionally requires
-  `--approve-envelope-storage-authority-identity`, the four `--s3-*` values and
-  `--envelope-approved-by`. After confirmation it uses separately named S3 and KMS
-  credential environments. It writes one fixed public encrypted object, reads it
-  through the envelope path, deletes its version, and verifies that the
-  object is gone, all within 90 seconds.
-- Remote-provider authorization, policy, local-inference and dry-run checks
-  require the same protected paths, three approval identities, and named
-  approver flags documented in [Setup planning](setup.md). Remote-provider
-  authorization needs no credential and makes no network request. It approves only the remote connection and routing snapshot.
-- GitHub integration-permission validation requires the permission authority, endpoint, API version, installation ID, repository full name, and
-  approver flags. Only after terminal confirmation does it read the dedicated
-  setup token for the installation permission map and the separate runtime token for the repository scope, and then it performs the read-only inspection.
-- GitHub webhook conformance additionally requires
-  `--approve-webhook-authority-identity`, `--github-webhook-key-id` and
-  `--webhook-approved-by`. It stays disabled until the integration receipt
-  passes. After confirmation it reads the separate webhook secret, runs five fixed
-  requests directly against the production handler and a disposable private inbox,
-  clears the verifier secret, and removes the inbox before passing. It opens no
-  listener and makes no network request.
-- Kubernetes HA shared-rate-limit validation requires
-  `--approve-shared-rate-limit-authority-identity`,
-  `--postgres-database-authority-identity` and `--shared-rate-limit-approved-by`,
-  after the PostgreSQL receipt. It reads the database URL only after terminal
-  confirmation, and it checks shared quota, key cardinality, database-time expiry, concurrent final-permit serialization, and cleanup of its disposable rows.
+- Policy, local-inference and dry-run checks require the same protected paths, three approval identities, and named approver flags documented in [Setup planning](setup.md).
 - Local inference is the only terminal setup check that contacts model endpoints.
   It requires a prior policy receipt, an additional confirmation, and
   canonical numeric-loopback routes. It sends two fixed contract probes with no

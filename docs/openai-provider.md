@@ -116,7 +116,7 @@ An `invalid_response` after the request was sent keeps the task's `internal` fai
 
 The adapter makes no request when it is constructed and has no background activity.
 
-For controlled-hybrid and Kubernetes HA setups, `trestle setup check provider` records a named approval of the protected inventory, policy, endpoint locality, credential environment references, logging posture, budget and distinct-provider route pair. That approval reads no credential and builds no adapter. It is not a connectivity probe and does not authorize dispatch.
+`trestle setup check provider` records a named approval of the protected inventory, policy, endpoint locality, credential environment references, logging posture, budget and distinct-provider route pair. That approval reads no credential and builds no adapter. It is not a connectivity probe and does not authorize dispatch. No current setup profile uses it.
 
 ## Configuration identity
 

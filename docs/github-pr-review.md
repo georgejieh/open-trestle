@@ -1,19 +1,19 @@
 # GitHub pull-request review
 
-There are two ways to get Open Trestle results onto a GitHub pull request. They differ in setup, state and who posts.
+There are two ways to run Open Trestle on a GitHub pull request. They differ in setup, state and who posts. Only the Actions path posts results to the pull request.
 
 | | GitHub Actions path | Daemon and GitHub App path |
 | --- | --- | --- |
-| What runs | `trestle local-git model-review` inside a workflow job | `trestled` with webhook ingress, source acquisition and the publication gate |
-| Who posts | Existing tools: `github/codeql-action/upload-sarif` and `reviewdog`, using the job's own `GITHUB_TOKEN` | The Open Trestle publication adapter, with a static token that `trestled` reads from `OPEN_TRESTLE_GITHUB_PUBLICATION_TOKEN` when a publication is dispatched. The token needs pull-request `write`. The GitHub App does not post: the installation permissions that setup accepts are read-only |
-| State | None. Each job makes one foreground, short-lived run | Durable runs, journals and idempotent publication |
-| Setup | A workflow file, a provider secret and a packaged `trestle` binary | A GitHub App for webhooks and read-only source access, a separate publication token, a webhook endpoint, storage and operator approvals |
-| Output | SARIF (code scanning alerts), inline review comments and a job summary | A `COMMENT` review pinned to the reviewed head |
+| What runs | `trestle local-git model-review` inside a workflow job | `trestled` with webhook ingress, source acquisition and local workers |
+| Who posts | Existing tools: `github/codeql-action/upload-sarif` and `reviewdog`, using the job's own `GITHUB_TOKEN` | Nobody. The daemon does not publish reviews to GitHub. Read results through the daemon API, the TUI, the console, MCP, LSP or ACP |
+| State | None. Each job makes one foreground, short-lived run | Durable runs and journals under the daemon's state directory |
+| Setup | A workflow file, a provider secret and a packaged `trestle` binary | A GitHub App for webhooks and read-only source access, a webhook endpoint and operator approvals |
+| Output | SARIF (code scanning alerts), inline review comments and a job summary | Run receipts and review diagnostics |
 | Fork pull requests | Not supported (no secrets, read-only token) | Depends on the App installation |
 
-Neither path has run against GitHub. The Actions example has never run on a hosted runner, and live publication through the daemon is unverified. Open Trestle ships no GitHub App of its own: on the daemon path you register an App on your own account and run the daemon yourself. There is also no packaged `action.yml` (see the [roadmap](roadmap.md#next-release)).
+Neither path has run against GitHub. The Actions example has never run on a hosted runner. Open Trestle ships no GitHub App of its own: on the daemon path you register an App on your own account and run the daemon yourself. There is also no packaged `action.yml` (see the [roadmap](roadmap.md#next-release)).
 
-Use the Actions path to try Open Trestle on a repository you control, with no server. Use the daemon path when you need durable runs, a check that the head is still current, and idempotent publication. On the daemon path, setup accepts the App installation only with `metadata`, `contents` and `pull_requests` read permissions. Posting as the App, with an installation token, is not implemented. For the daemon path, see [GitHub publication](github-publication.md), [webhook ingress](webhook-ingress.md), [source acquisition](github-source-acquisition.md) and [integration permissions](github-integration-permissions.md).
+Use the Actions path to try Open Trestle on a repository you control, with no server. Use the daemon path when you need durable runs. On the daemon path, setup accepts the App installation only with `metadata`, `contents` and `pull_requests` read permissions. For the daemon path, see [webhook ingress](webhook-ingress.md), [source acquisition](github-source-acquisition.md) and [integration permissions](github-integration-permissions.md).
 
 ## Which changes are reviewed
 

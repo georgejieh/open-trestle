@@ -48,13 +48,12 @@ no release yet, and each page describes what the code does today. The
 
 ## Operate
 
-These pages are for running the daemon for a team or as a shared deployment.
+These pages are for running the daemon.
 
 - [Setup planning](setup.md) and [operations and recovery](operations.md).
 - [Configuration validation](configuration-validation.md).
-- [PostgreSQL ledgers](postgresql-storage.md) and [encrypted object storage](remote-artifact-storage.md).
 - [Remote workers](remote-workers.md) and [webhook ingress](webhook-ingress.md).
-- GitHub: [source acquisition](github-source-acquisition.md), [integration permissions](github-integration-permissions.md) and [publication](github-publication.md).
+- GitHub: [source acquisition](github-source-acquisition.md), and [integration permissions](github-integration-permissions.md).
 - [Passive vulnerability gate](vulnerability-gate.md).
 
 ## Contribute
@@ -62,5 +61,5 @@ These pages are for running the daemon for a team or as a shared deployment.
 - [Contributing](../CONTRIBUTING.md) and [development standards](development.md).
 - [Architecture](architecture.md), [design rationale](rationale.md) and [roadmap](roadmap.md).
 - [Quality evaluation](quality-evaluation.md) and [model result evaluation](model-result-evaluation.md).
-- [Review-run runtime](review-run-runtime.md) and its handlers: [source acquisition](source-acquisition-handler.md), [change model](change-model-handler.md), [evidence](deterministic-evidence-handler.md), [semantic impact](semantic-impact.md) with per-file [syntax analysis](syntax-analysis.md) and the [repository index](repository-index.md), [memory retrieval](memory-retrieval-handler.md), [context assembly](context-assembly-handler.md), [candidate generation](model-generation-handler.md), [verification](model-verification-handler.md), [publication readiness](publication-readiness-handler.md) and [publication](publication-handler.md).
+- [Review-run runtime](review-run-runtime.md) and its handlers: [source acquisition](source-acquisition-handler.md), [change model](change-model-handler.md), [evidence](deterministic-evidence-handler.md), [semantic impact](semantic-impact.md) with per-file [syntax analysis](syntax-analysis.md) and the [repository index](repository-index.md), [memory retrieval](memory-retrieval-handler.md), [context assembly](context-assembly-handler.md), [candidate generation](model-generation-handler.md), [verification](model-verification-handler.md), and [publication readiness](publication-readiness-handler.md).
 - Runtime internals: [handler catalogs](runtime-handler-catalogs.md), [artifact exchange](runtime-artifacts.md), [task notifications](task-notifications.md) and [automatic finalization](automatic-finalization.md).

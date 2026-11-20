@@ -1,6 +1,6 @@
 # GitHub integration permissions check
 
-Before Open Trestle works with a GitHub repository, an operator can check that the GitHub App installed on it has the permissions Open Trestle needs and no more. This page describes that check. It is separate from webhook signature validation, source acquisition, review execution and publication, and it requires explicit approval because it can create an installation token.
+Before Open Trestle works with a GitHub repository, an operator can check that the GitHub App installed on it has the permissions Open Trestle needs and no more. This page describes that check. It is separate from webhook signature validation, source acquisition, review execution, and it requires explicit approval because it can create an installation token. No current setup profile requires this check.
 
 ## Tokens and endpoints
 
@@ -12,7 +12,7 @@ The second observation comes from the native setup-purpose broker. The broker is
 
 The inspector does not revoke a token, change which repositories an installation can see, or change App permissions. Creating a token is a write, so it needs several approvals: the host's common approval, the request's consent, the approval of the permission check, and matching actor, scope and current-plan checks. Configuration-only identities and the setup-service bearer token do not give that approval.
 
-GitHub installation tokens are opaque, and `GET /installation/repositories` cannot show which installation an arbitrary static token came from. The older token-provider inspector therefore refuses to run, and its v1 identity is available only for inspecting configuration. A successful result requires the broker to issue the token in an authenticated call and record the accepted attempt durably. A browser digest, provider-supplied metadata or a configuration-only admin identity cannot produce one. A setup grant is not a daemon runtime grant and is not approval to publish.
+GitHub installation tokens are opaque, and `GET /installation/repositories` cannot show which installation an arbitrary static token came from. The older token-provider inspector therefore refuses to run, and its v1 identity is available only for inspecting configuration. A successful result requires the broker to issue the token in an authenticated call and record the accepted attempt durably. A browser digest, provider-supplied metadata or a configuration-only admin identity cannot produce one. A setup grant is not a daemon runtime grant.
 
 ## Accepted permissions
 
@@ -50,13 +50,13 @@ For critical response objects, a duplicate member is an error. Permission member
 
 ## Ownership and migration
 
-See [Setup planning](setup.md#github-integration-permissions) for the descriptor fields, the CLI and TUI flags, the browser consent step and the seven-field schema 2 admin output that holds configuration only. The descriptor stays at schema 1. Only active integration requests use schema 2. The plan, receipt, result and unrelated request formats stay at schema 1. Output in the old four-field admin format, and old receipts, can still be read but cannot run current integration or webhook operations.
+The seven-field schema 2 admin output holds configuration only. The descriptor stays at schema 1. Only active integration requests use schema 2. The plan, receipt, result and unrelated request formats stay at schema 1. Output in the old four-field admin format, and old receipts, can still be read but cannot run current integration or webhook operations.
 
-The command, the interactive TUI or the web handler owns one lazy setup session. The session keeps owner and attempt records that hold no content and no tokens. Cached tokens and renewals that a foreground request triggers stay within the lifetime of that owner. There is no background renewal, no transparent replacement of a generation, and no recovery by deleting owner records. After a restart you need a new generation and a new approval. Ownership is `single_host_exclusive`, even for `kubernetes_ha` plans.
+The command, the interactive TUI or the web handler owns one lazy setup session. The session keeps owner and attempt records that hold no content and no tokens. Cached tokens and renewals that a foreground request triggers stay within the lifetime of that owner. There is no background renewal, no transparent replacement of a generation, and no recovery by deleting owner records. After a restart you need a new generation and a new approval. Ownership is `single_host_exclusive`.
 
 On web shutdown, Open Trestle cancels the owner's lifetime, waits up to five seconds for the HTTP server to shut down (forcing a close if that fails), and then allows a separate five-second period to drain credentials. If cleanup is incomplete, the web handler reports it and caches the result. A cleanup failure does not roll back a saved receipt or an accepted issuance. Recovering a pending receipt, with no broker involved, does not open a broker.
 
-A Ready result from an older setup is historical. To start again, initialize a fresh protected state path and a current plan, rerun every check that is not deterministic, and do not import old receipts or rewrite old catalog bytes. The current marker in the browser is only a diagnostic. The server checks integration and webhook state itself before recovering anything pending. Runtime and publication approvals remain separate.
+A Ready result from an older setup is historical. To start again, initialize a fresh protected state path and a current plan, rerun every check that is not deterministic, and do not import old receipts or rewrite old catalog bytes. The current marker in the browser is only a diagnostic. The server checks integration and webhook state itself before recovering anything pending. Runtime approvals remain separate.
 
 ## Official sources
 
