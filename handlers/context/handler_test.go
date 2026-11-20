@@ -202,6 +202,7 @@ func TestHandlerBuildsBoundGenerationAuthority(t *testing.T) {
 	authorizer := contextTestAuthorizer{identity: strings.Repeat("5", 64), calls: &authorizationCalls, requestIdentity: &authorizedRequestIdentity}
 	sanitizer := contextTestSanitizer{}
 	contextTaskHandler, _ := NewHandler(store, contextTestClock{time.UnixMilli(230)}, authorizer, sanitizer)
+	contextTaskHandler, _ = contextTaskHandler.WithRepositoryContext(directReferenceIndex{}, review.DefaultContextBudget())
 	baseTask, _ := controlplane.NewTaskDefinition("source-base", controlplane.TaskAcquireSource, baseArtifact.Identity(), sourceTaskHandler.HandlerIdentity(), nil, 1, 1000, 30000, true)
 	headTask, _ := controlplane.NewTaskDefinition("source-head", controlplane.TaskAcquireSource, headArtifact.Identity(), sourceTaskHandler.HandlerIdentity(), nil, 1, 1000, 30000, true)
 	changeTask, _ := controlplane.NewTaskDefinition("change", controlplane.TaskBuildChange, strings.Repeat("c", 64), changeTaskHandler.HandlerIdentity(), []string{"source-base", "source-head"}, 1, 1000, 30000, true)
@@ -263,6 +264,10 @@ func TestHandlerBuildsBoundGenerationAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	failingHandler, err = failingHandler.WithRepositoryContext(directReferenceIndex{}, review.DefaultContextBudget())
+	if err != nil {
+		t.Fatal(err)
+	}
 	failed := failingHandler.Execute(context.Background(), contextRequest)
 	if failed.Status() != controlplane.TaskCompletionFailed || failed.Failure() != controlplane.RunFailurePolicy || authorizationCalls != 1 {
 		t.Fatalf("scanner failure reached authorization: completion=%#v calls=%d", failed, authorizationCalls)
@@ -306,6 +311,19 @@ func TestHandlerBuildsBoundGenerationAuthority(t *testing.T) {
 		}
 	}
 	if !sawTest {
-		t.Fatal("semantic affected-test context omitted")
+		t.Fatal("index context omitted the test that uses the changed function")
 	}
+}
+
+// directReferenceIndex proposes the unchanged test line that uses Changed.
+type directReferenceIndex struct{}
+
+func (directReferenceIndex) Identity() string { return strings.Repeat("8", 64) }
+
+func (directReferenceIndex) ContextPlan(context.Context, evidence.RepositoryIdentity, evidence.RevisionIdentity, evidence.RevisionIdentity) (review.ContextPlan, error) {
+	return review.ContextPlan{
+		State: review.ContextIndexUsed, Complete: true, Dependents: 1,
+		Coverage: review.ContextIndexCoverage{Files: 2, Indexed: 2},
+		Items:    []review.ContextPlanItem{{Stage: review.ContextStageDirectReference, Path: "a_test.go", StartLine: 2, EndLine: 2, Rank: 1, Depth: 1}},
+	}, nil
 }

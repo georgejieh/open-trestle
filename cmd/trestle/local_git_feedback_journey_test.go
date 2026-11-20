@@ -49,7 +49,7 @@ func feedbackJourneyRun(t *testing.T, args []string, wantCode int) string {
 	if code != wantCode {
 		t.Fatalf("feedback exit=%d want=%d stderr=%q", code, wantCode, stderr.String())
 	}
-	if wantCode == 0 && (stdout.Len() == 0 || stderr.Len() != 0) {
+	if wantCode == 0 && (stdout.Len() == 0 || withoutIndexNotice(stderr.String()) != "") {
 		t.Fatal("feedback operation did not emit a receipt on stdout only")
 	}
 	return stdout.String() + stderr.String()

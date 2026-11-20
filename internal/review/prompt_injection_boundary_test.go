@@ -251,7 +251,7 @@ func TestPromptInjectionBoundaryGenerationAndVerification(t *testing.T) {
 		t.Fatalf("generation system channel differs between clean and injected repositories: %v %v %v", err, cleanErr, catalogErr)
 	}
 	profile, _ := catalog.Profile("bug_hunter")
-	if system != candidateOutputInstructionsV9+fmt.Sprintf(specialistGuidanceHeading, "bug_hunter")+profile.Skill() {
+	if system != candidateOutputInstructionsV10+fmt.Sprintf(specialistGuidanceHeading, "bug_hunter")+profile.Skill() {
 		t.Fatal("generation system channel is not the host contract plus the embedded skill")
 	}
 	for _, marker := range injectionMarkers {
@@ -305,7 +305,7 @@ func TestPromptInjectionBoundaryGenerationAndVerification(t *testing.T) {
 	verifier := verifierPayload(packet, snapshot, injected)
 	cleanVerifierSystem, cleanErr := TrustedModelRequestInstructions(cleanVerifier)
 	verifierSystem, err := TrustedModelRequestInstructions(verifier)
-	if err != nil || cleanErr != nil || verifierSystem != cleanVerifierSystem || verifierSystem != verificationOutputInstructionsV8 {
+	if err != nil || cleanErr != nil || verifierSystem != cleanVerifierSystem || verifierSystem != verificationOutputInstructionsV9 {
 		t.Fatal("verifier system channel differs between clean and injected repositories")
 	}
 	requireInjectionOnlyInStrings(t, "verification", cleanVerifier, verifier, append(slices.Clone(injectionMarkers), claim))

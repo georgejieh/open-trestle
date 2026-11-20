@@ -29,8 +29,10 @@ func TestChatCompletionsCLIUsesCheckoutAndPackedSourceThroughNineTasks(t *testin
 				t.Fatal("Chat CLI omitted actual source-backed verified finding")
 			}
 			finding := result.Diagnostics.Findings[0]
+			// Both sources plan the caller: a checkout from its index, a packed
+			// source from the snapshots it carries.
 			if finding.Path != "a.go" || finding.Start != 2 || finding.End != 2 || finding.Severity != "error" || len(finding.Evidence) != 2 {
-				t.Fatal("Chat finding lost exact changed line and caller evidence")
+				t.Fatal("Chat finding lost exact changed line or caller evidence")
 			}
 			for _, packet := range []localModelPacket{generated[0].Packet, verified[0].Packet} {
 				changed, caller := false, false
@@ -42,7 +44,7 @@ func TestChatCompletionsCLIUsesCheckoutAndPackedSourceThroughNineTasks(t *testin
 					}
 				}
 				if !changed || !caller {
-					t.Fatal("checkout/pack did not reach real changed and direct caller context")
+					t.Fatal("checkout/pack did not reach real changed context and its caller")
 				}
 			}
 			keys := []string{}

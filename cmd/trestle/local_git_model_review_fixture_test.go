@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -85,6 +86,25 @@ type localModelMemoryItem struct {
 	PathScore          uint8    `json:"path_score"`
 	SymbolScore        uint8    `json:"symbol_score"`
 	TextScore          uint8    `json:"text_score"`
+}
+
+// reviewIndexNotice matches what a review says once while it builds the
+// repository index; the time bound it names depends on the review timeout.
+var reviewIndexNotice = regexp.MustCompile(`Indexing the repository for review context \(up to [^)]*; later reviews reuse the index\)\.\n`)
+
+// withoutIndexNotice drops the index notice from a review's stderr.
+func withoutIndexNotice(stderr string) string {
+	return reviewIndexNotice.ReplaceAllString(stderr, "")
+}
+
+// newCheckoutModelFixture is a local model fixture reviewed through a Git
+// checkout, the one source that has a repository index, so its context
+// carries the unchanged caller of the changed function.
+func newCheckoutModelFixture(t *testing.T, options localModelFixtureOptions) *localModelFixture {
+	t.Helper()
+	f := newLocalModelFixture(t, options)
+	f.args = localChatSourceArgs(t, f, "checkout")
+	return f
 }
 
 type localModelCapture struct {
@@ -221,8 +241,8 @@ func (m *localModelEndpoint) serve(t *testing.T, w http.ResponseWriter, r *http.
 	request, requestErr := provider.NewRequest(provider.CapabilityReviewV1, "application/json", payload)
 	// Generation uses context version 9, with or without a specialist block;
 	// verification uses version 8.
-	if json.Unmarshal(payload, &packet) != nil || requestErr != nil || packet.Task == "candidate_generation" && packet.Version != 9 || packet.Task != "candidate_generation" && packet.Version != 8 {
-		t.Error("model did not receive the actual v9 generation or v8 verification context")
+	if json.Unmarshal(payload, &packet) != nil || requestErr != nil || packet.Task == "candidate_generation" && packet.Version != 10 || packet.Task != "candidate_generation" && packet.Version != 9 {
+		t.Error("model did not receive the actual v10 generation or v9 verification context")
 		http.Error(w, "invalid context", http.StatusBadRequest)
 		return
 	}
@@ -300,11 +320,11 @@ func (m *localModelEndpoint) serve(t *testing.T, w http.ResponseWriter, r *http.
 			caller = source
 		}
 	}
-	// A deletion-only change has no changed head line, so semantic impact
-	// resolves no changed symbol and no caller reference; the changed source is
-	// the head context around the deletion point.
-	callerMissing := caller.ID == "" || caller.Stage != "direct_reference" || !strings.Contains(caller.Content, "Changed(0)")
-	if changed.ID == "" || changed.Stage != "changed_hunk" || !strings.Contains(changed.Content, "return 10 / x") || changed.Start > 2 || changed.End < 2 || callerMissing && !m.deletionOnly {
+	// The unchanged caller reaches the model only through a repository index,
+	// which a review of a checkout builds: a review of packed objects and a
+	// deletion-only change (no changed head line) have none.
+	callerMissing := caller.ID == ""
+	if changed.ID == "" || changed.Stage != "changed_hunk" || !strings.Contains(changed.Content, "return 10 / x") || changed.Start > 2 || changed.End < 2 || !callerMissing && (caller.Stage != "direct_reference" || !strings.Contains(caller.Content, "Changed(0)")) {
 		t.Error("source-to-model path omitted exact changed code or its unchanged caller")
 		http.Error(w, "missing source", http.StatusBadRequest)
 		return
@@ -721,6 +741,6 @@ func newLocalModelFixture(t *testing.T, options localModelFixtureOptions) *local
 		t.Fatal(err)
 	}
 	f.args = append([]string{"local-git", "model-review"}, localGitChangeArgs(f.objects, evidence.RevisionAlgorithmSHA1, f.base, f.head)...)
-	f.args = append(f.args, "--tenant", "tenant-local", "--repository", "repository-local", "--route-inventory", f.inventoryPath, "--runtime-policy", f.policyPath, "--egress", "local-only", "--timeout", "5s", "--format", "json")
+	f.args = append(f.args, "--tenant", "tenant-local", "--repository", "repository-local", "--route-inventory", f.inventoryPath, "--runtime-policy", f.policyPath, "--egress", "local-only", "--timeout", "30s", "--format", "json")
 	return f
 }

@@ -49,7 +49,7 @@ Version 6 keeps the version 5 verdict rules and opens with the instruction-hiera
 
 The verifier receives every generation source, so it sees the removed base text at a deletion point. A verified verdict may cite a `removed_lines` source, but its base line numbers do not count as covering the candidate's head lines (`review.ParseContextVerificationBatch`). The handler rejects a categorized batch against a generation context from before version 7.
 
-New verifier requests are built from a version 9 generation context only. Recorded verification contexts of versions 2, 3, 5, 6 and 7, and recorded generation contexts of versions 5, 7 and 8, are reconstructed for readback but grant no new verification. Readback means reloading a stored result and checking it against its sources.
+New verifier requests are built from a version 10 generation context only. Recorded verification contexts of versions 2, 3, 5, 6, 7 and 8, and recorded generation contexts of versions 5, 7, 8 and 9, are reconstructed for readback but grant no new verification. Readback means reloading a stored result and checking it against its sources.
 
 The verifier response must contain one verdict for every accepted candidate. A verified verdict requires supported source evidence and a final severity. Rejected and inconclusive verdicts cannot carry a final severity. The handler rejects a response with unknown candidates, omitted candidates, duplicate verdicts, unsupported evidence or an incomplete set of verdicts.
 

@@ -1,0 +1,14 @@
+source changed_hunk calc/div.go:4-4
+source enclosing_symbol calc/div.go:3-6
+source repository_map tools/scale.py:1-1
+budget route_window 93 bytes
+index used complete true dependents 2
+included enclosing_symbol rank 1 depth 0 calc/div.go:3-6
+included repository_map rank 2 depth 0 tools/scale.py:1-1
+omitted direct_reference packet_budget 1
+omitted direct_reference stage_limit 3
+omitted related_test packet_budget 1
+omitted repository_map packet_budget 1
+changed calc/div.go:4 dependents 2 tests 1
+changed not listed 0
+checks [lint unit_tests]

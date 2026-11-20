@@ -116,18 +116,38 @@ func openIndexSession(ctx context.Context, f indexFlags) (*indexSession, error) 
 	if err != nil {
 		return nil, errors.New("this folder is not inside a Git checkout (or git is not installed)")
 	}
-	dir := discoverSetupDirectory(ctx, checkout)
+	dir := ""
 	if f.directory != "" {
 		if dir, err = initValidateDirectory(f.directory); err != nil {
 			return nil, fmt.Errorf("--directory: %w", err)
 		}
 	}
+	return openIndexSessionAt(ctx, checkout, dir)
+}
+
+// openIndexSessionAt opens the index of a checkout in a setup folder, the
+// checkout's own one when dir is empty.
+func openIndexSessionAt(ctx context.Context, checkout, dir string) (*indexSession, error) {
 	if dir == "" {
-		return nil, errors.New("the setup folder cannot be found (set HOME)")
+		dir = discoverSetupDirectory(ctx, checkout)
 	}
 	objectsPath, algorithm, err := resolveLocalCheckoutObjects(ctx, checkout)
 	if err != nil {
 		return nil, errors.New("the checkout's Git objects cannot be found")
+	}
+	s, err := openIndexSessionForObjects(objectsPath, algorithm, dir)
+	if err != nil {
+		return nil, err
+	}
+	s.checkout = checkout
+	return s, nil
+}
+
+// openIndexSessionForObjects opens the index of a Git object store in a
+// setup folder.
+func openIndexSessionForObjects(objectsPath, algorithm, dir string) (*indexSession, error) {
+	if dir == "" {
+		return nil, errors.New("the setup folder cannot be found (set HOME)")
 	}
 	identity, err := executableIdentity()
 	if err != nil {
@@ -147,7 +167,7 @@ func openIndexSession(ctx context.Context, f indexFlags) (*indexSession, error) 
 		_ = objects.Close()
 		return nil, fmt.Errorf("the checkout's Git objects cannot be read: %v", err)
 	}
-	return &indexSession{checkout: checkout, algorithm: algorithm, objects: objects, store: store, index: index}, nil
+	return &indexSession{algorithm: algorithm, objects: objects, store: store, index: index}, nil
 }
 
 // executableIdentity is the SHA-256 of this program's file. The analyzers

@@ -269,7 +269,7 @@ func (h *Handler) loadVerification(ctx context.Context, scope audit.ReviewScope,
 
 // buildSourceBinding rebinds every generation evidence item to the exact
 // protected snapshot it came from. Each item must be a changed analysis item,
-// a removed_lines record, a semantic reference, or a repository instruction
+// a removed_lines record, an index context source of the packet, or a repository instruction
 // prefix whose base copy the head leaves byte-identical. Instruction context is
 // advisory evidence only: a published location in an instruction file refuses
 // the binding.
@@ -344,13 +344,9 @@ func (h *Handler) buildSourceBinding(ctx context.Context, scope audit.ReviewScop
 	for _, item := range analysis.Items() {
 		byEvidence[item.EvidenceID()] = item
 	}
-	semanticRanges := make(map[evidence.SourceRange]bool)
-	for _, reference := range analysis.SemanticImpact().References() {
-		sourceRange, err := evidence.NewSourceRange(reference.Path(), reference.Line(), reference.Line())
-		if err != nil {
-			return review.ProtectedSourceBinding{}, ErrInvalidPublicationInput
-		}
-		semanticRanges[sourceRange] = true
+	indexRanges, err := review.ContextIndexSourceRanges(contextArtifact.Payload())
+	if err != nil {
+		return review.ProtectedSourceBinding{}, ErrInvalidPublicationInput
 	}
 	files := make(map[string]sourcehandler.FileReference, head.FileCount())
 	for _, reference := range head.Files() {
@@ -389,7 +385,7 @@ func (h *Handler) buildSourceBinding(ctx context.Context, scope audit.ReviewScop
 			if sourceItem.Path() != sourceRange.Path() || sourceItem.StartLine() != sourceRange.StartLine() || sourceItem.EndLine() != sourceRange.EndLine() || sourceItem.Digest() != item.Digest() {
 				return review.ProtectedSourceBinding{}, ErrInvalidPublicationInput
 			}
-		} else if !semanticRanges[sourceRange] {
+		} else if !indexRanges[sourceRange] {
 			// Repository instruction context is a whole-line prefix of a root
 			// instruction file that the head leaves byte-identical to the base,
 			// so it binds to the head snapshot exactly as context assembly did.

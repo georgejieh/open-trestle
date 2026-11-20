@@ -21,22 +21,28 @@ import (
 	reviewschema "github.com/georgejieh/open-trestle/schemas/review"
 )
 
-// legacyGenerationWire rewrites a current version 8 generation context into the
-// exact bytes an earlier version recorded, so readback can be tested without
-// new code producing legacy contexts.
+// legacyGenerationWire rewrites a current generation context into the exact
+// bytes an earlier version recorded, so readback can be tested without new
+// code producing legacy contexts.
 func legacyGenerationWire(t *testing.T, wire contextPacketWire, version int) contextPacketWire {
 	t.Helper()
 	instructions, schema, err := modelOutputContractForVersion(version, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// No recorded version before 9 carries stated_intent or pattern_hygiene.
-	wire.StatedIntent, wire.PatternHygiene = nil, nil
-	if version == modelGenerationContextVersionV7 || version == modelGenerationContextVersionV8 {
-		// Recorded version 7 and 8 contexts bind their system-channel contract
-		// by identity, request candidate batch v2 and used the current risk
-		// rules. Version 8 differs from version 9 only in its contract and in
-		// having no stated_intent or pattern_hygiene; version 7 also has no
+	// No recorded version before 10 carries a source limit, a manifest or
+	// repository checks, and none before 9 carries stated_intent or
+	// pattern_hygiene.
+	wire.ContextManifest, wire.RepositoryChecks = nil, nil
+	if version != modelGenerationContextVersionV9 {
+		wire.StatedIntent, wire.PatternHygiene = nil, nil
+	}
+	if version == modelGenerationContextVersionV7 || version == modelGenerationContextVersionV8 || version == modelGenerationContextVersionV9 {
+		// Recorded version 7, 8 and 9 contexts bind their system-channel
+		// contract by identity, request candidate batch v2 and used the current
+		// risk rules. Version 9 differs from version 10 only in its contract and
+		// in having no source limit, manifest or repository checks; version 8
+		// also has no stated_intent or pattern_hygiene, and version 7 no
 		// removed_lines sources.
 		wire.SchemaVersion, wire.Instructions, wire.InstructionsIdentity, wire.OutputSchema = version, "", modelInstructionsIdentity(instructions), schema
 		return wire
@@ -150,8 +156,8 @@ func categorizedVerificationContextFixture(t *testing.T) (ContextPacket, Candida
 func TestGenerationContextEncodesExecutableContractAndRejectsLegacyExecution(t *testing.T) {
 	packet, snapshot, payload := v7InstructionFixture(t)
 	fields := modelContractFields(t, payload)
-	if string(fields["schema_version"]) != "9" || string(fields["output_schema_identity"]) != `"`+ModelCandidateBatchSchemaIdentity+`"` || fields["specialist"] != nil || packet.OutputSchemaIdentity() != ModelCandidateBatchSchemaIdentity {
-		t.Fatal("new generation context is not version 9 requesting candidate batch v2")
+	if string(fields["schema_version"]) != "10" || string(fields["output_schema_identity"]) != `"`+ModelCandidateBatchSchemaIdentity+`"` || fields["specialist"] != nil || packet.OutputSchemaIdentity() != ModelCandidateBatchSchemaIdentity {
+		t.Fatal("new generation context is not version 10 requesting candidate batch v2")
 	}
 	instructions, schema, err := modelOutputContractForVersion(modelGenerationContextVersion, false)
 	if err != nil || fields["instructions"] != nil || string(fields["instructions_identity"]) != string(mustJSON(modelInstructionsIdentity(instructions))) || !bytes.Equal(fields["output_schema"], schema) {
@@ -179,7 +185,7 @@ func TestGenerationContextEncodesExecutableContractAndRejectsLegacyExecution(t *
 		t.Fatalf("version 8 context is not sanitizable: %v", err)
 	}
 	wire, _ := decodeGenerationContextWire(payload)
-	for _, version := range []int{2, 3, 5, 7, 8} {
+	for _, version := range []int{2, 3, 5, 7, 8, 9} {
 		legacy, err := json.Marshal(legacyGenerationWire(t, wire, version))
 		if err != nil {
 			t.Fatal(err)
@@ -204,7 +210,7 @@ func TestGenerationContextEncodesExecutableContractAndRejectsLegacyExecution(t *
 		// A recorded context with the other candidate schema identity is not readable.
 		swapped := legacyGenerationWire(t, wire, version)
 		swapped.OutputSchemaIdentity = ModelCandidateBatchSchemaIdentity
-		if version == modelGenerationContextVersionV7 || version == modelGenerationContextVersionV8 {
+		if version == modelGenerationContextVersionV7 || version == modelGenerationContextVersionV8 || version == modelGenerationContextVersionV9 {
 			swapped.OutputSchemaIdentity = ModelCandidateBatchV1SchemaIdentity
 		}
 		encoded, _ := json.Marshal(swapped)
@@ -409,8 +415,8 @@ func TestCategorizedVerifierReceivesNoCategoryOrFix(t *testing.T) {
 	}
 	payload := []byte(durable.Payload())
 	fields := modelContractFields(t, payload)
-	if string(fields["schema_version"]) != "8" || fields["instructions"] != nil || string(fields["instructions_identity"]) != string(mustJSON(modelInstructionsIdentity(verificationOutputInstructionsV8))) || bytes.Contains(payload, []byte("Return the checked value")) || bytes.Contains(payload, []byte(`"category"`)) || bytes.Contains(payload, []byte(`"fix"`)) {
-		t.Fatal("verifier request is not the version 7 contract without category or fix")
+	if string(fields["schema_version"]) != "9" || fields["instructions"] != nil || string(fields["instructions_identity"]) != string(mustJSON(modelInstructionsIdentity(verificationOutputInstructionsV9))) || bytes.Contains(payload, []byte("Return the checked value")) || bytes.Contains(payload, []byte(`"category"`)) || bytes.Contains(payload, []byte(`"fix"`)) {
+		t.Fatal("verifier request is not the version 9 contract without category or fix")
 	}
 	if !bytes.Contains(payload, []byte(candidates.Findings()[0].Identity())) || !bytes.Contains(payload, []byte(candidates.Identity())) {
 		t.Fatal("verifier request does not bind the categorized candidate identities")

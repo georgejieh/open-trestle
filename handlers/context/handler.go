@@ -58,6 +58,10 @@ type Handler struct {
 	preparer   ContextAbstentionPreparer
 	specialist review.ContextSpecialist
 	intent     ChangeIntentSource
+	// index and budget are bound by WithRepositoryContext; without them a
+	// packet records the index as unavailable and keeps the default budget.
+	index  IndexContextSource
+	budget review.ContextBudget
 }
 
 func NewHandler(store artifact.Store, clock artifact.Clock, authorizer GenerationAuthorizer, sanitizer review.GenerationRequestSanitizer) (*Handler, error) {
@@ -65,8 +69,7 @@ func NewHandler(store artifact.Store, clock artifact.Clock, authorizer Generatio
 		return nil, ErrInvalidHandler
 	}
 	h := &Handler{store: store, clock: clock, authorizer: authorizer, sanitizer: sanitizer}
-	sanitizerIdentity := sanitizer.Identity()
-	h.identity = deriveHandlerIdentity(authorizer.Identity(), sanitizerIdentity, review.ContextSpecialist{}, "")
+	h.identity = h.deriveIdentity()
 	return h, nil
 }
 
@@ -80,8 +83,45 @@ func (h *Handler) WithChangeIntent(source ChangeIntentSource) (*Handler, error) 
 	}
 	value := *h
 	value.intent = source
-	value.identity = deriveHandlerIdentity(h.authorizer.Identity(), h.sanitizer.Identity(), h.specialist, source.Identity())
+	value.identity = value.deriveIdentity()
 	return &value, nil
+}
+
+// WithRepositoryContext returns a copy of a route-granting handler that fits
+// every packet to budget, which the caller derives from the routes' context
+// windows (see review.RouteContextBudget), and asks source, when not nil, for
+// index context. The source identity and the budget are bound into the
+// handler identity.
+func (h *Handler) WithRepositoryContext(source IndexContextSource, budget review.ContextBudget) (*Handler, error) {
+	if h == nil || h.Validate() != nil || h.packetOnly || h.pipeline != nil || h.index != nil || h.budget != (review.ContextBudget{}) || !nilInterface(source) && !validDigest(source.Identity()) {
+		return nil, ErrInvalidHandler
+	}
+	if _, err := budget.Limits(0); err != nil {
+		return nil, ErrInvalidHandler
+	}
+	value := *h
+	value.index, value.budget = source, budget
+	value.identity = value.deriveIdentity()
+	return &value, nil
+}
+
+func (h *Handler) deriveIdentity() string {
+	intent, index := "", ""
+	if !nilInterface(h.intent) {
+		intent = h.intent.Identity()
+	}
+	if !nilInterface(h.index) {
+		index = h.index.Identity()
+	}
+	return deriveHandlerIdentity(h.authorizer.Identity(), h.sanitizer.Identity(), h.specialist, intent, index, h.budget)
+}
+
+// contextBudget is the bound budget, or the default.
+func (h *Handler) contextBudget() review.ContextBudget {
+	if h.budget == (review.ContextBudget{}) {
+		return review.DefaultContextBudget()
+	}
+	return h.budget
 }
 
 // NewSpecialistHandler is NewHandler for one packaged specialist profile. Its
@@ -96,7 +136,7 @@ func NewSpecialistHandler(store artifact.Store, clock artifact.Clock, authorizer
 		return nil, err
 	}
 	h.specialist = specialist
-	h.identity = deriveHandlerIdentity(authorizer.Identity(), sanitizer.Identity(), specialist, "")
+	h.identity = h.deriveIdentity()
 	return h, nil
 }
 
@@ -162,14 +202,14 @@ func (h *Handler) Validate() error {
 	if h.packetOnly {
 		legacy := h.identity == packetOnlyHandlerIdentity() && nilInterface(h.preparer)
 		journaled := h.identity == journaledPacketOnlyHandlerIdentity() && !nilInterface(h.preparer)
-		if (!legacy && !journaled) || !nilInterface(h.authorizer) || !nilInterface(h.sanitizer) || h.pipeline != nil || !h.specialist.IsZero() || !nilInterface(h.intent) {
+		if (!legacy && !journaled) || !nilInterface(h.authorizer) || !nilInterface(h.sanitizer) || h.pipeline != nil || !h.specialist.IsZero() || !nilInterface(h.intent) || !nilInterface(h.index) {
 			return ErrInvalidHandler
 		}
 		return nil
 	}
 	if h.pipeline != nil {
 		identity, err := h.pipeline.HandlerIdentity(controlplane.TaskAssembleContext)
-		if h.pipeline.Validate() != nil || err != nil || !validDigest(identity) || h.identity != identity || !nilInterface(h.authorizer) || !nilInterface(h.sanitizer) || !h.specialist.IsZero() || !nilInterface(h.intent) {
+		if h.pipeline.Validate() != nil || err != nil || !validDigest(identity) || h.identity != identity || !nilInterface(h.authorizer) || !nilInterface(h.sanitizer) || !h.specialist.IsZero() || !nilInterface(h.intent) || !nilInterface(h.index) {
 			return ErrInvalidHandler
 		}
 		return nil
@@ -177,13 +217,10 @@ func (h *Handler) Validate() error {
 	if nilInterface(h.authorizer) || !validDigest(h.authorizer.Identity()) {
 		return ErrInvalidHandler
 	}
-	intentIdentity := ""
-	if !nilInterface(h.intent) {
-		if intentIdentity = h.intent.Identity(); !validDigest(intentIdentity) {
-			return ErrInvalidHandler
-		}
+	if !nilInterface(h.intent) && !validDigest(h.intent.Identity()) || !nilInterface(h.index) && !validDigest(h.index.Identity()) {
+		return ErrInvalidHandler
 	}
-	if nilInterface(h.sanitizer) || !validDigest(h.sanitizer.Identity()) || h.identity != deriveHandlerIdentity(h.authorizer.Identity(), h.sanitizer.Identity(), h.specialist, intentIdentity) {
+	if nilInterface(h.sanitizer) || !validDigest(h.sanitizer.Identity()) || h.identity != h.deriveIdentity() {
 		return ErrInvalidHandler
 	}
 	if !h.specialist.IsZero() && h.specialist.Validate() != nil {
@@ -202,21 +239,36 @@ func (h *Handler) Validate() error {
 // bytes; its recorded artifacts stay readable through the recorded-readback
 // validators. Version 8 assembles version 9 generation contexts, with
 // deterministic pattern hygiene and, when a change intent source is bound,
-// the stated intent.
-const contextAssemblyHandlerVersion = 8
+// the stated intent. Version 9 assembles version 10 generation contexts: it
+// replaces the semantic-impact reference candidates with index context from
+// a bound IndexContextSource, fits every packet to a budget, and records a
+// context manifest.
+const contextAssemblyHandlerVersion = 9
 
-// deriveHandlerIdentity omits the specialist and intent-source fields when
-// none is bound.
-func deriveHandlerIdentity(authorizer, sanitizer string, specialist review.ContextSpecialist, intent string) string {
+// deriveHandlerIdentity omits the specialist, intent-source, index-source and
+// budget fields when none is bound.
+func deriveHandlerIdentity(authorizer, sanitizer string, specialist review.ContextSpecialist, intent, index string, budget review.ContextBudget) string {
+	type budgetWire struct {
+		Basis          string `json:"basis"`
+		RouteTokens    uint32 `json:"route_context_tokens"`
+		OutputTokens   uint32 `json:"output_tokens"`
+		MaxSourceBytes uint32 `json:"max_source_bytes"`
+	}
+	var bound *budgetWire
+	if budget != (review.ContextBudget{}) {
+		bound = &budgetWire{budget.Basis, budget.RouteContextTokens, budget.OutputTokens, budget.MaxSourceBytes}
+	}
 	encoded, _ := json.Marshal(struct {
-		Contract          string `json:"contract"`
-		Version           int    `json:"version"`
-		Authorizer        string `json:"authorizer"`
-		Sanitizer         string `json:"sanitizer,omitempty"`
-		SpecialistProfile string `json:"specialist_profile_identity,omitempty"`
-		SpecialistCatalog string `json:"specialist_catalog_identity,omitempty"`
-		ChangeIntent      string `json:"change_intent_source_identity,omitempty"`
-	}{"open-trestle/context-assembly-handler", contextAssemblyHandlerVersion, authorizer, sanitizer, specialist.ProfileIdentity(), specialist.CatalogIdentity(), intent})
+		Contract          string      `json:"contract"`
+		Version           int         `json:"version"`
+		Authorizer        string      `json:"authorizer"`
+		Sanitizer         string      `json:"sanitizer,omitempty"`
+		SpecialistProfile string      `json:"specialist_profile_identity,omitempty"`
+		SpecialistCatalog string      `json:"specialist_catalog_identity,omitempty"`
+		ChangeIntent      string      `json:"change_intent_source_identity,omitempty"`
+		IndexContext      string      `json:"index_context_source_identity,omitempty"`
+		Budget            *budgetWire `json:"context_budget,omitempty"`
+	}{"open-trestle/context-assembly-handler", contextAssemblyHandlerVersion, authorizer, sanitizer, specialist.ProfileIdentity(), specialist.CatalogIdentity(), intent, index, bound})
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:])
 }
@@ -474,8 +526,7 @@ func (h *Handler) assembleAt(ctx context.Context, request controlplane.TaskExecu
 		}
 		omissions = append(omissions, omission)
 	}
-	semanticProfile := analysis.SemanticImpact()
-	for _, gap := range semanticProfile.Gaps() {
+	for _, gap := range analysis.SemanticImpact().Gaps() {
 		omission, omissionErr := review.NewContextSourceOmission(gap.Path(), 0, 0, "semantic_"+string(gap.Reason()))
 		if omissionErr != nil {
 			return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
@@ -535,10 +586,6 @@ func (h *Handler) assembleAt(ctx context.Context, request controlplane.TaskExecu
 		}
 		candidates = append(candidates, source)
 	}
-	candidates, omissions, semanticFailure := appendSemanticCandidates(contents, memoryScope, semanticProfile, candidates, omissions)
-	if semanticFailure != 0 {
-		return contextAssembly{}, provider.Request{}, nil, semanticFailure
-	}
 	makeAbstention := func(reason string, failureCode controlplane.RunFailure, sourceOmissions []review.ContextSourceOmission) (*artifact.Artifact, controlplane.RunFailure) {
 		value, err := newContextAbstentionArtifact(request, analysisArtifact, memoryArtifact, changeArtifact, headArtifact, head.Identity(), sourceOmissions, reason, failureCode, createdAt, expires)
 		if err != nil {
@@ -588,7 +635,13 @@ func (h *Handler) assembleAt(ctx context.Context, request controlplane.TaskExecu
 	if len(candidates) == 0 && !wholeFileRemoved {
 		return abstainAllOmitted()
 	}
-	limits, _ := review.NewContextLimits(maximumContextPacketSourceBytes, uint8(min(50, memoryItems)))
+	// The investigation pipeline keeps the fixed bounds its own contract
+	// checks; every other packet fits the bound budget.
+	budget := h.contextBudget()
+	limits, _ := budget.Limits(uint8(min(50, memoryItems)))
+	if h.pipeline != nil {
+		limits, _ = review.NewContextLimits(maximumContextPacketSourceBytes, uint8(min(50, memoryItems)))
+	}
 	var selection review.ContextSourceSelection
 	if len(candidates) > 0 {
 		selection, err = review.SelectContextSources(candidates, limits)
@@ -626,7 +679,7 @@ func (h *Handler) assembleAt(ctx context.Context, request controlplane.TaskExecu
 	}
 	if len(withInstructions) > len(candidates) {
 		var instructions []review.ContextSource
-		instructions, omissions, instructionFailure = fitRepositoryInstructionCandidates(selection, withInstructions[len(candidates):], omissions, limits.MaxSourceBytes())
+		instructions, omissions, instructionFailure = fitRepositoryInstructionCandidates(selection, withInstructions[len(candidates):], omissions, limits)
 		if instructionFailure != 0 {
 			return contextAssembly{}, provider.Request{}, nil, instructionFailure
 		}
@@ -634,6 +687,47 @@ func (h *Handler) assembleAt(ctx context.Context, request controlplane.TaskExecu
 		selection, err = review.SelectContextSources(candidates, limits)
 		if err != nil {
 			return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureResourceLimit
+		}
+	}
+	// The stated intent comes next: it fills the source budget the selected
+	// sources left, so changed code keeps priority, and a cut is marked.
+	var intent review.StatedIntent
+	if !nilInterface(h.intent) {
+		stated, err := h.intent.StatedIntent(ctx, change.Repository(), change.BaseRevision(), change.HeadRevision())
+		if err != nil {
+			if ctx.Err() != nil {
+				return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureCanceled
+			}
+			return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
+		}
+		intent = stated.Fit(int(limits.MaxSourceBytes()) - int(selection.SelectedBytes()))
+	}
+	// Index context fills what is left, in its fixed priority order.
+	// Without a usable repository index, the plan comes from the snapshots
+	// this handler already loaded.
+	plan, planFailure := h.indexContextPlan(ctx, change.Repository(), change.BaseRevision(), change.HeadRevision())
+	if planFailure == 0 && plan.State != review.ContextIndexUsed {
+		plan, planFailure = h.boundedSnapshotContextPlan(ctx, request.Plan().Scope(), readAt, base, change, contents, &expires)
+	}
+	if planFailure != 0 {
+		return contextAssembly{}, provider.Request{}, nil, planFailure
+	}
+	if h.pipeline != nil {
+		plan = investigationPlan(plan)
+	}
+	var fit indexContextFit
+	{
+		free := int(limits.MaxSourceBytes()) - int(selection.SelectedBytes()) - intent.TextBytes()
+		fit, planFailure = fitIndexContext(plan, contents, memoryScope, selection.SelectedSources(), free, review.MaxSelectedContextSources-selection.SelectedCount(), maximumContextCandidates-len(candidates))
+		if planFailure != 0 {
+			return contextAssembly{}, provider.Request{}, nil, planFailure
+		}
+		if len(fit.sources) > 0 {
+			candidates = append(candidates, fit.sources...)
+			selection, err = review.SelectContextSources(candidates, limits)
+			if err != nil {
+				return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureResourceLimit
+			}
 		}
 	}
 	// The review snapshot holds head ranges only. Removed base lines carry base
@@ -648,6 +742,9 @@ func (h *Handler) assembleAt(ctx context.Context, request controlplane.TaskExecu
 	snapshot, err := review.NewAcquiredReviewPipelineSnapshot(request.Plan().Scope().ReviewRunID(), manifest, ranges)
 	if err != nil {
 		return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
+	}
+	if omissions, err = collapseOmissions(omissions); err != nil {
+		return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureResourceLimit
 	}
 	packet, err := review.NewContextPacketWithAccounting(request.Plan().Scope(), memoryScope, snapshot, review.ContextTaskCandidateGeneration, candidates, retrievals, omissions, limits)
 	if err != nil {
@@ -673,21 +770,17 @@ func (h *Handler) assembleAt(ctx context.Context, request controlplane.TaskExecu
 			return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
 		}
 	}
-	if !nilInterface(h.intent) {
-		intent, err := h.intent.StatedIntent(ctx, change.Repository(), change.BaseRevision(), change.HeadRevision())
+	if !intent.IsZero() {
+		packet, err = packet.WithStatedIntent(intent)
 		if err != nil {
-			if ctx.Err() != nil {
-				return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureCanceled
-			}
 			return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
 		}
-		// The stated intent fills the source budget the selected sources left:
-		// changed code keeps priority, and a cut is marked, never silent.
-		if fitted := intent.Fit(int(limits.MaxSourceBytes()) - int(packet.SourceSelection().SelectedBytes())); !fitted.IsZero() {
-			packet, err = packet.WithStatedIntent(fitted)
-			if err != nil {
-				return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
-			}
+	}
+	if h.pipeline == nil {
+		changed, notListed := manifestDefinitions(plan, packet.Sources())
+		packet, err = packet.WithContextManifest(review.ContextManifestSpec{Budget: budget, Plan: plan, Included: fit.included, Omitted: fit.omitted, Changed: changed, ChangedNotListed: notListed})
+		if err != nil {
+			return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
 		}
 	}
 	providerRequest, err := packet.ProviderRequest()

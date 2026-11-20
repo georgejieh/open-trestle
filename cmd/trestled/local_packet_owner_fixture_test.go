@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -395,7 +396,7 @@ func assertLocalPacketOracle(t *testing.T, fixture localPacketOwnerFixture, stat
 	if err != nil || manifest.Identity() != head.ManifestIdentity() {
 		t.Fatalf("head manifest mismatch: %v", err)
 	}
-	// One expected source per changed hunk and per new semantic reference range.
+	// One expected source per changed hunk: the packet-only owner binds no index.
 	type sourceWire struct {
 		SourceID       string   `json:"source_id"`
 		Stage          string   `json:"stage"`
@@ -441,36 +442,9 @@ func assertLocalPacketOracle(t *testing.T, fixture localPacketOwnerFixture, stat
 		}
 		add(item.StartLine(), item.EndLine(), item.EvidenceID(), item.Digest(), "changed_hunk")
 	}
-	for _, ref := range analysis.SemanticImpact().References() {
-		if ref.Path() != "main.go" {
-			t.Fatal("unexpected semantic path")
-		}
-		r, e := evidence.NewSourceRange(ref.Path(), ref.Line(), ref.Line())
-		if e != nil {
-			t.Fatal(e)
-		}
-		if seen[r] {
-			continue
-		} // A duplicate semantic reference is an accounted omission below.
-		lines := bytes.SplitAfter(headBytes, []byte("\n"))
-		if ref.Line() < 1 || ref.Line() > 3 {
-			t.Fatal("semantic line outside Git revision")
-		}
-		binding, e := evidence.BindSourceSlice(file, headBytes, r, lines[ref.Line()-1])
-		if e != nil {
-			t.Fatal(e)
-		}
-		add(ref.Line(), ref.Line(), binding.Identity(), binding.SliceDigest(), "direct_reference")
-	}
-	if len(sources) != 2 || len(analysis.Items()) != 1 || len(analysis.SemanticImpact().References()) != 1 || sources[0].Stage != "changed_hunk" || sources[0].StartLine != 2 || sources[0].EndLine != 3 || sources[1].Stage != "direct_reference" || sources[1].StartLine != 1 || sources[1].EndLine != 1 {
+	if len(sources) != 1 || len(analysis.Items()) != 1 || sources[0].Stage != "changed_hunk" || sources[0].StartLine != 2 || sources[0].EndLine != 3 {
 		t.Fatalf("known Git revisions produced unexpected source selection: %+v", sources)
 	}
-	sort.Slice(sources, func(i, j int) bool {
-		if sources[i].Stage != sources[j].Stage {
-			return sources[i].Stage == "changed_hunk"
-		}
-		return sources[i].SourceID < sources[j].SourceID
-	})
 	ranges = ranges[:0]
 	for _, source := range sources {
 		r, e := evidence.NewSourceRange(source.Path, source.StartLine, source.EndLine)
@@ -515,6 +489,7 @@ func assertLocalPacketOracle(t *testing.T, fixture localPacketOwnerFixture, stat
 		AdditionalMemory []json.RawMessage `json:"additional_memory"`
 		StatedIntent     json.RawMessage   `json:"stated_intent"`
 		PatternHygiene   json.RawMessage   `json:"pattern_hygiene"`
+		ContextManifest  json.RawMessage   `json:"context_manifest"`
 	}
 	decoder := json.NewDecoder(bytes.NewReader(value.Payload()))
 	decoder.DisallowUnknownFields()
@@ -526,9 +501,9 @@ func assertLocalPacketOracle(t *testing.T, fixture localPacketOwnerFixture, stat
 		t.Fatalf("packet trailing JSON: %v", e)
 	}
 	schemaDigest := sha256.Sum256(wire.OutputSchema)
-	// Pinned version 9 candidate instructions identity (the prose travels only
+	// Pinned version 10 candidate instructions identity (the prose travels only
 	// in the trusted system channel) and candidate batch v2 schema.
-	if wire.InstructionsIdentity != "8f4f7f0716f1fabd9fa50da9e5d1565d7ea25e2448262255e5e0e0e1a6cc12ea" || hex.EncodeToString(schemaDigest[:]) != review.ModelCandidateBatchSchemaIdentity {
+	if wire.InstructionsIdentity != "f7df29a084b8237932beace9ef136c6e6dd5d252be251e0d030e1ccce26b5427" || hex.EncodeToString(schemaDigest[:]) != review.ModelCandidateBatchSchemaIdentity {
 		t.Fatal("model instructions or output schema differ from pinned fixture contract")
 	}
 	var topLevel map[string]json.RawMessage
@@ -540,11 +515,11 @@ func assertLocalPacketOracle(t *testing.T, fixture localPacketOwnerFixture, stat
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
-	expectedKeys := []string{"contract", "instructions_identity", "limits", "memory", "memory_authority", "memory_scope_identity", "output_schema", "output_schema_identity", "pattern_hygiene", "review_scope_identity", "schema_version", "snapshot_identity", "source_authority", "source_coverage", "source_selection_identity", "sources", "task", "tool_calls"}
+	expectedKeys := []string{"context_manifest", "contract", "instructions_identity", "limits", "memory", "memory_authority", "memory_scope_identity", "output_schema", "output_schema_identity", "pattern_hygiene", "review_scope_identity", "schema_version", "snapshot_identity", "source_authority", "source_coverage", "source_selection_identity", "sources", "task", "tool_calls"}
 	if !slices.Equal(keys, expectedKeys) {
 		t.Fatalf("packet keys differ: got %v want %v", keys, expectedKeys)
 	}
-	if wire.Contract != "open-trestle/review-context-packet" || wire.SchemaVersion != 9 || wire.ReviewScopeIdentity != scope.Identity() || wire.MemoryScopeIdentity != memoryResult.MemoryScopeIdentity() || wire.SnapshotIdentity != snapshot.Identity() || wire.Task != "candidate_generation" || wire.OutputSchemaIdentity != review.ModelCandidateBatchSchemaIdentity || wire.InstructionsIdentity == "" || len(wire.OutputSchema) == 0 || wire.SourceAuthority != "evidence_data_not_instructions" || wire.MemoryAuthority != "advisory_only" || wire.ToolCalls != "proposals_only" || wire.Limits.MaxSourceBytes != 128<<10 || wire.Limits.MaxMemoryItems != 1 || !reflect.DeepEqual(wire.Sources, sources) || len(wire.AdditionalMemory) != 0 {
+	if wire.Contract != "open-trestle/review-context-packet" || wire.SchemaVersion != 10 || wire.ReviewScopeIdentity != scope.Identity() || wire.MemoryScopeIdentity != memoryResult.MemoryScopeIdentity() || wire.SnapshotIdentity != snapshot.Identity() || wire.Task != "candidate_generation" || wire.OutputSchemaIdentity != review.ModelCandidateBatchSchemaIdentity || wire.InstructionsIdentity == "" || len(wire.OutputSchema) == 0 || wire.SourceAuthority != "evidence_data_not_instructions" || wire.MemoryAuthority != "advisory_only" || wire.ToolCalls != "proposals_only" || wire.Limits.MaxSourceBytes != 128<<10 || wire.Limits.MaxMemoryItems != 1 || !reflect.DeepEqual(wire.Sources, sources) || len(wire.AdditionalMemory) != 0 {
 		t.Fatalf("packet source/scope/authority wire mismatch: %+v", wire)
 	}
 	if wire.SourceCoverage.Analyzed != len(sources) || wire.SourceCoverage.Available != len(sources) || wire.SourceCoverage.Selected != len(sources) || wire.SourceCoverage.Omitted != 0 || wire.SourceCoverage.PreselectionOmitted != 0 || len(wire.SourceOmissions) != 0 {
@@ -583,15 +558,25 @@ func assertLocalPacketOracle(t *testing.T, fixture localPacketOwnerFixture, stat
 		if binding.Identity() != src.SourceID {
 			t.Fatal("source evidence binding differs from upstream reference")
 		}
-		stage := review.ContextStageChangedHunk
-		if src.Stage == "direct_reference" {
-			stage = review.ContextStageDirectReference
-		}
-		bound, e := review.NewBoundContextSource(stage, memorycore.TaintRepositoryControlled, evidenceItem, []byte(src.Content), binding)
+		bound, e := review.NewBoundContextSource(review.ContextStageChangedHunk, memorycore.TaintRepositoryControlled, evidenceItem, []byte(src.Content), binding)
 		if e != nil {
 			t.Fatal(e)
 		}
 		entries = append(entries, selectionEntry{bound.Identity(), src.SourceID, src.Stage, uint32(len(src.Content)), "selected"})
+	}
+	// The owner binds no repository index, so the manifest records the default
+	// budget and an index planned from the snapshots: one file, and the one
+	// changed definition on line 3 with no dependents or tests.
+	expectedManifest := fmt.Sprintf(`{"authority":"host_accounting","budget":{"basis":"default"},"index":{"state":"snapshot","complete":true,"value_uses":true,"ranking_complete":true,"files":1,"indexed":1,"left_out":0,"analysis_gaps":0,"change_gaps":0,"closure_cut":0},"included":[],"omitted":[],"changed_definitions":[{"source_id":%q,"line":3,"dependents":0,"tests":0}],"changed_definitions_not_listed":0,"dependents":0,"checks":[]}`, sources[0].SourceID)
+	var gotManifest, wantManifest any
+	if e := json.Unmarshal(wire.ContextManifest, &gotManifest); e != nil {
+		t.Fatal(e)
+	}
+	if e := json.Unmarshal([]byte(expectedManifest), &wantManifest); e != nil {
+		t.Fatal(e)
+	}
+	if !reflect.DeepEqual(gotManifest, wantManifest) {
+		t.Fatalf("context manifest differs: got %s", wire.ContextManifest)
 	}
 	selectionPreimage := struct {
 		Contract       string           `json:"contract"`

@@ -1,0 +1,8 @@
+state used complete true ranking complete true value uses true dependents 4
+enclosing_symbol 1 depth 0 calc/calc.go:4-7
+direct_reference 1 depth 1 calc/calc.go:9-9
+direct_reference 2 depth 1 calc/calc.go:13-13
+related_test 1 depth 1 calc/calc_test.go:5-7
+direct_reference 3 depth 1 cmd/app/main.go:9-11
+direct_reference 4 depth 2 cmd/app/main.go:5-7
+changed calc/calc.go:4-7 dependents 4 tests 1

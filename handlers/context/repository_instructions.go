@@ -97,14 +97,14 @@ func sameBaseContent(base sourceoutput.FileReference, filePath string, content [
 // context therefore never appears as a selection omission, which would count
 // against changed-source coverage. Selection order is stage first, then
 // reference ID, so earlier-stage results do not depend on these sources.
-func fitRepositoryInstructionCandidates(baseline review.ContextSourceSelection, instructions []review.ContextSource, omissions []review.ContextSourceOmission, maxSourceBytes uint32) ([]review.ContextSource, []review.ContextSourceOmission, controlplane.RunFailure) {
+func fitRepositoryInstructionCandidates(baseline review.ContextSourceSelection, instructions []review.ContextSource, omissions []review.ContextSourceOmission, limits review.ContextLimits) ([]review.ContextSource, []review.ContextSourceOmission, controlplane.RunFailure) {
 	ordered := append([]review.ContextSource(nil), instructions...)
 	sort.Slice(ordered, func(i, j int) bool { return ordered[i].ReferenceID() < ordered[j].ReferenceID() })
 	count, used := baseline.SelectedCount(), baseline.SelectedBytes()
 	kept := make([]review.ContextSource, 0, len(ordered))
 	for _, source := range ordered {
 		size := uint32(source.SizeBytes())
-		if count < review.MaxSelectedContextSources && size <= maxSourceBytes-used {
+		if count < review.MaxSelectedContextSources && size <= limits.MaxSourceBytes()-used {
 			kept = append(kept, source)
 			count++
 			used += size

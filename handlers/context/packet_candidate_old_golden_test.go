@@ -155,11 +155,11 @@ func TestOldCodePacketCandidateGoldenWithIndexedMemory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	golden, err := os.ReadFile("testdata/v9_packet_candidate_envelope.json")
+	golden, err := os.ReadFile("testdata/v10_packet_candidate_envelope.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	expectedDescriptor, err := os.ReadFile("testdata/v9_packet_candidate_descriptor.json")
+	expectedDescriptor, err := os.ReadFile("testdata/v10_packet_candidate_descriptor.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,8 +240,8 @@ func TestOldCodePacketCandidateGoldenWithZeroHitMemory(t *testing.T) {
 	if err := json.Unmarshal(value.Payload(), &packet); err != nil {
 		t.Fatal(err)
 	}
-	if packet.SchemaVersion != 9 || len(packet.Memory.Items) != 0 || bytes.Contains(value.Payload(), []byte("<redacted>")) {
-		t.Fatal("wrong v9 or memory/redaction branch")
+	if packet.SchemaVersion != 10 || len(packet.Memory.Items) != 0 || bytes.Contains(value.Payload(), []byte("<redacted>")) {
+		t.Fatal("wrong v10 or memory/redaction branch")
 	}
 	for _, retrieval := range packet.AdditionalMemory {
 		if len(retrieval.Items) != 0 {
@@ -344,7 +344,7 @@ func TestOldCodePacketCandidateGoldenWithZeroHitMemory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for path, actual := range map[string][]byte{"testdata/v9_packet_candidate_zero_hit_envelope.json": encoded, "testdata/v9_packet_candidate_zero_hit_descriptor.json": append(descriptor, '\n')} {
+	for path, actual := range map[string][]byte{"testdata/v10_packet_candidate_zero_hit_envelope.json": encoded, "testdata/v10_packet_candidate_zero_hit_descriptor.json": append(descriptor, '\n')} {
 		expected, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)

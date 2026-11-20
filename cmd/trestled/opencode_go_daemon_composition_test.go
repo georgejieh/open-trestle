@@ -185,7 +185,7 @@ func (r *daemonOpenCodeGoTransport) RoundTrip(request *http.Request) (*http.Resp
 	}
 	neutral, err := provider.NewRequest(provider.CapabilityReviewV1, "application/json", payload)
 	var packet daemonBudgetedModelPacket
-	if err != nil || json.Unmarshal(payload, &packet) != nil || packet.Version != 9 || packet.Task != "candidate_generation" || packet.Scope != r.scope.Identity() || packet.SourceAuthority != "evidence_data_not_instructions" || packet.MemoryAuthority != "advisory_only" || review.ValidateCandidateModelRequest(neutral, r.scope.Identity()) != nil {
+	if err != nil || json.Unmarshal(payload, &packet) != nil || packet.Version != 10 || packet.Task != "candidate_generation" || packet.Scope != r.scope.Identity() || packet.SourceAuthority != "evidence_data_not_instructions" || packet.MemoryAuthority != "advisory_only" || review.ValidateCandidateModelRequest(neutral, r.scope.Identity()) != nil {
 		return nil, fmt.Errorf("Go inner sanitized candidate context changed")
 	}
 	endpoint.mu.Lock()

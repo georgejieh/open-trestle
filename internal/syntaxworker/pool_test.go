@@ -22,6 +22,10 @@ func TestMain(m *testing.M) {
 		switch os.Args[2] {
 		case "fake":
 			os.Exit(serveFake())
+		case "linger":
+			code := serveFake()
+			time.Sleep(time.Minute)
+			os.Exit(code)
 		case "real":
 			os.Exit(Run(context.Background(), nil, os.Stdin, os.Stdout))
 		}
@@ -155,6 +159,20 @@ func TestPoolCancellationKillsTheWorker(t *testing.T) {
 	}
 	if got := analyzeFile(t, pool, "ok.go", ""); onlyGap(got) != syntaxanalysis.GapParseError {
 		t.Fatalf("after cancellation: %v", got.Gaps)
+	}
+}
+
+// Close does not wait for idle workers to exit by themselves.
+func TestPoolCloseStopsLingeringWorkersAtOnce(t *testing.T) {
+	pool := newTestPool(t, "linger", 1)
+	analyzeFile(t, pool, "ok.go", "package p\n")
+	if pool.Stats().Started != 1 {
+		t.Fatalf("stats = %+v", pool.Stats())
+	}
+	started := time.Now()
+	pool.Close()
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("Close took %s", elapsed)
 	}
 }
 

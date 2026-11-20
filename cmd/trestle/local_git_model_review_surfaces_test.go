@@ -23,7 +23,7 @@ func runModelReviewOutput(t *testing.T, f *localModelFixture, extra []string, wa
 		args = append(args, extra[index])
 	}
 	var stdout, stderr bytes.Buffer
-	if code := run(args, &stdout, &stderr); code != wantCode || stderr.Len() != 0 {
+	if code := run(args, &stdout, &stderr); code != wantCode || withoutIndexNotice(stderr.String()) != "" {
 		t.Fatalf("exit=%d want=%d stderr=%q stdout=%s", code, wantCode, stderr.String(), stdout.String())
 	}
 	for _, forbidden := range []string{localModelSecret, localModelKey, "return 10 / x", f.objects, f.policyPath} {
@@ -50,7 +50,7 @@ func requireInOrder(t *testing.T, text string, wants ...string) {
 // Text output leads with the walkthrough, then the ranked confirmed findings,
 // then coverage and tokens; the limitations list is only in --verbose text.
 func TestModelReviewTextShowsWalkthroughThenRankedFindings(t *testing.T) {
-	f := newLocalModelFixture(t, localModelFixtureOptions{chatCompletions: true})
+	f := newCheckoutModelFixture(t, localModelFixtureOptions{chatCompletions: true})
 	text := runModelReviewOutput(t, f, []string{"--format", "text"}, 4)
 	requireInOrder(t, text,
 		"status: findings\n", "ci: blocked\n",
@@ -72,8 +72,8 @@ func TestModelReviewTextShowsWalkthroughThenRankedFindings(t *testing.T) {
 		t.Fatalf("text shows sections it has no findings for, or internal tokens:\n%s", text)
 	}
 	verbose := runModelReviewOutput(t, f, []string{"--format", "text", "--verbose"}, 4)
-	requireInOrder(t, verbose, "tokens: input=200 output=200 cached_input=0 over 2 route attempts\n", "limitations: loose_git_objects_only, empty_memory_index, bounded_source_context, no_publication, ephemeral_state_no_resume\ncomprehensive clearance: false\n")
-	if strings.TrimSuffix(verbose, "limitations: loose_git_objects_only, empty_memory_index, bounded_source_context, no_publication, ephemeral_state_no_resume\ncomprehensive clearance: false\n") != strings.TrimSuffix(text, "comprehensive clearance: false\n") {
+	requireInOrder(t, verbose, "tokens: input=200 output=200 cached_input=0 over 2 route attempts\n", "limitations: loose_and_pack_index_v1_subset, empty_memory_index, bounded_source_context, no_publication, ephemeral_state_no_resume\ncomprehensive clearance: false\n")
+	if strings.TrimSuffix(verbose, "limitations: loose_and_pack_index_v1_subset, empty_memory_index, bounded_source_context, no_publication, ephemeral_state_no_resume\ncomprehensive clearance: false\n") != strings.TrimSuffix(text, "comprehensive clearance: false\n") {
 		t.Fatalf("--verbose changed more than the limitations line:\n%s\n---\n%s", text, verbose)
 	}
 	// --verbose is a bare flag and may be given once; it changes no other format.
@@ -154,7 +154,7 @@ func TestModelReviewOutputMarksUnprovenOrigin(t *testing.T) {
 // --format markdown is a pull request summary: status, what was verified,
 // changes, missing verification, then the ranked findings and the footer.
 func TestModelReviewMarkdownRenderer(t *testing.T) {
-	f := newLocalModelFixture(t, localModelFixtureOptions{chatCompletions: true})
+	f := newCheckoutModelFixture(t, localModelFixtureOptions{chatCompletions: true})
 	markdown := runModelReviewOutput(t, f, []string{"--format", "markdown"}, 4)
 	requireInOrder(t, markdown,
 		"## Open Trestle review\n\n**Status:** findings · **CI:** blocked · **Run:** succeeded\n",

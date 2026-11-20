@@ -28,19 +28,19 @@ func contextAssemblyIdentityPreimage(t *testing.T, version int, authorizer, sani
 	return hex.EncodeToString(digest[:])
 }
 
-// The version 9 context (pattern hygiene, the optional stated intent and their
-// contract sentences) alters the packet bytes this handler builds, so its
-// identity moves to version 8, as the version 8 context moved it to version 7
-// and the text-fallback, instruction-file, and version 7 context changes moved
-// it to version 6. A plan that recorded an earlier identity is not served by
+// The version 10 context (repository index stages, a per-packet source limit,
+// the context manifest and the repository checks) alters the packet bytes this
+// handler builds, so its identity moves to version 9, as the version 9 context
+// moved it to version 8 and the earlier context changes moved it through
+// versions 7 and 6. A plan that recorded an earlier identity is not served by
 // this handler.
-func TestContextAssemblyHandlerIdentityIsVersionEight(t *testing.T) {
+func TestContextAssemblyHandlerIdentityIsVersionNine(t *testing.T) {
 	authorizer, sanitizer := strings.Repeat("5", 64), contextTestSanitizer{}.Identity()
-	current := deriveHandlerIdentity(authorizer, sanitizer, review.ContextSpecialist{}, "")
-	if current != contextAssemblyIdentityPreimage(t, 8, authorizer, sanitizer) {
-		t.Fatal("route-granting context handler identity is not the version 8 preimage")
+	current := deriveHandlerIdentity(authorizer, sanitizer, review.ContextSpecialist{}, "", "", review.ContextBudget{})
+	if current != contextAssemblyIdentityPreimage(t, 9, authorizer, sanitizer) {
+		t.Fatal("route-granting context handler identity is not the version 9 preimage")
 	}
-	for _, earlier := range []int{5, 6, 7} {
+	for _, earlier := range []int{5, 6, 7, 8} {
 		if current == contextAssemblyIdentityPreimage(t, earlier, authorizer, sanitizer) {
 			t.Fatalf("context handler identity did not change with its packet bytes (version %d)", earlier)
 		}
@@ -49,19 +49,45 @@ func TestContextAssemblyHandlerIdentityIsVersionEight(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bound := deriveHandlerIdentity(authorizer, sanitizer, specialist, ""); bound == current || bound == contextAssemblyIdentityPreimage(t, 5, authorizer, sanitizer) {
+	if bound := deriveHandlerIdentity(authorizer, sanitizer, specialist, "", "", review.ContextBudget{}); bound == current || bound == contextAssemblyIdentityPreimage(t, 5, authorizer, sanitizer) {
 		t.Fatal("specialist handler identity collides with an unbound identity")
 	}
 	intent := strings.Repeat("6", 64)
-	withIntent := deriveHandlerIdentity(authorizer, sanitizer, review.ContextSpecialist{}, intent)
-	if withIntent == current || withIntent == deriveHandlerIdentity(authorizer, sanitizer, specialist, intent) || withIntent == deriveHandlerIdentity(authorizer, sanitizer, review.ContextSpecialist{}, strings.Repeat("7", 64)) {
+	withIntent := deriveHandlerIdentity(authorizer, sanitizer, review.ContextSpecialist{}, intent, "", review.ContextBudget{})
+	if withIntent == current || withIntent == deriveHandlerIdentity(authorizer, sanitizer, specialist, intent, "", review.ContextBudget{}) || withIntent == deriveHandlerIdentity(authorizer, sanitizer, review.ContextSpecialist{}, strings.Repeat("7", 64), "", review.ContextBudget{}) {
 		t.Fatal("the change intent source is not bound into the handler identity")
 	}
 }
 
-// Context packets recorded by the version 5 and version 6 handlers (generation
-// contexts 5 and 7) stay readable as recorded bytes but can no longer start a
-// model attempt.
+// The index source and the budget each change the packets a handler builds, so
+// each is bound into the identity, and so is every field of the budget.
+func TestContextAssemblyHandlerIdentityBindsIndexSourceAndBudget(t *testing.T) {
+	authorizer, sanitizer := strings.Repeat("5", 64), contextTestSanitizer{}.Identity()
+	derive := func(index string, budget review.ContextBudget) string {
+		return deriveHandlerIdentity(authorizer, sanitizer, review.ContextSpecialist{}, "", index, budget)
+	}
+	unbound := derive("", review.ContextBudget{})
+	budget := review.RouteContextBudget(64000, 4096)
+	seen := map[string]string{"unbound": unbound}
+	for name, identity := range map[string]string{
+		"index source":       derive(strings.Repeat("8", 64), review.ContextBudget{}),
+		"other index source": derive(strings.Repeat("9", 64), review.ContextBudget{}),
+		"budget":             derive("", budget),
+		"default budget":     derive("", review.DefaultContextBudget()),
+		"source and budget":  derive(strings.Repeat("8", 64), budget),
+		"other window":       derive("", review.RouteContextBudget(128000, 4096)),
+		"other output":       derive("", review.RouteContextBudget(64000, 8192)),
+	} {
+		if previous, duplicate := seen[identity]; duplicate {
+			t.Fatalf("%s handler identity equals the %s identity", name, previous)
+		}
+		seen[identity] = name
+	}
+}
+
+// Context packets recorded by the earlier handlers (generation contexts 5, 7,
+// 8 and 9) stay readable as recorded bytes but can no longer start a model
+// attempt.
 func TestRecordedEarlierPacketsAreReadbackOnly(t *testing.T) {
 	for _, recorded := range []struct {
 		path    string
@@ -71,6 +97,7 @@ func TestRecordedEarlierPacketsAreReadbackOnly(t *testing.T) {
 		{"testdata/v5_packet_candidate_envelope.json", 5, review.ModelCandidateBatchV1SchemaIdentity},
 		{"testdata/v7_packet_candidate_envelope.json", 7, review.ModelCandidateBatchSchemaIdentity},
 		{"testdata/v8_packet_candidate_envelope.json", 8, review.ModelCandidateBatchSchemaIdentity},
+		{"testdata/v9_packet_candidate_envelope.json", 9, review.ModelCandidateBatchSchemaIdentity},
 	} {
 		encoded, err := os.ReadFile(recorded.path)
 		if err != nil {

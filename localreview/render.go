@@ -110,6 +110,7 @@ func walkthroughVerifiedTexts(w *Walkthrough, code func(string) string, set *set
 	} else {
 		lines = append(lines, "semantic impact: unavailable (no analysis was recorded)")
 	}
+	lines = append(lines, contextText(verified.Context)...)
 	if verifier := verified.Verifier; verifier != nil {
 		of := ""
 		if set != nil {
@@ -230,7 +231,7 @@ func missingVerificationText(note MissingVerification, code func(string) string)
 }
 
 func missingIncompleteText() string {
-	return "the semantic-impact scan did not read every Go file, so a test it did not read may cover these"
+	return "the repository index did not cover every changed function, so a test it did not see may cover these"
 }
 
 // WalkthroughText renders the walkthrough as text lines.

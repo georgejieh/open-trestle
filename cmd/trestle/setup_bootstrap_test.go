@@ -159,7 +159,7 @@ func TestSetupBootstrapOwnedCheckoutFirstReview(t *testing.T) {
 	var out, err bytes.Buffer
 	code := runLocalGitModelReview(context.Background(), reviewArgs, &out, &err)
 	var result localModelReceipt
-	if json.Unmarshal(out.Bytes(), &result) != nil || code != 4 || err.Len() != 0 || result.Status != "findings" || result.RunStatus != "succeeded" || result.Independence != "distinct_model" || len(result.Diagnostics.Findings) != 1 || result.Diagnostics.Head != f.head || result.ComprehensiveClearance {
+	if json.Unmarshal(out.Bytes(), &result) != nil || code != 4 || withoutIndexNotice(err.String()) != "" || result.Status != "findings" || result.RunStatus != "succeeded" || result.Independence != "distinct_model" || len(result.Diagnostics.Findings) != 1 || result.Diagnostics.Head != f.head || result.ComprehensiveClearance {
 		t.Fatalf("first review code=%d out=%s err=%s", code, out.String(), err.String())
 	}
 	generation, _ := f.generation.snapshot()

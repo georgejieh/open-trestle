@@ -14,6 +14,7 @@ import (
 
 	"github.com/georgejieh/open-trestle/adapters/providers/openai"
 	"github.com/georgejieh/open-trestle/audit"
+	contexthandler "github.com/georgejieh/open-trestle/handlers/context"
 	"github.com/georgejieh/open-trestle/internal/evidence"
 	"github.com/georgejieh/open-trestle/internal/scm"
 	"github.com/georgejieh/open-trestle/internal/testsupport"
@@ -155,7 +156,7 @@ func TestRunLocalGitModelReviewUsesDirectCallerContext(t *testing.T) {
 			select {
 			case code := <-done:
 				var receipt localModelReceipt
-				if code != 3 || json.Unmarshal(stdout.Bytes(), &receipt) != nil || receipt.Status != "canceled" || receipt.CI != "inconclusive" || stderr.Len() != 0 {
+				if code != 3 || json.Unmarshal(stdout.Bytes(), &receipt) != nil || receipt.Status != "canceled" || receipt.CI != "inconclusive" || withoutIndexNotice(stderr.String()) != "" {
 					t.Fatal("direct caller cancellation did not produce bounded inconclusive disposition")
 				}
 			case <-time.After(3 * time.Second):
@@ -371,11 +372,16 @@ func TestLocalModelSessionCapacityAndTimingRemainBounded(t *testing.T) {
 }
 
 func TestLocalModelSessionCannotReceiveForgeOrCustomHandlerCapabilities(t *testing.T) {
-	allowed := map[string]bool{"TenantID": true, "RepositoryID": true, "Repository": true, "ObjectsRoot": true, "ObjectStoreProfile": true, "ObjectAlgorithm": true, "Inventory": true, "Policy": true, "Egress": true, "Credentials": true, "Clock": true, "Timeout": true, "ArtifactCapacity": true, "RenewalInterval": true, "Retention": true, "RetainedMemoryInput": true, "Scanner": true, "GenerationSanitizer": true, "VerificationSanitizer": true, "ModelHTTPClient": true, "ModelHTTPClientIdentity": true}
+	allowed := map[string]bool{"TenantID": true, "RepositoryID": true, "Repository": true, "ObjectsRoot": true, "ObjectStoreProfile": true, "ObjectAlgorithm": true, "Inventory": true, "Policy": true, "Egress": true, "Credentials": true, "Clock": true, "Timeout": true, "ArtifactCapacity": true, "RenewalInterval": true, "Retention": true, "RetainedMemoryInput": true, "GenerationSanitizer": true, "VerificationSanitizer": true, "ModelHTTPClient": true, "ModelHTTPClientIdentity": true, "IndexContext": true, "Scanner": true}
 	options := reflect.TypeOf(localreview.SessionOptions{})
 	// The policy-approved transport is a plain identity-bound HTTP client, not a handler.
 	if field, ok := options.FieldByName("ModelHTTPClient"); !ok || field.Type != reflect.TypeOf((*http.Client)(nil)) {
 		t.Fatal("model transport option must remain a plain HTTP client")
+	}
+	// The index option only proposes line ranges of the verified head snapshot;
+	// it is the context handler's interface, not a handler of the session.
+	if field, ok := options.FieldByName("IndexContext"); !ok || field.Type != reflect.TypeOf((*contexthandler.IndexContextSource)(nil)).Elem() {
+		t.Fatal("index context option must remain the range-proposing source interface")
 	}
 	for name, want := range map[string]reflect.Type{
 		"ObjectStoreProfile": reflect.TypeOf(scm.LocalGitObjectStoreProfile("")),

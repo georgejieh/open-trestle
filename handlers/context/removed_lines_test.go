@@ -70,7 +70,7 @@ func TestDeletionOnlyChangeSuppliesTheRemovedBaseLines(t *testing.T) {
 			found = source.SourceID == removed.ReferenceID() && source.Taint == "repository_controlled" && source.Path == "calc.go" && source.StartLine == 4 && source.EndLine == 6 && source.HeadLine == 3 && len(source.RiskFlags) == 0
 		}
 	}
-	if wire.SchemaVersion != 9 || !found {
+	if wire.SchemaVersion != 10 || !found {
 		t.Fatalf("generation request lacks the removed_lines source: version=%d", wire.SchemaVersion)
 	}
 	packet := result.assembly.Packet
@@ -102,7 +102,7 @@ func TestDeletionOnlyChangeSuppliesTheRemovedBaseLines(t *testing.T) {
 	for _, source := range verifier.Sources {
 		found = found || source.Stage == "removed_lines" && source.SourceID == removed.ReferenceID() && source.StartLine == 4 && source.EndLine == 6 && source.Content == string(removed.Content())
 	}
-	if verifier.SchemaVersion != 8 || !found {
+	if verifier.SchemaVersion != 9 || !found {
 		t.Fatalf("verifier request lacks the removed guard: version=%d", verifier.SchemaVersion)
 	}
 }

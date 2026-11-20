@@ -14,12 +14,12 @@ func TestDeterministicCorpusCandidateIsPendingAndBounded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.Validate() != nil || report.ReviewState() != "pending" || report.ExecutionStatus() != "mismatch" || report.CaseCount() != 6 || report.TargetCount() != 8 || report.ReleaseEvidenceEligible() {
+	if report.Validate() != nil || report.ReviewState() != "pending" || report.ExecutionStatus() != "matched" || report.CaseCount() != 6 || report.TargetCount() != 8 || report.ReleaseEvidenceEligible() {
 		t.Fatalf("report=%#v", report)
 	}
 	for _, target := range report.Targets() {
 		if target.Key == "syntactic_reference_candidate" {
-			if target.TruePositiveCount != 2 || target.FalsePositiveCount != 2 || target.FalseNegativeCount != 0 || target.CoverageNumerator != 3 || target.CoverageDenominator != 3 {
+			if target.TruePositiveCount != 2 || target.FalsePositiveCount != 0 || target.FalseNegativeCount != 0 || target.CoverageNumerator != 3 || target.CoverageDenominator != 3 {
 				t.Fatalf("reference target=%#v", target)
 			}
 		} else if target.FalsePositiveCount != 0 || target.FalseNegativeCount != 0 {

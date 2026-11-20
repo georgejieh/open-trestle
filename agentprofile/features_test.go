@@ -480,8 +480,9 @@ func TestProfileChangeFeaturesFromSemanticImpact(t *testing.T) {
 		t.Fatal(err)
 	}
 	features, err := ChangeFeaturesFromSemanticImpact(change, impact, AnalysisHints{
-		ConfigFiles: []ConfigFile{{Path: "go.mod"}},
-		FileSignals: map[string][]Signal{"lib/api.go": {SignalConcurrency}},
+		ConfigFiles:     []ConfigFile{{Path: "go.mod"}},
+		FileSignals:     map[string][]Signal{"lib/api.go": {SignalConcurrency}},
+		ReferenceFanOut: 3,
 	})
 	if err != nil {
 		t.Fatalf("ChangeFeaturesFromSemanticImpact() error = %v", err)
@@ -493,7 +494,7 @@ func TestProfileChangeFeaturesFromSemanticImpact(t *testing.T) {
 	if !reflect.DeepEqual(wire.Files[0].Signals, []string{"concurrency", "http", "public_api"}) {
 		t.Fatalf("signals = %v", wire.Files[0].Signals)
 	}
-	if wire.PublicAPIChanges != uint32(len(impact.PublicAPIChanges())) || wire.ReferenceFanOut != uint32(len(impact.References())) || wire.PublicAPIChanges == 0 || wire.ReferenceFanOut == 0 {
+	if wire.PublicAPIChanges != uint32(len(impact.PublicAPIChanges())) || wire.ReferenceFanOut != 3 || wire.PublicAPIChanges == 0 {
 		t.Fatalf("semantic counts = %d/%d", wire.PublicAPIChanges, wire.ReferenceFanOut)
 	}
 	if wire.ChangeIdentity != change.Identity() || wire.SemanticProfileIdentity != impact.Identity() {
@@ -506,7 +507,7 @@ func TestProfileChangeFeaturesFromSemanticImpact(t *testing.T) {
 		t.Fatalf("zero change accepted: %v", err)
 	}
 	// The file-spec entry point derives the identical document from equivalent counts.
-	hints := AnalysisHints{ConfigFiles: []ConfigFile{{Path: "go.mod"}}, FileSignals: map[string][]Signal{"lib/api.go": {SignalConcurrency}}}
+	hints := AnalysisHints{ConfigFiles: []ConfigFile{{Path: "go.mod"}}, FileSignals: map[string][]Signal{"lib/api.go": {SignalConcurrency}}, ReferenceFanOut: 3}
 	fromSpecs, err := ChangeFeaturesFromFileSpecs(change.Identity(), []ChangedFileSpec{{Path: "lib/api.go", AddedLines: 2, DeletedLines: 2}}, impact, hints)
 	if err != nil || fromSpecs.Identity() != features.Identity() {
 		t.Fatalf("ChangeFeaturesFromFileSpecs() identity differs: %v", err)
@@ -518,6 +519,9 @@ func TestProfileChangeFeaturesFromSemanticImpact(t *testing.T) {
 		if _, err := ChangeFeaturesFromFileSpecs("", files, impact, AnalysisHints{}); !errors.Is(err, ErrInvalidChangeFeatures) {
 			t.Fatalf("%s file specs accepted: %v", name, err)
 		}
+	}
+	if _, err := ChangeFeaturesFromFileSpecs("", []ChangedFileSpec{{Path: "lib/api.go"}}, impact, AnalysisHints{ReferenceFanOut: maxReferenceFanOut + 1}); !errors.Is(err, ErrInvalidChangeFeatures) {
+		t.Fatalf("fan-out above the bound accepted: %v", err)
 	}
 	if _, err := ChangeFeaturesFromFileSpecs("NOT-A-DIGEST", []ChangedFileSpec{{Path: "lib/api.go"}}, impact, AnalysisHints{}); !errors.Is(err, ErrInvalidChangeFeatures) {
 		t.Fatalf("non-digest change identity accepted: %v", err)

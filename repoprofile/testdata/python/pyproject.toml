@@ -1,0 +1,11 @@
+[tool.ruff]
+line-length = 100
+
+[tool.mypy]
+strict = true
+
+[tool.pytest.ini_options]
+addopts = "--cov=pkg --cov-fail-under=85"
+
+[project]
+dependencies = ["black>=24", "flake8"]

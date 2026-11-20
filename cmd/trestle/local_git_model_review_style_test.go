@@ -114,7 +114,7 @@ func TestModelReviewSARIFCarriesStyleAdviceAtRunLevel(t *testing.T) {
 					_, text = runLocalModelSet(t, f, []string{"--specialists", "bug_hunter", "--format", "sarif"}, 4)
 				} else {
 					var stdout, stderr bytes.Buffer
-					if code := run(replaceLocalGitChangeValue(f.args, "--format", "sarif"), &stdout, &stderr); code != 4 || stderr.Len() != 0 {
+					if code := run(replaceLocalGitChangeValue(f.args, "--format", "sarif"), &stdout, &stderr); code != 4 || withoutIndexNotice(stderr.String()) != "" {
 						t.Fatalf("sarif exit=%d stderr=%q", code, stderr.String())
 					}
 					text = stdout.String()
@@ -190,7 +190,7 @@ func TestRunLocalGitModelReviewRecommendsStyleWithoutBlocking(t *testing.T) {
 				t.Fatalf("JSON version=%d status=%s advice=%t: %s", result.Version, result.Status, strings.HasSuffix(encoded, jsonAdvice), encoded)
 			}
 			var stdout, stderr bytes.Buffer
-			if code := run(replaceLocalGitChangeValue(f.args, "--format", "text"), &stdout, &stderr); code != 4 || stderr.Len() != 0 {
+			if code := run(replaceLocalGitChangeValue(f.args, "--format", "text"), &stdout, &stderr); code != 4 || withoutIndexNotice(stderr.String()) != "" {
 				t.Fatalf("text exit=%d stderr=%q", code, stderr.String())
 			}
 			if strings.Contains(stdout.String(), textAdvice) != test.advising || strings.Contains(stdout.String(), "style: ") != test.advising {

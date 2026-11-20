@@ -15,7 +15,7 @@ const binaryVersion = 1
 // only ever appended.
 var (
 	definitionKindCodes = []DefinitionKind{KindFunction, KindMethod, KindConstructor, KindClass, KindStruct, KindInterface, KindEnum, KindType, KindModule, KindConstant, KindVariable, KindField, KindMacro}
-	referenceKindCodes  = []ReferenceKind{ReferenceCall, ReferenceConstruct, ReferenceType, ReferenceInherit, ReferenceDecorator}
+	referenceKindCodes  = []ReferenceKind{ReferenceCall, ReferenceConstruct, ReferenceType, ReferenceInherit, ReferenceDecorator, ReferenceValue}
 	gapReasonCodes      = []GapReason{GapUnsupportedLanguage, GapNoQueryPack, GapAnalysisUnavailable, GapAnalysisFailed, GapParseError, GapInvalidText, GapLimitExceeded, GapDeadlineExceeded}
 	limitCodes          = []Limit{"", LimitFileSize, LimitRecords, LimitNameLength, LimitErrorRegions, LimitMatches, LimitMemory}
 )

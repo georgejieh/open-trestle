@@ -11,7 +11,10 @@ import (
 
 const (
 	maxContextSourceCandidates = 128
-	maxSelectedContextSources  = 32
+	// maxSelectedContextSources bounds the selected sources: each is two of
+	// the 256 fields a sanitized request may carry, and diagnostics accept
+	// at most 32.
+	maxSelectedContextSources = 32
 )
 
 // MaxSelectedContextSources is the fixed selected-source count bound.

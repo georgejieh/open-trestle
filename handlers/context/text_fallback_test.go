@@ -51,7 +51,7 @@ func assembleTextFallbackWithIntent(t *testing.T, baseFiles, headFiles map[strin
 	headRevision, _ := evidence.NewRevisionIdentity(evidence.RevisionKindGitCommit, evidence.RevisionAlgorithmSHA1, strings.Repeat("2", 40))
 	adapterIdentity, _ := evidence.NewSourceAdapterIdentity(evidence.SourceAdapterKindGit, "test-source", "1.0.0", []evidence.SourceAdapterCapability{evidence.SourceCapabilityReadManifest, evidence.SourceCapabilityReadContent})
 	adapter := &contextTestSource{identity: adapterIdentity, results: map[string]scm.SourceAdapterResult{baseRevision.Identity(): makeSourceResult(t, baseFiles), headRevision.Identity(): makeSourceResult(t, headFiles)}}
-	store, _ := artifact.NewMemoryStore(artifact.ProtectionProcessPrivate, 200)
+	store, _ := artifact.NewMemoryStore(artifact.ProtectionProcessPrivate, 1000)
 	scope, _ := audit.NewReviewScope("tenant", "repository", "run")
 	baseInput, _ := sourcehandler.NewInput(repository, baseRevision, adapterIdentity)
 	headInput, _ := sourcehandler.NewInput(repository, headRevision, adapterIdentity)
@@ -113,7 +113,11 @@ func assembleTextFallbackWithIntent(t *testing.T, baseFiles, headFiles map[strin
 	run(memoryTask, memoryTaskHandler, time.UnixMilli(109))
 	contextRequest := run(contextTask, nil, time.UnixMilli(111))
 	at := time.UnixMilli(230)
-	assembly, providerRequest, abstention, failure := (&Handler{store: store, clock: contextTestClock{at}, packetOnly: true, intent: intent}).assembleAt(context.Background(), contextRequest, at, at)
+	handler := &Handler{store: store, clock: contextTestClock{at}, packetOnly: true, intent: intent}
+	if configureTestHandler != nil {
+		configureTestHandler(handler)
+	}
+	assembly, providerRequest, abstention, failure := handler.assembleAt(context.Background(), contextRequest, at, at)
 	result := textFallbackResult{assembly: assembly.InvestigationAssembly, request: providerRequest, abstention: abstention, failure: failure, sources: map[string]review.ContextSource{}, omissionSet: map[string]bool{}}
 	if failure == 0 {
 		for _, source := range assembly.Packet.Sources() {

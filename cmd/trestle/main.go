@@ -45,6 +45,12 @@ func main() {
 		stop()
 		os.Exit(code)
 	}
+	if len(os.Args) >= 2 && os.Args[1] == "profile" {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		code := runProfile(ctx, os.Args[2:], os.Stdout, os.Stderr)
+		stop()
+		os.Exit(code)
+	}
 	if len(os.Args) >= 2 && os.Args[1] == "mcp" {
 		os.Exit(runMCP(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
 	}
@@ -130,6 +136,9 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 	}
 	if len(args) >= 1 && args[0] == "index" {
 		return runIndex(ctx, args[1:], stdout, stderr)
+	}
+	if len(args) >= 1 && args[0] == "profile" {
+		return runProfile(ctx, args[1:], stdout, stderr)
 	}
 	// `trestle review <path>` reviews a fixture file, as before; any other
 	// form reviews the latest change with the repository's setup.

@@ -85,7 +85,7 @@ func TestRunEvaluateAdjudicationImportsSyntheticReviewWithoutApproval(t *testing
 	}
 	args := []string{"evaluate", "adjudication", "--adjudication", adjudicationPath, "--adjudication-sha256", adjudicationTestDigest(adjudication), "--observed", observedPath}
 	var stdout, stderr bytes.Buffer
-	if code := run(args, &stdout, &stderr); code != 3 || stderr.Len() != 0 {
+	if code := run(args, &stdout, &stderr); code != 4 || stderr.Len() != 0 {
 		t.Fatalf("import code=%d stderr=%q", code, stderr.String())
 	}
 	expected, err := evaluation.EvaluateAdjudication(adjudication, observed, adjudicationTestDigest(adjudication))

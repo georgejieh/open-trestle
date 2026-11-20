@@ -20,6 +20,10 @@ type Change struct {
 	BasePath  string
 	HeadLines []LineRange
 	BaseLines []LineRange
+	// DeletionPoints are, for each hunk that only removed lines, the head
+	// line that follows the removed lines; past the last line at the end of
+	// the file.
+	DeletionPoints []int
 	// Approximation, when set, says why the lines are wider than the
 	// change, such as a diff past its budget; it becomes a gap and makes
 	// the result incomplete.

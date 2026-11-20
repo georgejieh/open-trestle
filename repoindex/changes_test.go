@@ -39,6 +39,9 @@ func TestChangedFilesMatchMovesOneToOne(t *testing.T) {
 	if got := describeChanges(changes, pairs); got != want {
 		t.Fatalf("changes:\n%s", got)
 	}
+	if got := describeChanges(UneditedMoves(base, head), nil); got != "<-old/name.go \npairs 0" {
+		t.Fatalf("unedited moves:\n%s", got)
+	}
 }
 
 func TestChangedFilesKeepAnAmbiguousMoveAsDeleteAndAdd(t *testing.T) {

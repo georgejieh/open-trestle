@@ -102,7 +102,7 @@ func (e *investigationEndpoint) serve(t *testing.T, w http.ResponseWriter, r *ht
 	if e.mode == "removed file" {
 		output = investigationRemovedFileResult(t, wire.Model, p)
 	} else if p.Task == "candidate_verification" {
-		if wire.Model != "model-b" || p.Version != 8 || len(p.Candidates) != 1 || p.GenerationContext == "" {
+		if wire.Model != "model-b" || p.Version != 9 || len(p.Candidates) != 1 || p.GenerationContext == "" {
 			t.Error("independent verifier lost candidate lineage")
 		}
 		ids := []string{}
@@ -289,7 +289,7 @@ func investigationRemovedFileResult(t *testing.T, model string, p investigationP
 		return map[string]any{}
 	}
 	if p.Task == "candidate_verification" {
-		if model != "model-b" || p.Version != 8 || len(p.Candidates) != 1 {
+		if model != "model-b" || p.Version != 9 || len(p.Candidates) != 1 {
 			t.Error("independent verifier lost the removed-file candidate")
 		}
 		return map[string]any{"schema_version": 1, "verdicts": []any{map[string]any{"candidate_id": p.Candidates[0].ID, "outcome": "verified", "severity": "high", "rationale": "The removed lines define Helper.", "evidence_ids": []string{gone.ID}}}}
@@ -442,7 +442,7 @@ func TestLocalGitInvestigationReadsUnselectedSnapshotAndVerifies(t *testing.T) {
 			ReturnedBytes uint64 `json:"returned_bytes"`
 		} `json:"investigation"`
 	}
-	if json.Unmarshal(stdout.Bytes(), &receipt) != nil || code != 4 || receipt.Status != "findings" || receipt.RunStatus != "succeeded" || receipt.Version != 6 || stderr.Len() != 0 {
+	if json.Unmarshal(stdout.Bytes(), &receipt) != nil || code != 4 || receipt.Status != "findings" || receipt.RunStatus != "succeeded" || receipt.Version != 6 || withoutIndexNotice(stderr.String()) != "" {
 		t.Fatal("investigation did not produce a bounded independent finding")
 	}
 	captures := endpoint.snapshot()
@@ -528,7 +528,7 @@ func TestLocalGitInvestigationReviewsAChangeThatOnlyRemovesAFile(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := runWithContext(ctx, f.args, &stdout, &stderr)
 	var receipt localModelReceipt
-	if json.Unmarshal(stdout.Bytes(), &receipt) != nil || code != 4 || receipt.Status != "findings" || receipt.RunStatus != "succeeded" || stderr.Len() != 0 {
+	if json.Unmarshal(stdout.Bytes(), &receipt) != nil || code != 4 || receipt.Status != "findings" || receipt.RunStatus != "succeeded" || withoutIndexNotice(stderr.String()) != "" {
 		t.Fatalf("removed-only investigation code=%d status=%s run=%s stderr=%q", code, receipt.Status, receipt.RunStatus, stderr.String())
 	}
 	captures := endpoint.snapshot()

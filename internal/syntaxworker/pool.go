@@ -175,8 +175,10 @@ func (p *Pool) discard(w *worker, count *int) {
 	p.mu.Unlock()
 }
 
-// Close stops every idle worker. Analyses still running finish first, and
-// their workers stop when they are released.
+// Close stops every idle worker at once: an idle worker has sent its last
+// answer, so it holds nothing that a graceful exit would save, and waiting
+// for one would hold up the caller. Analyses still running finish first,
+// and their workers stop when they are released.
 func (p *Pool) Close() {
 	p.mu.Lock()
 	p.closed = true
@@ -184,12 +186,10 @@ func (p *Pool) Close() {
 	p.idle = nil
 	p.mu.Unlock()
 	for _, w := range idle {
-		_ = w.stdin.Close()
-		select {
-		case <-w.exited:
-		case <-time.After(2 * time.Second):
-			w.kill()
-		}
+		_ = w.cmd.Process.Kill()
+	}
+	for _, w := range idle {
+		<-w.exited
 	}
 }
 

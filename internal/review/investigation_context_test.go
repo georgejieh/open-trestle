@@ -201,7 +201,7 @@ func TestInvestigationContextCurrentControlAndCanonicalV4Contract(t *testing.T) 
 	v4Check(t, err)
 	var current contextPacketWire
 	v4Check(t, json.Unmarshal(before.Payload(), &current))
-	if current.SchemaVersion != 9 || current.ToolCalls != "proposals_only" || current.OutputSchemaIdentity != ModelCandidateBatchSchemaIdentity {
+	if current.SchemaVersion != 10 || current.ToolCalls != "proposals_only" || current.OutputSchemaIdentity != ModelCandidateBatchSchemaIdentity {
 		t.Fatal("current v8 constructor contract changed")
 	}
 	v4Check(t, ValidateCandidateModelRequest(before, f.binding.Scope.Identity()))
@@ -393,7 +393,7 @@ func TestInvestigationV4ProjectsExactCurrentVerifierV3(t *testing.T) {
 	request, err := projected.ProviderRequest()
 	v4Check(t, err)
 	v4Check(t, ValidateVerificationModelRequest(request, f.binding.Scope.Identity()))
-	if expected.SchemaVersion != 8 || expected.ToolCalls != "proposals_only" || !reflect.DeepEqual(projected.EvidenceItems(), f.expanded.EvidenceItems()) || len(expected.SourceOmissions) != 1 || expected.Sources[1].Stage != "repository_context" {
+	if expected.SchemaVersion != 9 || expected.ToolCalls != "proposals_only" || !reflect.DeepEqual(projected.EvidenceItems(), f.expanded.EvidenceItems()) || len(expected.SourceOmissions) != 1 || expected.Sources[1].Stage != "repository_context" {
 		t.Fatal("projection inflated source grades/omissions or granted verifier tools")
 	}
 	if _, err := NewInvestigationVerificationRequestContext(final, CandidateBatch{}); err == nil {

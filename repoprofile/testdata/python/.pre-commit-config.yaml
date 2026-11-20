@@ -1,0 +1,11 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    hooks:
+      - id: ruff
+      - id: ruff-format
+  - repo: https://github.com/psf/black
+    hooks:
+      - id: black
+  - repo: https://example.test/local
+    hooks:
+      - id: unknown-hook

@@ -40,7 +40,7 @@ The report covers one deterministic rule over eight built-in cases. It is not a 
 
 `trestle evaluate deterministic-corpus-candidate` runs a separate corpus of six synthetic cases that is embedded in the binary. It exercises the `static_debug_output` finding rule and seven structural analyzer targets through their production Go APIs. The fixture tree, the exact base and head bytes, the changed ranges, the target labels and the pending review record are under `evaluation/testdata/deterministic-corpus-v1/`.
 
-No one has adjudicated the candidate. Its `adjudication.json` has `review_state: pending`, no reviewer identifier and no review date. The CLI report therefore sets `release_evidence_eligible` to false and `golden_status` to `prohibited_pending_human_review`. No golden report for the deterministic corpus is committed. Exit code `3` means that the complete candidate has one or more label or coverage mismatches. Exit code `4` means that the complete candidate matched the pending labels. Neither exit code means approval.
+No one has adjudicated the candidate. Its `adjudication.json` has `review_state: pending`, no reviewer identifier and no review date. The CLI report therefore sets `release_evidence_eligible` to false and `golden_status` to `prohibited_pending_human_review`. No golden report for the deterministic corpus is committed. The pending labels tell apart two actual test references and same-name identifiers; the `syntactic_reference_candidate` target scores the repository index's reference candidates, from the case's head Go files analysed in memory, which leave out the same-name identifiers. Exit code `3` means that the complete candidate has one or more label or coverage mismatches. Exit code `4` means that the complete candidate matched the pending labels. Neither exit code means approval.
 
 Each evaluation target has its own closed match key and score, and the report does not pool unlike target units into one quality number. For each target:
 
@@ -51,8 +51,6 @@ Each evaluation target has its own closed match key and score, and the report do
 - recall is `TP / (TP + FN)`.
 
 A zero denominator is `0/0`. The report does not derive true negatives, accuracy, specificity, confidence or calibration. Coverage is `analyzed / (analyzed + abstained)`, and the abstention rate is `abstained / (analyzed + abstained)`. Unsupported and not-applicable units stay visible, but they do not enter those denominators. Expected positives in an abstained applicable unit remain false negatives.
-
-The pending labels tell apart two actual test references and same-name identifiers. The syntactic reference analyzer reports the same-name identifiers as extra candidates, and the candidate report keeps those mismatches.
 
 The Linux-only Python wrapper `open_trestle_eval.performance` measures the performance of a CLI that you build once. It runs the CLI for at least one warm-up and ten measured processes, and it follows these rules:
 

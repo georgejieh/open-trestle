@@ -15,14 +15,16 @@ Every name, qualifier and import path is repository text. It is carried as a `sy
 
 ## Supported languages
 
-- Go uses `semanticimpact.GoSyntaxAnalyzer`, built on `go/parser`. The package clause is a module definition.
+- Go uses `semanticimpact.GoSyntaxAnalyzer`, built on `go/parser`. The package clause is a module definition. It also records value uses (see below).
 - Java, JavaScript, TypeScript, TSX, Python, C, C++, C#, Rust, Swift, PHP, Ruby and HTML use `internal/syntaxwasm`: tree-sitter grammars compiled to WebAssembly and run under wazero, with a query pack per language.
 
 `syntaxanalysis.NewDispatcher` routes each file to the first analyzer that supports its language.
 
 ## What is recorded
 
-Every pack records the language's definitions, calls and constructions, type uses, base types, attributes or decorators, and imports, with the parent of each record. A function directly inside a class, struct, interface or enum is a method. A definition is exported when the language's visibility rules make it visible outside its file or module and its parent is exported; namespaces, Rust impl blocks and Swift extensions have no visibility of their own and count as exported.
+Every pack records the language's definitions, calls and constructions, type uses, base types, attributes or decorators, and imports, with the parent of each record. Only Go records `value` references, uses of a name outside a call or type position; `syntaxanalysis.RecordsValueUses` says which languages do.
+
+- Go value uses: reads and writes of package-level variables and constants, functions and methods used as values, selectors such as field reads, and composite literal keys. A selector or key is qualified by its type, written `T` or `pkg.T`, when the file declares it (a receiver, parameter, variable, composite literal, `new`, a function of the file or a range over one of these), and by the expression before the name otherwise. Names that `go/parser` binds to a local declaration or a label are not recorded for any kind, and neither are defining names, field and method names in declarations, package and import names, the blank identifier, `nil`, `true`, `false` and `iota`, or fields of an anonymous or local struct type. Type arguments, the type argument of `make` and `new`, conversions such as `[]T(x)` and type switch cases are type uses. A function directly inside a class, struct, interface or enum is a method. A definition is exported when the language's visibility rules make it visible outside its file or module and its parent is exported; namespaces, Rust impl blocks and Swift extensions have no visibility of their own and count as exported.
 
 - Java: packages, classes, interfaces, enums, records, annotations, methods, constructors, fields and constants. Interface and annotation members and enum constants take their implicit visibility. A wildcard import keeps the asterisk as its name.
 - JavaScript, TypeScript and TSX: functions, classes, methods, constructors and module-level bindings; TypeScript adds interfaces, type aliases, enums, namespaces and the members of interfaces and object type aliases. Static imports, re-exports, `import()` and `require()` with a literal are imports, and JSX elements are constructions.
@@ -68,7 +70,7 @@ Captures:
 | Capture | Meaning |
 |---|---|
 | `@definition.<kind>` | The whole definition. Kinds: `function`, `method`, `constructor`, `class`, `struct`, `interface`, `enum`, `type`, `module`, `constant`, `variable`, `field`, `macro`. |
-| `@reference.<kind>` | A use. Kinds: `call`, `construct`, `type`, `inherit`, `decorator`. |
+| `@reference.<kind>` | A use. Kinds: `call`, `construct`, `type`, `inherit`, `decorator`, `value`. |
 | `@name` | The name of the definition or reference. |
 | `@symbol` | A name written as a symbol, such as Ruby's `:name`; the leading colon is left out. |
 | `@exported` | Marks the definition as exported. |

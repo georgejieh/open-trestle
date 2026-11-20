@@ -226,7 +226,7 @@ func TestFrozenAlternateObservationFingerprintParity(t *testing.T) {
 		r.observations[0].identity = deriveObservationIdentity(r.observations[0])
 	})
 	payloadSHA := sha256.Sum256(payload)
-	if got := hex.EncodeToString(payloadSHA[:]); got != "88a0150388689cb79b7e8e3bf6877915217859577714e5d7a83bf73c74ad99f9" {
+	if got := hex.EncodeToString(payloadSHA[:]); got != "7712fd7cf07e44b436d903555315bee74269ff86cb51bc8a80b7f16de18c7a39" {
 		t.Fatalf("old-code payload parity changed: %s", got)
 	}
 	altered := rebuildEvidence(t, output, payload)
@@ -237,8 +237,8 @@ func TestFrozenAlternateObservationFingerprintParity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("valid alternate fingerprint rejected: %v", err)
 	}
-	if len(parsed.observations) != 1 || parsed.observations[0].fingerprint != replacement || parsed.observations[0].identity != "5f10d85e2b2aca42915e8b24ff6e0c8cd83b0e424288b403ec616db52b9468fd" || parsed.identity != "e7bfd998e6851d967d7aa03dbb465df2825312e528e43e9eaebd4cdde7fdd19d" || altered.Identity() != "33e50e16696e20876a7fdcd21f876ea40e2e4dcb9e71bc15df2b1bcdb65c2e45" {
-		t.Fatalf("old-code identities or fingerprint changed: parsed=%#v artifact=%s", parsed, altered.Identity())
+	if len(parsed.observations) != 1 || parsed.observations[0].fingerprint != replacement || parsed.observations[0].identity != "5f10d85e2b2aca42915e8b24ff6e0c8cd83b0e424288b403ec616db52b9468fd" || parsed.identity != "372d566c14166721992f513931a9b3eb8af2f601fb49bccddce5cdc6a8972be1" || altered.Identity() != "f2efdfc2c0917484fc6b42e053f71d974d4d57e7727eaffc016b59c3f350326c" {
+		t.Fatalf("old-code identities or fingerprint changed: obs=%s parsed=%s artifact=%s", parsed.observations[0].identity, parsed.identity, altered.Identity())
 	}
 	if result.observations[0].fingerprint != originalFingerprint || result.checks[0].Identity() != parsed.checks[0].Identity() {
 		t.Fatal("mutation altered source observation or check")

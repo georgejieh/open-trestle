@@ -2,6 +2,7 @@ package evaluation
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
@@ -17,7 +18,9 @@ import (
 	internalanalysis "github.com/georgejieh/open-trestle/internal/analysis"
 	"github.com/georgejieh/open-trestle/internal/evidence"
 	"github.com/georgejieh/open-trestle/internal/review"
+	"github.com/georgejieh/open-trestle/repoindex"
 	"github.com/georgejieh/open-trestle/semanticimpact"
+	"github.com/georgejieh/open-trestle/syntaxanalysis"
 )
 
 const (
@@ -882,8 +885,12 @@ func evaluateCaseTarget(item deterministicCorpusCase, target corpusCaseTarget) (
 		}
 		out := targetExecution{}
 		if target.Key == "syntactic_reference_candidate" {
-			for _, ref := range profile.References() {
-				key, _ := labelMatchKey(item.manifest.ID, target.Key, corpusLabel{Path: ref.Path(), DeclarationKey: ref.DeclarationKey(), Line: ref.Line(), Column: ref.Column()})
+			references, err := indexReferences(item, profile)
+			if err != nil {
+				return targetExecution{}, err
+			}
+			for _, ref := range references {
+				key, _ := labelMatchKey(item.manifest.ID, target.Key, ref)
 				out.observed = append(out.observed, key)
 			}
 		} else {
@@ -1262,4 +1269,39 @@ func ParseDeterministicCorpusReport(encoded []byte) (DeterministicCorpusReport, 
 		return DeterministicCorpusReport{}, ErrInvalidDeterministicCorpus
 	}
 	return report, nil
+}
+
+// indexReferences returns the repository index's reference candidates of
+// each changed head declaration, from a graph of the case's head Go files
+// analysed in memory.
+func indexReferences(item deterministicCorpusCase, profile semanticimpact.Profile) ([]corpusLabel, error) {
+	head := map[string][]byte{}
+	for p, content := range item.head {
+		if path.Ext(p) == ".go" || path.Base(p) == "go.mod" {
+			head[p] = content
+		}
+	}
+	analyzer, err := semanticimpact.NewGoSyntaxAnalyzer(syntaxanalysis.DefaultLimits())
+	if err != nil {
+		return nil, err
+	}
+	graph, err := repoindex.MemoryGraph(context.Background(), "head", head, analyzer)
+	if err != nil {
+		return nil, err
+	}
+	labels := []corpusLabel{}
+	for _, declaration := range profile.Declarations() {
+		if declaration.Change() == semanticimpact.ChangeRemoved {
+			continue
+		}
+		for _, symbol := range graph.Definitions(declaration.Name()) {
+			if symbol.Path != declaration.Path() || symbol.Range.Start.Line != declaration.StartLine() {
+				continue
+			}
+			for _, use := range graph.References(symbol.ID) {
+				labels = append(labels, corpusLabel{Path: use.Path, DeclarationKey: declaration.Key(), Line: use.Range.Start.Line, Column: use.Range.Start.Column})
+			}
+		}
+	}
+	return labels, nil
 }

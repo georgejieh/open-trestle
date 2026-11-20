@@ -1,0 +1,16 @@
+version: "2"
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - revive
+    - notalinter
+  disable:
+    - gosec
+  settings:
+    staticcheck:
+      checks: ["all"]
+formatters:
+  enable:
+    - gofmt

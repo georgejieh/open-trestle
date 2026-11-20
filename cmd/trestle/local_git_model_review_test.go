@@ -120,7 +120,7 @@ func localModelExecute(t *testing.T, f *localModelFixture, args []string, wantCo
 			t.Fatal("terminal output disclosed private source, configuration path, or credentials")
 		}
 	}
-	if stderr.Len() != 0 {
+	if withoutIndexNotice(stderr.String()) != "" {
 		t.Fatalf("JSON result also wrote stderr: %q", stderr.String())
 	}
 	for _, task := range result.Tasks {
@@ -147,7 +147,7 @@ func localModelRequireDigest(t *testing.T, values ...string) {
 }
 
 func TestRunLocalGitModelReviewCompletesIndependentFinding(t *testing.T) {
-	f := newLocalModelFixture(t, localModelFixtureOptions{})
+	f := newCheckoutModelFixture(t, localModelFixtureOptions{})
 	result, _ := localModelExecute(t, f, f.args, 4)
 	generationCalls, generated := f.generation.snapshot()
 	verificationCalls, verified := f.verification.snapshot()
@@ -222,7 +222,7 @@ func TestRunLocalGitModelReviewCompletesIndependentFinding(t *testing.T) {
 	if len(result.Audit) != 8 || counts["route_selected"] != 2 || counts["route_attempt_claimed"] != 2 || counts["route_dispatch_completed"] != 2 || counts["route_cost_reconciled"] != 2 {
 		t.Fatal("model execution bypassed the shared ledger selection/claim/completion/reconciliation path")
 	}
-	for _, limitation := range []string{"loose_git_objects_only", "empty_memory_index", "bounded_source_context", "no_publication", "ephemeral_state_no_resume"} {
+	for _, limitation := range []string{"loose_and_pack_index_v1_subset", "empty_memory_index", "bounded_source_context", "no_publication", "ephemeral_state_no_resume"} {
 		if !slices.Contains(result.Limitations, limitation) {
 			t.Fatal("missing visible execution limitation")
 		}
@@ -387,7 +387,7 @@ func TestRunLocalGitModelReviewDeadlineCancelsActualModelWait(t *testing.T) {
 	select {
 	case code := <-done:
 		var result localModelReceipt
-		if code != 3 || json.Unmarshal(stdout.Bytes(), &result) != nil || result.Status != "canceled" || result.RunStatus != "canceled" || result.CI != "inconclusive" || stderr.Len() != 0 || stdout.Len() > 256<<10 {
+		if code != 3 || json.Unmarshal(stdout.Bytes(), &result) != nil || result.Status != "canceled" || result.RunStatus != "canceled" || result.CI != "inconclusive" || withoutIndexNotice(stderr.String()) != "" || stdout.Len() > 256<<10 {
 			t.Fatal("deadline did not yield a bounded finalized cancellation receipt")
 		}
 	case <-time.After(5 * time.Second):

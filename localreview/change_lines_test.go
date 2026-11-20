@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/georgejieh/open-trestle/diagnostics"
+	"github.com/georgejieh/open-trestle/internal/review"
 	"github.com/georgejieh/open-trestle/semanticimpact"
 )
 
@@ -99,9 +100,8 @@ func TestChangeLinesOriginClassification(t *testing.T) {
 	}
 }
 
-// goProfile analyses one changed Go file, with other head Go files that the
-// change did not touch.
-func goProfile(t *testing.T, changedPath, base, head string, unchanged map[string]string) semanticimpact.Profile {
+// goProfile analyses one changed Go file.
+func goProfile(t *testing.T, changedPath, base, head string) semanticimpact.Profile {
 	t.Helper()
 	file := func(path, content string) semanticimpact.File {
 		value, err := semanticimpact.NewFile(path, []byte(content))
@@ -114,11 +114,7 @@ func goProfile(t *testing.T, changedPath, base, head string, unchanged map[strin
 	if err != nil {
 		t.Fatal(err)
 	}
-	headFiles := []semanticimpact.File{file(changedPath, head)}
-	for path, content := range unchanged {
-		headFiles = append(headFiles, file(path, content))
-	}
-	input, err := semanticimpact.NewInput(strings.Repeat("a", 64), strings.Repeat("b", 64), strings.Repeat("c", 64), []semanticimpact.ChangedPath{changed}, []semanticimpact.File{file(changedPath, base)}, headFiles)
+	input, err := semanticimpact.NewInput(strings.Repeat("a", 64), strings.Repeat("b", 64), strings.Repeat("c", 64), []semanticimpact.ChangedPath{changed}, []semanticimpact.File{file(changedPath, base)}, []semanticimpact.File{file(changedPath, head)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,37 +125,52 @@ func goProfile(t *testing.T, changedPath, base, head string, unchanged map[strin
 	return profile
 }
 
-// The profile proves a change isolated only when nothing outside the changed
-// declarations names them, no changed declaration is a method or an init
-// function, and nothing was left unanalysed.
-func TestIsolatedChangeNeedsAProfileWithoutDependents(t *testing.T) {
+// indexManifest is the manifest of a run whose repository index found the
+// given number of direct dependents of the changed definitions.
+func indexManifest(state string, complete bool, dependents int) review.ContextManifestSummary {
+	return review.ContextManifestSummary{Present: true, State: state, Complete: complete, ValueUses: true, Dependents: dependents}
+}
+
+// A change is isolated only when the semantic-impact profile records no gap
+// and no changed method or init function, and the context manifest shows a
+// complete analysis that records value uses and found no dependent.
+func TestIsolatedChangeNeedsAProfileAndACompleteIndexWithoutDependents(t *testing.T) {
 	const base = "package p\n\nfunc Avg(xs []int) int {\n\treturn 0\n}\n"
 	const head = "package p\n\nfunc Avg(xs []int) int {\n\treturn 1\n}\n"
-	const caller = "package p\n\nfunc Use() int {\n\treturn Avg(nil)\n}\n"
-	const indirect = "package p\n\nfunc Report() int {\n\treturn Use()\n}\n"
-	const other = "package p\n\nfunc Max(xs []int) int {\n\treturn xs[0]\n}\n"
-	if isolatedChange(semanticimpact.Profile{}) {
+	profile := goProfile(t, "p.go", base, head)
+	complete := indexManifest(review.ContextIndexUsed, true, 0)
+	if isolatedChange(semanticimpact.Profile{}, complete) {
 		t.Fatal("no profile proved the change isolated")
 	}
-	if !isolatedChange(goProfile(t, "p.go", base, head, map[string]string{"other.go": other})) {
+	if !isolatedChange(profile, complete) {
 		t.Fatal("a change nothing references was not isolated")
 	}
-	for name, profile := range map[string]semanticimpact.Profile{
-		"a direct caller": goProfile(t, "p.go", base, head, map[string]string{"caller.go": caller}),
-		// Report reaches Avg only through Use, whose own reference to Avg
-		// already proves a dependent.
-		"an indirect caller":                      goProfile(t, "p.go", base, head, map[string]string{"caller.go": caller, "report.go": indirect}),
-		"an unchanged caller in the changed file": goProfile(t, "p.go", base+"\nfunc Use() int { return Avg(nil) }\n", head+"\nfunc Use() int { return Avg(nil) }\n", nil),
-		"a changed method":                        goProfile(t, "p.go", "package p\n\ntype T struct{}\n\nfunc (T) String() string { return \"a\" }\n", "package p\n\ntype T struct{}\n\nfunc (T) String() string { return \"b\" }\n", nil),
-		"a changed init function":                 goProfile(t, "p.go", "package p\n\nvar x int\n\nfunc init() { x = 1 }\n", "package p\n\nvar x int\n\nfunc init() { x = 2 }\n", nil),
-		"an unparsable head file":                 goProfile(t, "p.go", base, head, map[string]string{"broken.go": "package p\n\nfunc {\n"}),
+	for name, manifest := range map[string]review.ContextManifestSummary{
+		"one dependent":                  indexManifest(review.ContextIndexUsed, true, 1),
+		"an incomplete index":            indexManifest(review.ContextIndexUsed, false, 0),
+		"no index":                       indexManifest(review.ContextIndexUnavailable, false, 0),
+		"an index over its time budget":  indexManifest(review.ContextIndexOverBudget, false, 0),
+		"a failed index":                 indexManifest(review.ContextIndexFailed, false, 0),
+		"no manifest":                    {},
+		"an analysis without value uses": {Present: true, State: review.ContextIndexUsed, Complete: true},
 	} {
-		if isolatedChange(profile) {
+		if isolatedChange(profile, manifest) {
 			t.Fatalf("%s: the change was proved isolated", name)
 		}
 	}
-	// Recursion inside the changed declaration names only itself.
-	if !isolatedChange(goProfile(t, "p.go", base, "package p\n\nfunc Avg(xs []int) int {\n\tif len(xs) > 1 {\n\t\treturn Avg(xs[1:])\n\t}\n\treturn 1\n}\n", nil)) {
+	for name, changed := range map[string]semanticimpact.Profile{
+		"a changed method":           goProfile(t, "p.go", "package p\n\ntype T struct{}\n\nfunc (T) String() string { return \"a\" }\n", "package p\n\ntype T struct{}\n\nfunc (T) String() string { return \"b\" }\n"),
+		"a changed init function":    goProfile(t, "p.go", "package p\n\nvar x int\n\nfunc init() { x = 1 }\n", "package p\n\nvar x int\n\nfunc init() { x = 2 }\n"),
+		"an unparsable changed file": goProfile(t, "p.go", base, "package p\n\nfunc {\n"),
+	} {
+		if isolatedChange(changed, complete) {
+			t.Fatalf("%s: the change was proved isolated", name)
+		}
+	}
+	// The index counts a self-reference inside the changed definition as no
+	// dependent, so recursion does not link the change.
+	recursive := goProfile(t, "p.go", base, "package p\n\nfunc Avg(xs []int) int {\n\tif len(xs) > 1 {\n\t\treturn Avg(xs[1:])\n\t}\n\treturn 1\n}\n")
+	if !isolatedChange(recursive, complete) {
 		t.Fatal("a self-reference inside the changed declaration made the change linked")
 	}
 }

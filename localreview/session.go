@@ -81,6 +81,9 @@ type SessionOptions struct {
 	// egress, which always uses the numeric-loopback client.
 	ModelHTTPClient         *http.Client
 	ModelHTTPClientIdentity string
+	// IndexContext optionally supplies context from a repository index. A
+	// session without one records the index as unavailable.
+	IndexContext contexthandler.IndexContextSource
 }
 type Session struct {
 	mu                               sync.Mutex
@@ -332,6 +335,10 @@ func newSession(o SessionOptions, investigationPolicy *review.InvestigationPolic
 		// The finder and the verifier see the range's commit messages as
 		// untrusted stated intent, read from the same verified objects.
 		assembly, err = assembly.WithChangeIntent(commitIntentSource{objects: objects, repository: o.Repository})
+		if err != nil {
+			return nil, ErrInvalidSession
+		}
+		assembly, err = assembly.WithRepositoryContext(o.IndexContext, routeContextBudget(o.Inventory, o.Policy))
 		if err != nil {
 			return nil, ErrInvalidSession
 		}

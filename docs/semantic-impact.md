@@ -6,14 +6,12 @@ The profile records:
 
 - added, modified and removed top-level functions, methods, types, variables and constants;
 - changes to exported declarations, and a separate public-API-change flag that is based on function signatures rather than bodies;
-- source ranges and normalized syntax and API digests;
-- name-based reference candidates across the head snapshot;
-- affected test candidates, for references found in `_test.go` files; and
+- source ranges and normalized syntax and API digests; and
 - typed gaps for unsupported languages, unavailable source, parser failure and resource limits.
 
-Each kind of result has a grade. Declaration differences have the `structural` grade. References and affected-test links have the `syntactic_candidate` grade, because they match identifier names and do not resolve symbols. Use them to decide which context to inspect first. Before it hashes files, context assembly removes duplicates among one-line source ranges. When reference candidates exceed the admission limits, it keeps counts of what it left out.
+Declaration differences have the `structural` grade. Uses of changed definitions, related tests and the rest of a review's context come from the [repository index](repository-index.md), for every language it analyses. A profile reads only the changed Go files of each side. The graph contract is `open-trestle/semantic-impact/go-ast-graph/v2`; a recorded version 1 profile, which also held name-matched reference candidates, is still read back.
 
-Every profile binds the base snapshot, head snapshot, change model, input file digests, adapter identity and graph schema. Binding means the profile records these identities, so it is valid only for that combination. The order of the inputs does not matter. They are limited to 4,096 files per side, 2 MiB per file and 128 MiB in total. Outputs are limited to 8,192 declaration changes, 32,768 reference candidates, 4,096 gaps and 16 MiB of encoded JSON. The profile rejects:
+Every profile binds the base snapshot, head snapshot, change model, input file digests, adapter identity and graph schema. Binding means the profile records these identities, so it is valid only for that combination. The order of the inputs does not matter. They are limited to 4,096 files per side, 2 MiB per file and 128 MiB in total. Outputs are limited to 8,192 declaration changes, 4,096 gaps and 16 MiB of encoded JSON. The profile rejects:
 
 - duplicate paths and traversal paths;
 - control characters;
@@ -23,6 +21,6 @@ Every profile binds the base snapshot, head snapshot, change model, input file d
 - unknown JSON fields; and
 - trailing JSON values.
 
-Declaration and reference coordinates use physical file positions and ignore `//line` remapping. Repeated `init` functions are told apart by their declaration order within a file. Blank identifiers do not create named declaration records. Declaration names and keys must fit the profile's encoding limits. If the output would be too large, the profile fails with an error.
+Declaration coordinates use physical file positions and ignore `//line` remapping. Repeated `init` functions are told apart by their declaration order within a file. Blank identifiers do not create named declaration records. Declaration names and keys must fit the profile's encoding limits. If the output would be too large, the profile fails with an error.
 
 The Go parser does not type-check packages or resolve identifiers. The first graph contract leaves out build constraints, generated variants, dependency modules, dynamic dispatch, reflection, cgo, code generation and runtime call paths. A later type-aware adapter may add stronger grades.

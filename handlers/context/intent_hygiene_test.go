@@ -193,7 +193,7 @@ func TestWithChangeIntentBindsTheSourceIntoTheHandlerIdentity(t *testing.T) {
 	if err != nil || bound.Validate() != nil {
 		t.Fatalf("WithChangeIntent() = %v", err)
 	}
-	if bound.HandlerIdentity() == plain.HandlerIdentity() || bound.HandlerIdentity() != deriveHandlerIdentity(authorizer.Identity(), contextTestSanitizer{}.Identity(), review.ContextSpecialist{}, fakeIntentSource{}.Identity()) {
+	if bound.HandlerIdentity() == plain.HandlerIdentity() || bound.HandlerIdentity() != deriveHandlerIdentity(authorizer.Identity(), contextTestSanitizer{}.Identity(), review.ContextSpecialist{}, fakeIntentSource{}.Identity(), "", review.ContextBudget{}) {
 		t.Fatal("the intent source is not bound into the handler identity")
 	}
 	if plain.intent != nil {
