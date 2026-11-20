@@ -167,10 +167,15 @@ func runContained(ctx context.Context, spec Spec, container *appContainer, appli
 	return result, nil
 }
 
-// deniedNullDevice reports whether the output shows a program failing to
-// open NUL, as Go, Python and Git report it.
+// deniedNullDevice reports whether a run that produced nothing a runner
+// would report shows, on standard error, a program failing to open NUL, as
+// Go, Python and Git report it. A run with output or a report ran, so text
+// its tests print cannot turn it into one that could not run.
 func deniedNullDevice(result Result) bool {
-	output := strings.ToLower(string(result.Stderr) + string(result.Stdout))
+	if len(result.Stdout) != 0 || len(result.Report) != 0 {
+		return false
+	}
+	output := strings.ToLower(string(result.Stderr))
 	for _, text := range []string{"open nul: access is denied", "permission denied: 'nul'", "nul: access is denied", "nul: permission denied"} {
 		if strings.Contains(output, text) {
 			return true
