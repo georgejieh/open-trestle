@@ -176,8 +176,9 @@ func isolateHost() error {
 	return nil
 }
 
-// setLimits sets the resource limits the command inherits and makes the
-// sandbox's processes the first the kernel's out-of-memory killer ends.
+// setLimits sets the resource limits the command inherits and starts the
+// sandbox's processes as the out-of-memory killer's first choice; without
+// privilege a process can lower its own score back only to the default.
 func setLimits(limits Limits) error {
 	if err := os.WriteFile("/proc/self/oom_score_adj", []byte("1000"), 0); err != nil {
 		return err
