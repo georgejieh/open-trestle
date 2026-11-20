@@ -118,7 +118,9 @@ func TestRunTreatsAFailingExitAsARegressionWhenEveryTestClaimsToPass(t *testing.
 	}
 }
 
-func TestRunTreatsTestsThatStopRunningOnHeadAsRegressions(t *testing.T) {
+// A test that passed on base and has no result on head stopped running; it
+// is listed apart from the regressions, since a rename does the same.
+func TestRunListsTestsThatStopRunningOnHead(t *testing.T) {
 	report := runFake(t, func(side string, _ int, spec checksandbox.Spec) (checksandbox.Result, error) {
 		if side == "head" && spec.Args[1] == "test" {
 			// TestMain exited before any test ran.
@@ -126,8 +128,136 @@ func TestRunTreatsTestsThatStopRunningOnHeadAsRegressions(t *testing.T) {
 		}
 		return checksandbox.Result{Stdout: goEvents(map[string]string{"TestA": "pass"})}, nil
 	})
-	if got := report.Results[0].Regressions; !slices.Equal(got, []string{"m/a.TestA (did not run on head)"}) {
-		t.Fatalf("regressions %v", got)
+	if got := report.Results[0]; !got.Ran || len(got.Regressions) != 0 || !slices.Equal(got.StoppedRunning, []string{"m/a.TestA"}) {
+		t.Fatalf("result %+v", got)
+	}
+}
+
+// Tests of a Python module that head cannot import are covered by that
+// module's failure, which is the regression.
+func TestCompareCoversTestsOfAModuleThatFailsAsAWhole(t *testing.T) {
+	base := map[string]Outcome{"tests.test_price.Total.test_sum": Pass, "tests.test_other.O.test_ok": Pass}
+	head := map[string]Outcome{"unittest.loader._FailedTest.tests.test_price": Fail, "tests.test_other.O.test_ok": Pass}
+	var result Result
+	compare(&result, [2][2]map[string]Outcome{{base, base}, {head, head}}, func(string) bool { return false })
+	if !slices.Equal(result.Regressions, []string{"unittest.loader._FailedTest.tests.test_price"}) || len(result.StoppedRunning) != 0 || result.Tests != 2 {
+		t.Fatalf("result %+v", result)
+	}
+}
+
+func TestCompareCountsFixedAndStillFailingTests(t *testing.T) {
+	base := map[string]Outcome{"p.TestFixed": Fail, "p.TestStill": Fail, "p.TestOK": Pass}
+	head := map[string]Outcome{"p.TestFixed": Pass, "p.TestStill": Fail, "p.TestOK": Pass}
+	var result Result
+	compare(&result, [2][2]map[string]Outcome{{base, base}, {head, head}}, func(string) bool { return false })
+	if result.Fixed != 1 || result.StillFailing != 1 || len(result.Regressions) != 0 || result.Tests != 3 {
+		t.Fatalf("result %+v", result)
+	}
+}
+
+// Deleting one test file hides only its own package's tests from the
+// stopped list, not those of another package that stopped running.
+func TestRunScopesDeletedTestFilesToTheirPackage(t *testing.T) {
+	files := map[string]string{"go.mod": "module m\n", "a/a.go": "package a", "a/x_test.go": "package a", "b/b.go": "package b"}
+	base := writeTree(t, files)
+	delete(files, "a/x_test.go")
+	head := writeTree(t, files)
+	fake := &fakeRunner{base: base, calls: map[string]int{}, answers: func(side string, _ int, spec checksandbox.Spec) (checksandbox.Result, error) {
+		if side == "head" || spec.Args[1] == "vet" {
+			return checksandbox.Result{}, nil
+		}
+		return checksandbox.Result{Stdout: []byte(`{"Action":"pass","Package":"m/a","Test":"TestX"}` + "\n" + `{"Action":"pass","Package":"m/b","Test":"TestB"}`)}, nil
+	}}
+	report, err := runWith(context.Background(), Input{BaseTree: base, HeadTree: head, Scope: Scope{Changed: []string{"a/x_test.go", "b/b.go"}}, Limits: checksandbox.DefaultLimits(), Runner: fake.run}, fakeHost(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := report.Results[0]; !slices.Equal(got.StoppedRunning, []string{"m/b.TestB"}) {
+		t.Fatalf("result %+v", got)
+	}
+}
+
+// Base runs only the Go packages it has; a package added on head is new.
+func TestRunGivesEachTreeOnlyItsOwnPackages(t *testing.T) {
+	base := writeTree(t, map[string]string{"go.mod": "module m\n", "a/a.go": "package a"})
+	head := writeTree(t, map[string]string{"go.mod": "module m\n", "a/a.go": "package a", "b/b.go": "package b"})
+	var mu sync.Mutex
+	args := map[string][]string{}
+	fake := &fakeRunner{base: base, calls: map[string]int{}, answers: func(side string, _ int, spec checksandbox.Spec) (checksandbox.Result, error) {
+		mu.Lock()
+		args[side+" "+spec.Args[1]] = spec.Args[1:]
+		mu.Unlock()
+		return checksandbox.Result{Stdout: goEvents(map[string]string{"TestA": "pass"})}, nil
+	}}
+	_, err := runWith(context.Background(), Input{BaseTree: base, HeadTree: head, Scope: Scope{Changed: []string{"a/a.go", "b/b.go"}}, Limits: checksandbox.DefaultLimits(), Runner: fake.run}, fakeHost(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(args["base vet"], []string{"vet", "./a"}) || !slices.Equal(args["head vet"], []string{"vet", "./a", "./b"}) || !slices.Equal(args["base test"], []string{"test", "-json", "-count=1", "./a"}) {
+		t.Fatalf("args %v", args)
+	}
+	only := writeTree(t, map[string]string{"go.mod": "module m\n"})
+	calls := 0
+	fake = &fakeRunner{base: only, calls: map[string]int{}, answers: func(side string, _ int, spec checksandbox.Spec) (checksandbox.Result, error) {
+		if side == "base" {
+			calls++
+		}
+		return checksandbox.Result{Stdout: goEvents(map[string]string{"TestA": "fail"})}, nil
+	}}
+	report, _ := runWith(context.Background(), Input{BaseTree: only, HeadTree: head, Scope: Scope{Changed: []string{"b/b.go"}}, Limits: checksandbox.DefaultLimits(), Runner: fake.run}, fakeHost(t))
+	if calls != 0 || !slices.Equal(report.Results[0].NewFailures, []string{"m/a.TestA"}) {
+		t.Fatalf("base ran %d times; result %+v", calls, report.Results[0])
+	}
+}
+
+// A test that prints the words of a missing module is still a result.
+func TestRunKeepsResultsWhoseOutputMentionsAMissingModule(t *testing.T) {
+	report := runFake(t, func(side string, _ int, spec checksandbox.Spec) (checksandbox.Result, error) {
+		outcome := "pass"
+		if side == "head" {
+			outcome = "fail"
+		}
+		stdout := `{"Action":"output","Package":"m/a","Test":"TestA","Output":"ModuleNotFoundError: No module named 'requests'\n"}` + "\n" + `{"Action":"` + outcome + `","Package":"m/a","Test":"TestA"}`
+		return checksandbox.Result{ExitCode: 1, Stdout: []byte(stdout)}, nil
+	})
+	if got := report.Results[0]; !got.Ran || !slices.Equal(got.Regressions, []string{"m/a.TestA"}) {
+		t.Fatalf("result %+v", got)
+	}
+}
+
+// A run that passes a limit on head after base ran within it is a head
+// failure; on base it means the check could not run, and says so.
+func TestRunTreatsAHeadLimitAfterACleanBaseAsARegression(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		result checksandbox.Result
+		want   string
+	}{
+		{"timeout", checksandbox.Result{TimedOut: true}, "go test ./a (timed out on head)"},
+		{"output", checksandbox.Result{OutputExceeded: true}, "go test ./a (output past the limit on head)"},
+		{"disk", checksandbox.Result{DiskExceeded: true}, "go test ./a (scratch space filled on head)"},
+		{"no results", checksandbox.Result{ExitCode: 2}, "go test ./a (exit status 2 without results on head)"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			report := runFake(t, func(side string, _ int, spec checksandbox.Spec) (checksandbox.Result, error) {
+				if side == "head" && spec.Args[1] == "test" {
+					return test.result, nil
+				}
+				return checksandbox.Result{Stdout: goEvents(map[string]string{"TestA": "pass"})}, nil
+			})
+			if got := report.Results[0]; !got.Ran || got.Tests != 1 || !slices.Equal(got.Regressions, []string{test.want}) {
+				t.Fatalf("result %+v", got)
+			}
+		})
+	}
+	report := runFake(t, func(side string, _ int, _ checksandbox.Spec) (checksandbox.Result, error) {
+		if side == "base" {
+			return checksandbox.Result{TimedOut: true}, nil
+		}
+		return checksandbox.Result{}, nil
+	})
+	if got := report.Results[0]; got.Ran || got.Reason != "it ran past its 3m0s time limit on base" {
+		t.Fatalf("result %+v", got)
 	}
 }
 
@@ -182,44 +312,13 @@ func TestRunStopsAtTheBudget(t *testing.T) {
 	}
 }
 
-func TestRunAddsExtraFilesToBothSides(t *testing.T) {
-	base, head := goTrees(t)
-	seen := map[string]bool{}
-	var mu sync.Mutex
-	fake := &fakeRunner{base: "", calls: map[string]int{}, answers: func(_ string, _ int, spec checksandbox.Spec) (checksandbox.Result, error) {
-		data, err := os.ReadFile(filepath.Join(spec.Tree, "a", "extra_test.go"))
-		mu.Lock()
-		seen[spec.Tree] = err == nil && string(data) == "package a"
-		mu.Unlock()
-		return checksandbox.Result{}, nil
-	}}
-	_, err := runWith(context.Background(), Input{
-		BaseTree: base, HeadTree: head, Scope: Scope{Changed: []string{"a/a.go"}}, Limits: checksandbox.DefaultLimits(), Runner: fake.run,
-		ExtraFiles: map[string][]byte{"a/extra_test.go": []byte("package a")},
-	}, fakeHost(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(seen) != 2 {
-		t.Fatalf("runs saw %v, want two copied trees", seen)
-	}
-	for tree, ok := range seen {
-		if !ok || tree == base || tree == head {
-			t.Fatalf("tree %s: extra file present %v", tree, ok)
-		}
-	}
-	if _, err := os.Stat(filepath.Join(head, "a", "extra_test.go")); err == nil {
-		t.Fatal("the extra file was written into the input tree")
-	}
-}
-
 func TestSummary(t *testing.T) {
 	report := Report{Results: []Result{
-		{Name: "go test ./a", Ran: true, Tests: 9, Regressions: []string{"m/a.TestX"}, Flaky: 2},
+		{Name: "go test ./a", Ran: true, Tests: 9, Regressions: []string{"m/a.TestX"}, StoppedRunning: []string{"m/a.TestY"}, Fixed: 2, StillFailing: 1, Flaky: 2},
 		{Name: "go vet ./a", Ran: true, Tests: 1},
-		{Name: "npm test", Reason: "missing dependency: jest"},
+		{Name: "npm test", Reason: "missing dependency: jest on base"},
 	}}
-	want := "ran 2 of 3 checks in the sandbox: 1 regression, 2 flaky dropped, 1 could not run (npm test: missing dependency: jest)"
+	want := "ran 2 of 3 checks in the sandbox: 1 regression, 1 stopped running, 2 fixed, 1 still failing, 2 flaky dropped, 1 could not run (npm test: missing dependency: jest on base)"
 	if got := report.Summary(); got != want {
 		t.Fatalf("got %q\nwant %q", got, want)
 	}

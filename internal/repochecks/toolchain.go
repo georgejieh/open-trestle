@@ -47,7 +47,12 @@ func (h host) resolve(check Check) (string, toolchain, error) {
 	switch check.Stack {
 	case "go":
 		chain.env = []string{"GOCACHE=$HOME/.cache/go-build", "GOPATH=$HOME/go", "GOPROXY=off", "GOSUMDB=off", "GOTOOLCHAIN=local",
-			"GOTELEMETRY=off", "GOFLAGS=-mod=mod", "GOWORK=off", "CGO_ENABLED=0"}
+			"GOTELEMETRY=off", "GOWORK=off", "CGO_ENABLED=0"}
+		// A vendored module builds from its vendor folder, the go command's
+		// default when vendor/modules.txt exists.
+		if !check.Vendored {
+			chain.env = append(chain.env, "GOFLAGS=-mod=mod")
+		}
 		if cache := h.goModuleCache(); cache != "" {
 			chain.readOnly = append(chain.readOnly, cache)
 			chain.env = append(chain.env, "GOMODCACHE="+cache)

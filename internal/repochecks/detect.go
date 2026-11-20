@@ -21,9 +21,15 @@ type Check struct {
 	Tool string
 	// Dir is the working directory, slash-separated and relative to the
 	// tree root.
-	Dir    string
-	Args   []string
-	Format Format
+	Dir  string
+	Args []string
+	// Packages are the Go package patterns, which follow Args. Each tree
+	// runs only those it has, so a package added on head is new there.
+	Packages []string
+	// Vendored is set for a Go module with a vendor/modules.txt file, whose
+	// dependencies come from its vendor folder.
+	Vendored bool
+	Format   Format
 	// Report is the report file, relative to the sandbox's temporary
 	// folder, that Args ask the runner to write.
 	Report string
@@ -31,16 +37,15 @@ type Check struct {
 	Missing string
 }
 
-// Scope restricts checks to the changed area. A nil Changed means the
-// whole repository.
+// Scope restricts checks to the changed area.
 type Scope struct {
+	// Changed are the files the change adds, removes or modifies,
+	// slash-separated.
 	Changed []string
 	// Dependents are files that depend on the changed ones, from the
 	// repository index, slash-separated.
 	Dependents []string
 }
-
-func (scope Scope) whole() bool { return scope.Changed == nil }
 
 func (scope Scope) paths() []string {
 	return append(append([]string{}, scope.Changed...), scope.Dependents...)
@@ -59,8 +64,9 @@ func Detect(root string, scope Scope) ([]Check, error) {
 		data, _ := os.ReadFile(filepath.Join(root, filepath.FromSlash(name)))
 		return data
 	}
+	exists := func(name string) bool { return isFile(filepath.Join(root, filepath.FromSlash(name))) }
 	var checks []Check
-	checks = append(checks, detectGo(files, scope)...)
+	checks = append(checks, detectGo(files, exists, scope)...)
 	checks = append(checks, detectNode(files, read, scope)...)
 	checks = append(checks, detectPython(files, read, scope)...)
 	checks = append(checks, detectRust(files, scope)...)
@@ -90,7 +96,7 @@ func listFiles(root string) ([]string, error) {
 	return files, err
 }
 
-func detectGo(files []string, scope Scope) []Check {
+func detectGo(files []string, exists func(string) bool, scope Scope) []Check {
 	var modules []string
 	packages := map[string]bool{}
 	for _, file := range files {
@@ -121,9 +127,6 @@ func detectGo(files []string, scope Scope) []Check {
 	var checks []Check
 	for _, module := range modules {
 		patterns := targets[module]
-		if scope.whole() {
-			patterns = []string{"./..."}
-		}
 		if len(patterns) == 0 {
 			continue
 		}
@@ -132,9 +135,10 @@ func detectGo(files []string, scope Scope) []Check {
 		if slices.Contains(patterns, "./...") {
 			patterns = []string{"./..."}
 		}
+		vendored := exists(path.Join(module, "vendor", "modules.txt"))
 		checks = append(checks,
-			Check{Name: "go test " + strings.Join(patterns, " "), Stack: "go", Tool: "go", Dir: module, Args: append([]string{"test", "-json", "-count=1"}, patterns...), Format: FormatGoJSON},
-			Check{Name: "go vet " + strings.Join(patterns, " "), Stack: "go", Tool: "go", Dir: module, Args: append([]string{"vet"}, patterns...), Format: FormatExit},
+			Check{Name: "go test " + strings.Join(patterns, " "), Stack: "go", Tool: "go", Dir: module, Args: []string{"test", "-json", "-count=1"}, Packages: patterns, Vendored: vendored, Format: FormatGoJSON},
+			Check{Name: "go vet " + strings.Join(patterns, " "), Stack: "go", Tool: "go", Dir: module, Args: []string{"vet"}, Packages: patterns, Vendored: vendored, Format: FormatExit},
 		)
 	}
 	return checks
@@ -164,9 +168,7 @@ func nearest(folders []string, file string) (string, bool) {
 }
 
 type packageJSON struct {
-	Scripts         map[string]string
-	Dependencies    map[string]string
-	DevDependencies map[string]string
+	Scripts map[string]string
 }
 
 const npmPlaceholderTest = `echo "Error: no test specified" && exit 1`
@@ -176,9 +178,10 @@ var shellSyntax = regexp.MustCompile("[|&;<>()$`\\\\\"'*?\\[\\]#~=%]")
 // detectNode runs the root package's test script. A script that is a
 // plain "node --test" call runs node directly with a TAP reporter, so each
 // test has a result; any other script runs through the package manager and
-// gives one result for the whole script.
+// gives one result for the whole script. Declared dependencies are not
+// installed in the sandbox; a run that needs one reports it missing.
 func detectNode(files []string, read func(string) []byte, scope Scope) []Check {
-	if !slices.Contains(files, "package.json") || !scope.whole() && !touches(scope, ".js", ".mjs", ".cjs", ".ts", ".mts", ".cts", ".jsx", ".tsx", "package.json") {
+	if !slices.Contains(files, "package.json") || !touches(scope, ".js", ".mjs", ".cjs", ".ts", ".mts", ".cts", ".jsx", ".tsx", "package.json") {
 		return nil
 	}
 	var manifest packageJSON
@@ -200,9 +203,6 @@ func detectNode(files []string, read func(string) []byte, scope Scope) []Check {
 	if fields := strings.Fields(script); len(fields) >= 2 && fields[0] == "node" && fields[1] == "--test" && !shellSyntax.MatchString(script) {
 		args := append([]string{"--test", "--test-reporter=tap", "--test-reporter-destination=stdout"}, fields[2:]...)
 		check = Check{Name: script, Stack: "node", Tool: "node", Dir: ".", Args: args, Format: FormatTAP}
-	}
-	if len(manifest.Dependencies)+len(manifest.DevDependencies) > 0 {
-		check.Missing = "missing dependency: the package's dependencies are not installed, and checks run offline and never install packages"
 	}
 	return []Check{check}
 }
@@ -228,7 +228,7 @@ func detectPython(files []string, read func(string) []byte, scope Scope) []Check
 			pytest = true
 		}
 	}
-	if len(tests) == 0 || !scope.whole() && !touches(scope, ".py", "pyproject.toml", "setup.cfg", "pytest.ini", "tox.ini") {
+	if len(tests) == 0 || !touches(scope, ".py", "pyproject.toml", "setup.cfg", "pytest.ini", "tox.ini") {
 		return nil
 	}
 	if !pytest {
@@ -244,7 +244,7 @@ func isPythonTest(file string) bool {
 }
 
 func detectRust(files []string, scope Scope) []Check {
-	if !slices.Contains(files, "Cargo.toml") || !scope.whole() && !touches(scope, ".rs", "Cargo.toml", "Cargo.lock") {
+	if !slices.Contains(files, "Cargo.toml") || !touches(scope, ".rs", "Cargo.toml", "Cargo.lock") {
 		return nil
 	}
 	return []Check{{Name: "cargo test", Stack: "rust", Tool: "cargo", Dir: ".", Args: []string{"test", "--offline"}, Format: FormatLibtest}}

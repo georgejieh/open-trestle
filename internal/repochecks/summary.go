@@ -10,7 +10,7 @@ func (report Report) Summary() string {
 	if len(report.Results) == 0 {
 		return "no checks apply to this change"
 	}
-	ran, regressions, flaky := 0, 0, 0
+	ran, regressions, newFailures, stopped, fixed, stillFailing, flaky := 0, 0, 0, 0, 0, 0, 0
 	var skipped []string
 	for _, result := range report.Results {
 		if !result.Ran {
@@ -19,9 +19,22 @@ func (report Report) Summary() string {
 		}
 		ran++
 		regressions += len(result.Regressions)
+		newFailures += len(result.NewFailures)
+		stopped += len(result.StoppedRunning)
+		fixed += result.Fixed
+		stillFailing += result.StillFailing
 		flaky += result.Flaky
 	}
-	parts := []string{plural(regressions, "regression", "regressions"), fmt.Sprintf("%d flaky dropped", flaky)}
+	parts := []string{plural(regressions, "regression", "regressions")}
+	for _, count := range []struct {
+		value int
+		text  string
+	}{{newFailures, "new failing"}, {stopped, "stopped running"}, {fixed, "fixed"}, {stillFailing, "still failing"}} {
+		if count.value > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", count.value, count.text))
+		}
+	}
+	parts = append(parts, fmt.Sprintf("%d flaky dropped", flaky))
 	if len(skipped) > 0 {
 		parts = append(parts, fmt.Sprintf("%d could not run (%s)", len(skipped), strings.Join(skipped, "; ")))
 	}

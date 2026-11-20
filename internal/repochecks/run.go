@@ -10,12 +10,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"slices"
-	"sort"
 	"strings"
 	"time"
 
@@ -31,9 +28,6 @@ type Input struct {
 	// They are only read.
 	BaseTree, HeadTree string
 	Scope              Scope
-	// ExtraFiles are added, by slash-separated relative path, to both trees
-	// in every run's scratch, for checks written for this change.
-	ExtraFiles map[string][]byte
 	// Limits bound each run; Budget bounds the whole review's checks.
 	Limits checksandbox.Limits
 	Budget time.Duration
@@ -47,13 +41,22 @@ type Result struct {
 	// Ran is false when the check could not run; Reason then says why.
 	Ran    bool
 	Reason string
-	// Tests counts the tests with a stable result on head.
+	// Tests counts the results with a stable outcome on head.
 	Tests int
-	// Regressions are tests that passed on base and failed on head, in
-	// both runs of each side.
+	// Regressions passed on base and failed on head, in both runs of each
+	// side: tests, and packages, modules or files that failed as a whole on
+	// head while tests in them passed on base. A run that passed its time,
+	// output or disk limit on head, or exited with a failure without results
+	// there, after base ran within them, is one too.
 	Regressions []string
 	// NewFailures are tests absent from base that failed in both head runs.
 	NewFailures []string
+	// StoppedRunning passed on base and have no result on head, and no
+	// failure on head covers them: the change renamed or removed them, or
+	// something stopped them from running.
+	StoppedRunning []string
+	// Fixed failed on base and pass on head; StillFailing fail on both.
+	Fixed, StillFailing int
 	// Flaky counts tests dropped because two runs of one side disagreed.
 	Flaky int
 }
@@ -84,48 +87,17 @@ func runWith(ctx context.Context, input Input, machine host) (Report, error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, input.Budget)
 	defer cancel()
-	base, head, cleanup, err := prepareTrees(input)
-	if err != nil {
-		return Report{}, err
-	}
-	defer cleanup()
+	trees := newTrees(input.BaseTree, input.HeadTree)
 	report := Report{}
 	seeds := &goSeeds{homes: map[string]string{}}
 	defer seeds.close()
 	for _, check := range checks {
-		report.Results = append(report.Results, runCheck(ctx, machine, input, check, base, head, seeds))
+		report.Results = append(report.Results, runCheck(ctx, machine, input, check, trees, seeds))
 	}
 	return report, nil
 }
 
-// prepareTrees returns the trees to run, with the extra files added to
-// copies when there are any.
-func prepareTrees(input Input) (string, string, func(), error) {
-	if len(input.ExtraFiles) == 0 {
-		return input.BaseTree, input.HeadTree, func() {}, nil
-	}
-	scratch, err := os.MkdirTemp("", "open-trestle-checks-")
-	if err != nil {
-		return "", "", nil, err
-	}
-	cleanup := func() { _ = os.RemoveAll(scratch) }
-	var trees []string
-	for _, side := range []struct{ name, tree string }{{"base", input.BaseTree}, {"head", input.HeadTree}} {
-		target := filepath.Join(scratch, side.name)
-		if err := copyFolder(side.tree, target); err != nil {
-			cleanup()
-			return "", "", nil, err
-		}
-		if err := writeFiles(target, input.ExtraFiles); err != nil {
-			cleanup()
-			return "", "", nil, err
-		}
-		trees = append(trees, target)
-	}
-	return trees[0], trees[1], cleanup, nil
-}
-
-func runCheck(ctx context.Context, machine host, input Input, check Check, base, head string, seeds *goSeeds) Result {
+func runCheck(ctx context.Context, machine host, input Input, check Check, trees trees, seeds *goSeeds) Result {
 	result := Result{Name: check.Name, Stack: check.Stack}
 	if check.Missing != "" {
 		result.Reason = check.Missing
@@ -137,63 +109,102 @@ func runCheck(ctx context.Context, machine host, input Input, check Check, base,
 		return result
 	}
 	spec := checksandbox.Spec{
-		Dir: filepath.FromSlash(check.Dir), Args: append(append([]string{program}, platformArgs(check)...), check.Args...),
+		Dir: filepath.FromSlash(check.Dir), Args: append([]string{program}, platformArgs(check)...),
 		Path: chain.path, ReadOnly: chain.readOnly, Env: chain.env, Report: check.Report, Limits: input.Limits,
 	}
 	if check.Stack == "go" {
-		spec.HomeSeed = seeds.home(ctx, program, chain, []string{base, head})
+		spec.HomeSeed = seeds.home(ctx, program, chain, []string{trees.base, trees.head})
 	}
-	trees := []string{base, head}
-	var sides [2][2]map[string]Outcome
-	for index, tree := range trees {
-		if index == 0 && !isDir(filepath.Join(tree, filepath.FromSlash(check.Dir))) {
-			// The check is new on head; nothing of it exists on base.
-			sides[0] = [2]map[string]Outcome{{}, {}}
-			continue
-		}
-		for attempt := range 2 {
-			spec.Tree = tree
-			tests, reason := runOnce(ctx, input.Runner, spec, check, trees)
-			if reason != "" {
-				result.Reason = reason
-				return result
-			}
-			sides[index][attempt] = tests
-		}
+	base, problem := runSide(ctx, input.Runner, spec, check, trees, trees.base)
+	if problem != nil {
+		result.Reason = problem.reason("base")
+		return result
+	}
+	head, problem := runSide(ctx, input.Runner, spec, check, trees, trees.head)
+	switch {
+	case problem != nil && problem.headFailure != "":
+		// Base ran within its limits; head did not.
+		result.Ran, result.Tests = true, 1
+		result.Regressions = []string{check.Name + " (" + problem.headFailure + " on head)"}
+		return result
+	case problem != nil:
+		result.Reason = problem.reason("head")
+		return result
 	}
 	result.Ran = true
-	compare(&result, sides, !removesTests(input.Scope, head))
+	compare(&result, [2][2]map[string]Outcome{base, head}, deletedTests(check, input.Scope, trees))
 	return result
 }
 
-// removesTests reports whether the change deletes or renames a test file,
-// or whether that cannot be known.
-func removesTests(scope Scope, head string) bool {
-	if scope.whole() {
-		return true
+// runSide runs the check twice on tree and returns both runs' results, or
+// the problem that stopped it. A tree without the check's folder or any of
+// its Go packages has no results: the check is new there.
+func runSide(ctx context.Context, runner Runner, spec checksandbox.Spec, check Check, trees trees, tree string) ([2]map[string]Outcome, *problem) {
+	runs := [2]map[string]Outcome{{}, {}}
+	args, present := sideArgs(check, tree)
+	if !present {
+		return runs, nil
 	}
-	for _, file := range scope.Changed {
-		if isTestFile(file) && !isFile(filepath.Join(head, filepath.FromSlash(file))) {
-			return true
+	spec.Tree, spec.Args = tree, append(slices.Clip(spec.Args), args...)
+	for attempt := range runs {
+		tests, problem := runOnce(ctx, runner, spec, check, trees)
+		if problem != nil {
+			return runs, problem
 		}
+		runs[attempt] = tests
 	}
-	return false
+	return runs, nil
 }
 
-func isTestFile(file string) bool {
-	base := path.Base(file)
-	for _, marker := range []string{"_test.go", ".test.", ".spec.", "_test.rs"} {
-		if strings.Contains(base, marker) {
-			return true
+// sideArgs are the check's arguments on tree, and false when the check has
+// nothing to run there.
+func sideArgs(check Check, tree string) ([]string, bool) {
+	dir := filepath.Join(tree, filepath.FromSlash(check.Dir))
+	if !isDir(dir) {
+		return nil, false
+	}
+	if len(check.Packages) == 0 {
+		return check.Args, true
+	}
+	args := slices.Clone(check.Args)
+	for _, pattern := range check.Packages {
+		if pattern == "./..." || hasGoFiles(filepath.Join(dir, filepath.FromSlash(pattern))) {
+			args = append(args, pattern)
 		}
 	}
-	return isPythonTest(file) || strings.Contains("/"+file, "/tests/") || strings.Contains("/"+file, "/test/")
+	return args, len(args) > len(check.Args)
 }
 
-func isFile(name string) bool {
-	info, err := os.Stat(name)
-	return err == nil && info.Mode().IsRegular()
+func hasGoFiles(dir string) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	return slices.ContainsFunc(entries, func(entry os.DirEntry) bool {
+		return entry.Type().IsRegular() && strings.HasSuffix(entry.Name(), ".go")
+	})
 }
+
+// problem is why one run gave no results to compare. headFailure, when
+// set, is the short name of a failure that the code under test can cause
+// (passing a limit, or failing without results); when base ran without
+// it, it is a regression on head.
+type problem struct {
+	text        string
+	sided       bool
+	headFailure string
+}
+
+// reason is the problem's text, naming the side it happened on when it is
+// about that side's code.
+func (p problem) reason(side string) string {
+	if !p.sided {
+		return p.text
+	}
+	return p.text + " on " + side
+}
+
+var errBudget = &problem{text: "the review's time for checks ran out"}
 
 // platformArgs are flags a toolchain needs inside this system's sandbox.
 // The go command cannot run there on Windows, where the NUL device grants
@@ -208,45 +219,47 @@ func platformArgs(check Check) []string {
 	return nil
 }
 
-// runOnce runs the check once and returns its results, or the reason it
-// could not run.
-func runOnce(ctx context.Context, runner Runner, spec checksandbox.Spec, check Check, trees []string) (map[string]Outcome, string) {
+// runOnce runs the check once and returns its results, or the problem that
+// left it without any.
+func runOnce(ctx context.Context, runner Runner, spec checksandbox.Spec, check Check, trees trees) (map[string]Outcome, *problem) {
 	if ctx.Err() != nil {
-		return nil, "the review's time for checks ran out"
+		return nil, errBudget
 	}
 	outcome, err := runner(ctx, spec)
 	switch {
+	case ctx.Err() != nil:
+		// The review's budget, not the run's own limit, stopped it.
+		return nil, errBudget
 	case err != nil:
 		var unavailable *checksandbox.Unavailable
 		if errors.As(err, &unavailable) {
-			return nil, unavailable.Reason
+			return nil, &problem{text: unavailable.Reason}
 		}
-		return nil, "the sandbox failed"
+		return nil, &problem{text: "the sandbox failed"}
 	case outcome.TimedOut:
-		return nil, fmt.Sprintf("it ran past its %v time limit", spec.Limits.Time)
+		return nil, &problem{text: fmt.Sprintf("it ran past its %v time limit", spec.Limits.Time), sided: true, headFailure: "timed out"}
 	case outcome.OutputExceeded:
-		return nil, "its output passed the limit"
+		return nil, &problem{text: "its output passed the limit", sided: true, headFailure: "output past the limit"}
 	case outcome.DiskExceeded:
-		return nil, "it filled its scratch space"
+		return nil, &problem{text: "it filled its scratch space", sided: true, headFailure: "scratch space filled"}
 	}
-	parsed := parseRun(check.Format, check.Name, outcome.ExitCode, outcome.Stdout, outcome.Stderr, outcome.Report)
-	// A module the repository itself provides is not a missing dependency:
-	// a change that renamed or removed it broke the tests that use it.
-	parsed.missing = slices.DeleteFunc(parsed.missing, func(name string) bool { return repositoryProvides(name, trees) })
-	if len(parsed.missing) > 0 {
-		sort.Strings(parsed.missing)
-		return nil, "missing dependency: " + strings.Join(parsed.missing, ", ")
-	}
-	if len(parsed.tests) == 0 {
-		if outcome.ExitCode == 0 {
-			return map[string]Outcome{}, ""
+	parsed := parseRun(check.Format, check.Name, outcome.ExitCode, outcome.Stdout, outcome.Stderr, outcome.Report, trees.provides)
+	switch {
+	case parsed.overflow:
+		return nil, &problem{text: fmt.Sprintf("it reported more than %d results", maxRunResults), sided: true}
+	case len(parsed.tests) > 0:
+		if check.Format != FormatExit {
+			recordExitStatus(parsed, check.Name, outcome.ExitCode)
 		}
-		return nil, fmt.Sprintf("the runner exited with status %d and reported no results", outcome.ExitCode)
+		return parsed.tests, nil
+	case len(parsed.missing) > 0:
+		slices.Sort(parsed.missing)
+		return nil, &problem{text: "missing dependency: " + strings.Join(slices.Compact(parsed.missing), ", "), sided: true}
+	case outcome.ExitCode == 0:
+		return map[string]Outcome{}, nil
 	}
-	if check.Format != FormatExit {
-		recordExitStatus(parsed, check.Name, outcome.ExitCode)
-	}
-	return parsed.tests, ""
+	return nil, &problem{text: fmt.Sprintf("the runner exited with status %d and reported no results", outcome.ExitCode), sided: true,
+		headFailure: fmt.Sprintf("exit status %d without results", outcome.ExitCode)}
 }
 
 // exitStatusSuffix marks the result recordExitStatus adds.
@@ -256,7 +269,7 @@ const exitStatusSuffix = " (exit status)"
 // zero, and a failure when it exited otherwise although no reported test
 // failed. Output that claims every test passed therefore cannot hide a
 // failing run.
-func recordExitStatus(parsed parsed, name string, exitCode int) {
+func recordExitStatus(parsed *parsed, name string, exitCode int) {
 	id := name + exitStatusSuffix
 	if exitCode == 0 {
 		parsed.record(id, Pass)
@@ -268,140 +281,4 @@ func recordExitStatus(parsed parsed, name string, exitCode int) {
 		}
 	}
 	parsed.record(id, Fail)
-}
-
-// repositoryProvides reports whether name is part of the repository: a path
-// (a test runner names a file it could not load), a Python package or
-// module at the top of either tree, or a package of a Go module declared in
-// either tree.
-func repositoryProvides(name string, trees []string) bool {
-	if filepath.IsAbs(name) || strings.HasPrefix(name, "/") {
-		return true
-	}
-	if strings.HasPrefix(name, ".") {
-		return filepath.IsLocal(filepath.Clean(name))
-	}
-	top := strings.SplitN(name, ".", 2)[0]
-	for _, tree := range trees {
-		if isDir(filepath.Join(tree, top)) || isFile(filepath.Join(tree, top+".py")) || isDir(filepath.Join(tree, "src", top)) {
-			return true
-		}
-		for _, module := range goModules(tree) {
-			if name == module || strings.HasPrefix(name, module+"/") {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-var moduleLine = regexp.MustCompile(`(?m)^module\s+"?([^\s"]+)"?\s*$`)
-
-// goModules are the module paths of the go.mod files in tree.
-func goModules(tree string) []string {
-	files, err := listFiles(tree)
-	if err != nil {
-		return nil
-	}
-	var modules []string
-	for _, file := range files {
-		if path.Base(file) != "go.mod" {
-			continue
-		}
-		if data, err := os.ReadFile(filepath.Join(tree, filepath.FromSlash(file))); err == nil {
-			if match := moduleLine.FindSubmatch(data); match != nil {
-				modules = append(modules, string(match[1]))
-			}
-		}
-	}
-	return modules
-}
-
-// compare drops tests whose two runs on one side disagree and classifies
-// the rest. With vanished set, a test that passed on base and of whose
-// group (its package, class or file) head reported nothing at all is a
-// regression too: something on head stopped the tests from running.
-func compare(result *Result, sides [2][2]map[string]Outcome, vanished bool) {
-	stable := func(runs [2]map[string]Outcome) (map[string]Outcome, map[string]bool) {
-		kept, flaky := map[string]Outcome{}, map[string]bool{}
-		for id, first := range runs[0] {
-			if second, ok := runs[1][id]; ok && second == first {
-				kept[id] = first
-			} else {
-				flaky[id] = true
-			}
-		}
-		for id := range runs[1] {
-			if _, ok := runs[0][id]; !ok {
-				flaky[id] = true
-			}
-		}
-		return kept, flaky
-	}
-	base, baseFlaky := stable(sides[0])
-	head, headFlaky := stable(sides[1])
-	dropped := map[string]bool{}
-	for id := range baseFlaky {
-		dropped[id] = true
-	}
-	for id := range headFlaky {
-		dropped[id] = true
-	}
-	result.Flaky = len(dropped)
-	for id, outcome := range head {
-		if dropped[id] {
-			continue
-		}
-		result.Tests++
-		if outcome != Fail {
-			continue
-		}
-		switch before, ok := base[id]; {
-		case ok && before == Pass, !ok && passedWithin(base, id):
-			result.Regressions = append(result.Regressions, id)
-		case !ok:
-			result.NewFailures = append(result.NewFailures, id)
-		}
-	}
-	if vanished {
-		reported := map[string]bool{}
-		for _, run := range sides[1] {
-			for id := range run {
-				// A result for a whole package or file names its group too.
-				reported[id], reported[testGroup(id)] = true, true
-			}
-		}
-		for id, outcome := range base {
-			if outcome == Pass && !dropped[id] && !reported[testGroup(id)] && !strings.HasSuffix(id, exitStatusSuffix) {
-				result.Regressions = append(result.Regressions, id+" (did not run on head)")
-			}
-		}
-	}
-	slices.Sort(result.Regressions)
-	slices.Sort(result.NewFailures)
-}
-
-// testGroup is the package, class, module or file a test ID names.
-func testGroup(id string) string {
-	if group, _, ok := strings.Cut(id, "::"); ok {
-		return group
-	}
-	if group, _, ok := strings.Cut(id, " > "); ok {
-		return group
-	}
-	if index := strings.LastIndex(id, "."); index > 0 {
-		return id[:index]
-	}
-	return ""
-}
-
-// passedWithin reports whether base has a passing test inside id, as when
-// a Go package that passed its tests on base fails to build on head.
-func passedWithin(base map[string]Outcome, id string) bool {
-	for other, outcome := range base {
-		if outcome == Pass && strings.HasPrefix(other, id+".") {
-			return true
-		}
-	}
-	return false
 }

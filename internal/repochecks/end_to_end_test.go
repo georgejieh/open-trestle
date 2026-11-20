@@ -88,14 +88,15 @@ func TestEndToEndRenamedPythonModuleIsARegression(t *testing.T) {
 	}
 	head := map[string]string{"shop/__init__.py": "", "shop/prices.py": files["shop/price.py"], "tests/__init__.py": "", "tests/test_price.py": files["tests/test_price.py"]}
 	result := endToEnd(t, files, head, []string{"shop/price.py", "shop/prices.py"})
-	if !result.Ran || !slices.Contains(result.Regressions, "tests.test_price.Total.test_sum (did not run on head)") {
+	if !result.Ran || !slices.Equal(result.Regressions, []string{"unittest.loader._FailedTest.tests.test_price"}) || len(result.StoppedRunning) != 0 {
 		t.Fatalf("result %+v", result)
 	}
 }
 
 func TestEndToEndNodeRegression(t *testing.T) {
 	files := map[string]string{
-		"package.json":   `{"type": "module", "scripts": {"test": "node --test"}}`,
+		// A declared dependency the tests do not import does not stop them.
+		"package.json":   `{"type": "module", "scripts": {"test": "node --test"}, "devDependencies": {"prettier": "^3"}}`,
 		"lib/greet.js":   "export const greet = (name) => `hello ${name}`;\n",
 		"greet.test.mjs": "import test from 'node:test';\nimport assert from 'node:assert';\nimport { greet } from './lib/greet.js';\ntest('greets', () => assert.equal(greet('a'), 'hello a'));\ntest('stable', () => {});\n",
 	}
@@ -106,6 +107,18 @@ func TestEndToEndNodeRegression(t *testing.T) {
 	head["lib/greet.js"] = "export const greet = (name) => `hi ${name}`;\n"
 	result := endToEnd(t, files, head, []string{"lib/greet.js"})
 	if !result.Ran || !slices.Equal(result.Regressions, []string{"greets"}) || result.Tests != 2 {
+		t.Fatalf("result %+v", result)
+	}
+}
+
+func TestEndToEndNodeMissingPackage(t *testing.T) {
+	files := map[string]string{
+		"package.json": `{"type": "module", "scripts": {"test": "node --test"}, "dependencies": {"left-pad": "^1"}}`,
+		"lib/pad.js":   "import pad from 'left-pad';\nexport const padded = (s) => pad(s, 3);\n",
+		"pad.test.mjs": "import test from 'node:test';\nimport { padded } from './lib/pad.js';\ntest('pads', () => padded('a'));\n",
+	}
+	result := endToEnd(t, files, files, []string{"lib/pad.js"})
+	if result.Ran || result.Reason != "missing dependency: left-pad on base" {
 		t.Fatalf("result %+v", result)
 	}
 }

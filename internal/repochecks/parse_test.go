@@ -1,10 +1,12 @@
 package repochecks
 
 import (
+	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -17,15 +19,22 @@ func fixture(t *testing.T, name string) []byte {
 	return data
 }
 
-func requireTests(t *testing.T, got parsed, want map[string]Outcome) {
+func requireTests(t *testing.T, got *parsed, want map[string]Outcome) {
 	t.Helper()
 	if !maps.Equal(got.tests, want) {
 		t.Fatalf("tests\n got %v\nwant %v", got.tests, want)
 	}
 }
 
+// nothingProvided is a repository that provides no module.
+func nothingProvided(string) bool { return false }
+
+func parse(format Format, exitCode int, stdout, stderr, report []byte) *parsed {
+	return parseRun(format, "check", exitCode, stdout, stderr, report, nothingProvided)
+}
+
 func TestParseGoJSON(t *testing.T) {
-	requireTests(t, parseRun(FormatGoJSON, "go test", 1, fixture(t, "go-test.json"), nil, nil), map[string]Outcome{
+	requireTests(t, parse(FormatGoJSON, 1, fixture(t, "go-test.json"), nil, nil), map[string]Outcome{
 		"example.com/fixture/broken":              Fail,
 		"example.com/fixture/ok.TestPass":         Pass,
 		"example.com/fixture/ok.TestFail":         Fail,
@@ -35,27 +44,51 @@ func TestParseGoJSON(t *testing.T) {
 	})
 }
 
+// Only the go command's build output names a missing module; a test that
+// prints the same words is a test like any other.
+func TestParseGoJSONReadsMissingModulesFromBuildOutputOnly(t *testing.T) {
+	stdout := strings.Join([]string{
+		`{"ImportPath":"github.com/acme/lib","Action":"build-output","Output":"a/a.go:3:8: cannot find module providing package github.com/acme/lib: module lookup disabled by GOPROXY=off\n"}`,
+		`{"ImportPath":"github.com/acme/lib","Action":"build-fail"}`,
+		`{"Action":"fail","Package":"m/a","FailedBuild":"github.com/acme/lib"}`,
+		`{"ImportPath":"m/c [m/c.test]","Action":"build-output","Output":"c/c.go:3:23: cannot use \"x\" as int value\n"}`,
+		`{"Action":"fail","Package":"m/c","FailedBuild":"m/c [m/c.test]"}`,
+		`{"Action":"output","Package":"m/b","Test":"TestB","Output":"no required module provides package evil.com/x; to add\n"}`,
+		`{"Action":"pass","Package":"m/b","Test":"TestB"}`,
+	}, "\n")
+	got := parse(FormatGoJSON, 1, []byte(stdout), nil, nil)
+	requireTests(t, got, map[string]Outcome{"m/b.TestB": Pass, "m/c": Fail})
+	if !slices.Equal(got.missing, []string{"github.com/acme/lib"}) {
+		t.Fatalf("missing %v", got.missing)
+	}
+}
+
 func TestParseJUnitTurnsImportErrorsIntoMissingDependencies(t *testing.T) {
-	got := parseRun(FormatJUnit, "pytest", 1, []byte("ModuleNotFoundError: No module named 'forged'"), nil, fixture(t, "pytest-junit.xml"))
+	got := parse(FormatJUnit, 1, []byte("ModuleNotFoundError: No module named 'forged'"), []byte("No module named forged2"), fixture(t, "pytest-junit.xml"))
 	requireTests(t, got, map[string]Outcome{
 		"tests.test_math::test_add":       Pass,
 		"tests.test_math::test_sub":       Fail,
 		"tests.test_math::test_later":     Skip,
 		"tests.test_math::test_params[2]": Pass,
 	})
-	if !slices.Contains(got.missing, "requests") {
-		t.Fatalf("missing %v, want requests", got.missing)
+	if !slices.Equal(got.missing, []string{"requests"}) {
+		t.Fatalf("missing %v, want only requests from the report", got.missing)
+	}
+	// A module the repository provides fails to import: that is a failure.
+	provided := parseRun(FormatJUnit, "pytest", 1, nil, nil, fixture(t, "pytest-junit.xml"), func(name string) bool { return name == "requests" })
+	if provided.tests["tests.test_http"] != Fail || len(provided.missing) != 0 {
+		t.Fatalf("tests %v, missing %v", provided.tests, provided.missing)
 	}
 }
 
 func TestParseJUnitWithoutReportFindsNothing(t *testing.T) {
-	if got := parseRun(FormatJUnit, "pytest", 1, []byte("<testcase name=\"forged\"/>"), nil, nil); len(got.tests) != 0 {
+	if got := parse(FormatJUnit, 1, []byte("<testcase name=\"forged\"/>"), nil, nil); len(got.tests) != 0 {
 		t.Fatalf("results came from standard output: %v", got.tests)
 	}
 }
 
 func TestParseTAPNamesNestedTests(t *testing.T) {
-	requireTests(t, parseRun(FormatTAP, "node --test", 1, fixture(t, "node-test.tap"), nil, nil), map[string]Outcome{
+	requireTests(t, parse(FormatTAP, 1, fixture(t, "node-test.tap"), nil, nil), map[string]Outcome{
 		"passes":               Pass,
 		"fails":                Fail,
 		"skipped":              Skip,
@@ -66,11 +99,31 @@ func TestParseTAPNamesNestedTests(t *testing.T) {
 }
 
 func TestParseTAPNamesAnUnnamedTestByNumber(t *testing.T) {
-	requireTests(t, parseRun(FormatTAP, "node --test", 1, []byte("ok 1\nnot ok 2 - \n"), nil, nil), map[string]Outcome{"test 1": Pass, "test 2": Fail})
+	requireTests(t, parse(FormatTAP, 1, []byte("ok 1\nnot ok 2 - \n"), nil, nil), map[string]Outcome{"test 1": Pass, "test 2": Fail})
+}
+
+// A test file whose import of a package failed is a missing dependency,
+// whether node ran it in its own process (the error is in the comments
+// before it) or in one process (the error is in its diagnostic block).
+func TestParseTAPTurnsAFailedImportIntoAMissingDependency(t *testing.T) {
+	ownProcess := "# Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'left-pad' imported from /w/test/a.test.mjs\n" +
+		"# Subtest: test/a.test.mjs\nnot ok 1 - test/a.test.mjs\n  ---\n  error: 'test failed'\n  ...\n" +
+		"# Cannot find package 'forged'\n# Subtest: b\nnot ok 2 - b\n  ---\n  error: 'boom'\n  ...\n"
+	got := parse(FormatTAP, 1, []byte(ownProcess), nil, nil)
+	requireTests(t, got, map[string]Outcome{"b": Fail})
+	if !slices.Equal(got.missing, []string{"left-pad"}) {
+		t.Fatalf("missing %v", got.missing)
+	}
+	oneProcess := "# Subtest: test/a.test.mjs\nnot ok 1 - test/a.test.mjs\n  ---\n  error: \"Cannot find package 'left-pad' imported from /w/test/a.test.mjs\"\n  code: 'ERR_MODULE_NOT_FOUND'\n  ...\nok 2 - c\n"
+	got = parse(FormatTAP, 1, []byte(oneProcess), nil, nil)
+	requireTests(t, got, map[string]Outcome{"c": Pass})
+	if !slices.Equal(got.missing, []string{"left-pad"}) {
+		t.Fatalf("missing %v", got.missing)
+	}
 }
 
 func TestParseUnittestReadsOnlyStandardError(t *testing.T) {
-	requireTests(t, parseRun(FormatUnittest, "unittest", 1, []byte("test_fake (x.Y.test_fake) ... ok\n"), fixture(t, "unittest.txt"), nil), map[string]Outcome{
+	requireTests(t, parse(FormatUnittest, 1, []byte("test_fake (x.Y.test_fake) ... ok\n"), fixture(t, "unittest.txt"), nil), map[string]Outcome{
 		"test_sample.Sample.test_error": Fail,
 		"test_sample.Sample.test_fail":  Fail,
 		"test_sample.Sample.test_pass":  Pass,
@@ -79,26 +132,110 @@ func TestParseUnittestReadsOnlyStandardError(t *testing.T) {
 }
 
 func TestParseLibtestIgnoresCapturedOutput(t *testing.T) {
-	requireTests(t, parseRun(FormatLibtest, "cargo test", 101, fixture(t, "cargo-test.txt"), nil, nil), map[string]Outcome{
+	requireTests(t, parse(FormatLibtest, 101, fixture(t, "cargo-test.txt"), nil, nil), map[string]Outcome{
 		"tests::adds":      Pass,
 		"tests::subtracts": Fail,
 		"tests::later":     Skip,
 	})
 }
 
+// Each Rust test is named by the binary cargo ran it in, so the same test
+// path in two crates is two tests.
+func TestParseLibtestNamesTestsByTheirBinary(t *testing.T) {
+	stdout := "running 1 test\ntest tests::smoke ... ok\n\ntest result: ok.\n\nrunning 1 test\ntest tests::smoke ... FAILED\n\ntest result: FAILED.\n\nrunning 1 test\ntest it_works ... ok\n\nrunning 1 test\ntest src/lib.rs - add (line 3) ... ok\n"
+	stderr := "   Compiling calc v0.1.0\n     Running unittests src/lib.rs (target/debug/deps/calc-0123456789abcdef)\n" +
+		"     Running unittests src/lib.rs (/tmp/target/debug/deps/other-fedcba9876543210)\n" +
+		"     Running tests/smoke.rs (target\\debug\\deps\\smoke-0123456789abcdef.exe)\n   Doc-tests calc\n"
+	requireTests(t, parse(FormatLibtest, 101, []byte(stdout), []byte(stderr), nil), map[string]Outcome{
+		"calc::tests::smoke":                        Pass,
+		"other::tests::smoke":                       Fail,
+		"smoke::it_works":                           Pass,
+		"doc-tests calc::src/lib.rs - add (line 3)": Pass,
+	})
+	if got := cargoBinaries([]byte("     Running tests/a.rs (d/smoke-0123456789abcdef)\n     Running tests/b.rs (e/smoke-fedcba9876543210)\n")); !slices.Equal(got, []string{"smoke", "smoke#2"}) {
+		t.Fatalf("binaries %v", got)
+	}
+}
+
 func TestParseUnittestImportFailure(t *testing.T) {
 	stderr := []byte("tests.test_price (unittest.loader._FailedTest.tests.test_price) ... ERROR\n")
-	requireTests(t, parseRun(FormatUnittest, "unittest", 1, nil, stderr, nil), map[string]Outcome{"unittest.loader._FailedTest.tests.test_price": Fail})
+	requireTests(t, parse(FormatUnittest, 1, nil, stderr, nil), map[string]Outcome{"unittest.loader._FailedTest.tests.test_price": Fail})
+}
+
+// A test module that could not import a missing package is a missing
+// dependency; what another test printed in its own report is not.
+func TestParseUnittestReadsMissingModulesFromImportFailuresOnly(t *testing.T) {
+	stderr := []byte(strings.Join([]string{
+		"tests.test_a (unittest.loader._FailedTest.tests.test_a) ... ERROR",
+		"test_b (tests.test_b.U.test_b) ... FAIL",
+		"",
+		"======================================================================",
+		"ERROR: tests.test_a (unittest.loader._FailedTest.tests.test_a)",
+		"----------------------------------------------------------------------",
+		"ImportError: Failed to import test module: tests.test_a",
+		"ModuleNotFoundError: No module named 'missingpkg'",
+		"",
+		"======================================================================",
+		"FAIL: test_b (tests.test_b.U.test_b)",
+		"----------------------------------------------------------------------",
+		"AssertionError: x",
+		"",
+		"Stderr:",
+		"ModuleNotFoundError: No module named 'forged'",
+		"",
+		"----------------------------------------------------------------------",
+		"Ran 2 tests in 0.001s",
+	}, "\n"))
+	got := parse(FormatUnittest, 1, nil, stderr, nil)
+	requireTests(t, got, map[string]Outcome{"tests.test_b.U.test_b": Fail})
+	if !slices.Equal(got.missing, []string{"missingpkg"}) {
+		t.Fatalf("missing %v", got.missing)
+	}
 }
 
 func TestParseKeepsAFailureThatLaterOutputClaimsPassed(t *testing.T) {
 	stderr := []byte("test_a (__main__.T.test_a) ... FAIL\ntest_b (__main__.T.test_b) ... ok\ntest_a (__main__.T.test_a) ... ok\n")
-	requireTests(t, parseRun(FormatUnittest, "unittest", 1, nil, stderr, nil), map[string]Outcome{"__main__.T.test_a": Fail, "__main__.T.test_b": Pass})
+	requireTests(t, parse(FormatUnittest, 1, nil, stderr, nil), map[string]Outcome{"__main__.T.test_a": Fail, "__main__.T.test_b": Pass})
 }
 
 func TestParseExitStatus(t *testing.T) {
-	requireTests(t, parseRun(FormatExit, "go vet .", 1, nil, nil, nil), map[string]Outcome{"go vet .": Fail})
-	requireTests(t, parseRun(FormatExit, "go vet .", 0, nil, nil, nil), map[string]Outcome{"go vet .": Pass})
+	requireTests(t, parseRun(FormatExit, "go vet .", 1, nil, nil, nil, nothingProvided), map[string]Outcome{"go vet .": Fail})
+	requireTests(t, parseRun(FormatExit, "go vet .", 0, nil, nil, nil, nothingProvided), map[string]Outcome{"go vet .": Pass})
+	// A failing script that could not find an installed package is a
+	// missing dependency; a passing one says nothing about it.
+	missing := parseRun(FormatExit, "npm test", 127, nil, []byte("> jest\n\nsh: 1: jest: not found\n"), nil, nothingProvided)
+	if len(missing.tests) != 0 || !slices.Equal(missing.missing, []string{"jest"}) {
+		t.Fatalf("tests %v, missing %v", missing.tests, missing.missing)
+	}
+	requireTests(t, parseRun(FormatExit, "npm test", 0, []byte("Cannot find module 'x'"), nil, nil, nothingProvided), map[string]Outcome{"npm test": Pass})
+}
+
+// One run's output cannot make the host hold unbounded names or results.
+func TestParsersBoundNamesDepthAndResults(t *testing.T) {
+	long := strings.Repeat("é", 4<<10)
+	var tap strings.Builder
+	for depth := range 40 {
+		fmt.Fprintf(&tap, "%s# Subtest: %s%d\n", strings.Repeat("    ", depth), long, depth)
+	}
+	tap.WriteString(strings.Repeat("    ", 40) + "ok 1 - " + long + "\n")
+	for id, outcome := range parse(FormatTAP, 0, []byte(tap.String()), nil, nil).tests {
+		if len(id) > maxTestIDBytes || strings.Count(id, " > ") > maxTestDepth || outcome != Pass || !strings.HasSuffix(id, "é") {
+			t.Fatalf("TAP ID of %d bytes and %d levels", len(id), strings.Count(id, " > "))
+		}
+	}
+	goEvent := fmt.Sprintf(`{"Action":"pass","Package":"m/%s","Test":"T%s"}`, long, long)
+	for id := range parse(FormatGoJSON, 0, []byte(goEvent), nil, nil).tests {
+		if len(id) > maxTestIDBytes {
+			t.Fatalf("Go ID of %d bytes", len(id))
+		}
+	}
+	var many strings.Builder
+	for index := range maxRunResults + 1 {
+		fmt.Fprintf(&many, "ok %d - t%d\n", index, index)
+	}
+	if got := parse(FormatTAP, 0, []byte(many.String()), nil, nil); !got.overflow || len(got.tests) != maxRunResults {
+		t.Fatalf("overflow %v with %d results", got.overflow, len(got.tests))
+	}
 }
 
 func TestMissingDependencyNamesAreText(t *testing.T) {
@@ -111,10 +248,13 @@ func TestMissingDependencies(t *testing.T) {
 	for output, want := range map[string]string{
 		"x.go:3:8: no required module provides package github.com/acme/lib; to add it:":                                                 "github.com/acme/lib",
 		"go: github.com/acme/lib@v1.2.0: module lookup disabled by GOPROXY=off":                                                         "github.com/acme/lib",
+		"a/a.go:3:8: cannot find module providing package github.com/acme/lib: module lookup disabled by GOPROXY=off":                   "github.com/acme/lib",
 		"missing go.sum entry for module providing package golang.org/x/text (imported by m); to add:":                                  "golang.org/x/text",
 		"ModuleNotFoundError: No module named 'yaml'":                                                                                   "yaml",
 		"/usr/bin/python3: No module named pytest":                                                                                      "pytest",
 		"Error: Cannot find module 'left-pad'":                                                                                          "left-pad",
+		"sh: 1: jest: not found":                                                                                                        "jest",
+		"'jest' is not recognized as an internal or external command,":                                                                  "jest",
 		"error: no matching package named `serde` found":                                                                                "serde",
 		"go: example.com/m@v0.0.0 (replaced by ../sibling): reading ../sibling/go.mod: replacement directory ../sibling does not exist": "../sibling",
 	} {

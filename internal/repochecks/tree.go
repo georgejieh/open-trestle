@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"path"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -137,64 +136,4 @@ func writeEntry(root *os.Root, entry scm.LocalGitTreeEntry, content []byte) erro
 		mode = 0o755
 	}
 	return root.WriteFile(name, content, mode)
-}
-
-// copyFolder copies the regular files and folders of source into target.
-func copyFolder(source, target string) error {
-	if err := os.MkdirAll(target, 0o755); err != nil {
-		return err
-	}
-	return filepath.WalkDir(source, func(name string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		relative, err := filepath.Rel(source, name)
-		if err != nil || relative == "." {
-			return err
-		}
-		destination := filepath.Join(target, relative)
-		switch {
-		case entry.IsDir():
-			return os.Mkdir(destination, 0o755)
-		case entry.Type()&fs.ModeSymlink != 0:
-			link, err := os.Readlink(name)
-			if err != nil {
-				return err
-			}
-			return os.Symlink(link, destination)
-		case entry.Type().IsRegular():
-			data, err := os.ReadFile(name)
-			if err != nil {
-				return err
-			}
-			info, err := entry.Info()
-			if err != nil {
-				return err
-			}
-			return os.WriteFile(destination, data, info.Mode().Perm())
-		}
-		return nil
-	})
-}
-
-// writeFiles adds files, by slash-separated relative path, under target.
-func writeFiles(target string, files map[string][]byte) error {
-	root, err := os.OpenRoot(target)
-	if err != nil {
-		return err
-	}
-	defer root.Close()
-	for name, content := range files {
-		local := filepath.FromSlash(path.Clean(name))
-		if !filepath.IsLocal(local) {
-			return fmt.Errorf("an extra file's path leaves the tree: %q", name)
-		}
-		if err := root.MkdirAll(filepath.Dir(local), 0o755); err != nil {
-			return err
-		}
-		if err := root.WriteFile(local, content, 0o644); err != nil {
-			return err
-		}
-	}
-	return nil
 }

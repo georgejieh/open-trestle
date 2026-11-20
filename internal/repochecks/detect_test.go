@@ -45,15 +45,29 @@ func TestDetectGoRestrictsToChangedPackagesAndDependents(t *testing.T) {
 	if got := names(checks); !slices.Equal(got, want) {
 		t.Fatalf("got %q, want %q", got, want)
 	}
-	if checks[0].Dir != "tools" || !slices.Equal(checks[2].Args, []string{"test", "-json", "-count=1", ".", "./a", "./b"}) {
+	if checks[0].Dir != "tools" || !slices.Equal(checks[2].Args, []string{"test", "-json", "-count=1"}) || !slices.Equal(checks[2].Packages, []string{".", "./a", "./b"}) || checks[2].Vendored {
 		t.Fatalf("checks %+v", checks)
 	}
 }
 
-func TestDetectWholeRepository(t *testing.T) {
-	root := writeTree(t, map[string]string{"go.mod": "module m\n", "a/a.go": "package a"})
-	checks, err := Detect(root, Scope{})
-	if err != nil || !slices.Equal(names(checks), []string{"go test ./...", "go vet ./..."}) {
+func TestDetectGoVendoredModule(t *testing.T) {
+	root := writeTree(t, map[string]string{"go.mod": "module m\n", "a/a.go": "package a", "vendor/modules.txt": "# example.com/x v1.0.0\n"})
+	checks, _ := Detect(root, Scope{Changed: []string{"a/a.go"}})
+	if len(checks) != 2 || !checks[0].Vendored {
+		t.Fatalf("checks %+v", checks)
+	}
+	machine := host{home: t.TempDir(), getenv: func(string) string { return "" }, lookPath: func(string) (string, error) { return filepath.Join(root, "go"), nil }}
+	for _, vendored := range []bool{true, false} {
+		_, chain, err := machine.resolve(Check{Tool: "go", Stack: "go", Vendored: vendored})
+		if err != nil || slices.Contains(chain.env, "GOFLAGS=-mod=mod") == vendored {
+			t.Fatalf("vendored %v: env %v, %v", vendored, chain.env, err)
+		}
+	}
+}
+
+func TestDetectNothingWithoutChanges(t *testing.T) {
+	root := writeTree(t, map[string]string{"go.mod": "module m\n", "a/a.go": "package a", "package.json": `{"scripts":{"test":"node --test"}}`})
+	if checks, err := Detect(root, Scope{}); err != nil || len(checks) != 0 {
 		t.Fatalf("got %q, %v", names(checks), err)
 	}
 }
@@ -69,12 +83,14 @@ func TestDetectNode(t *testing.T) {
 			want: Check{Name: "node --test test/", Tool: "node", Format: FormatTAP}},
 		{name: "other script through pnpm", files: map[string]string{"package.json": `{"scripts":{"test":"node --test && eslint ."}}`, "pnpm-lock.yaml": ""},
 			want: Check{Name: "pnpm test", Tool: "pnpm", Format: FormatExit}},
-		{name: "dependencies are missing", files: map[string]string{"package.json": `{"scripts":{"test":"jest"},"devDependencies":{"jest":"^29"}}`, "package-lock.json": "{}"},
-			want: Check{Name: "npm test", Tool: "npm", Format: FormatExit, Missing: "missing dependency: the package's dependencies are not installed, and checks run offline and never install packages"}},
+		// Declared dependencies are not installed, but the tests may not
+		// need them: the run says when one is missing.
+		{name: "declared dependencies", files: map[string]string{"package.json": `{"scripts":{"test":"node --test"},"devDependencies":{"prettier":"^3"}}`, "package-lock.json": "{}"},
+			want: Check{Name: "node --test", Tool: "node", Format: FormatTAP}},
 		{name: "npm placeholder", files: map[string]string{"package.json": `{"scripts":{"test":"echo \"Error: no test specified\" && exit 1"}}`}, noCheck: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			checks, err := Detect(writeTree(t, test.files), Scope{})
+			checks, err := Detect(writeTree(t, test.files), Scope{Changed: []string{"package.json"}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -96,7 +112,7 @@ func TestDetectNode(t *testing.T) {
 }
 
 func TestDetectNodeAddsTAPReporterBeforeTestPaths(t *testing.T) {
-	checks, _ := Detect(writeTree(t, map[string]string{"package.json": `{"scripts":{"test":"node --test test/ lib/a.test.js"}}`}), Scope{})
+	checks, _ := Detect(writeTree(t, map[string]string{"package.json": `{"scripts":{"test":"node --test test/ lib/a.test.js"}}`}), Scope{Changed: []string{"lib/a.js"}})
 	if len(checks) != 1 || !slices.Equal(checks[0].Args, []string{"--test", "--test-reporter=tap", "--test-reporter-destination=stdout", "test/", "lib/a.test.js"}) {
 		t.Fatalf("got %+v", checks)
 	}
@@ -111,7 +127,7 @@ func TestDetectGoRunsTheModuleWhenItsDependenciesChange(t *testing.T) {
 }
 
 func TestDetectPython(t *testing.T) {
-	unittest, _ := Detect(writeTree(t, map[string]string{"pkg/mod.py": "", "tests/test_mod.py": ""}), Scope{})
+	unittest, _ := Detect(writeTree(t, map[string]string{"pkg/mod.py": "", "tests/test_mod.py": ""}), Scope{Changed: []string{"pkg/mod.py"}})
 	if !slices.Equal(names(unittest), []string{"python -m unittest"}) || unittest[0].Format != FormatUnittest {
 		t.Fatalf("got %+v", unittest)
 	}
