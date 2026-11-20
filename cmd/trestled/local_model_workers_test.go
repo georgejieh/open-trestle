@@ -29,10 +29,10 @@ import (
 	"github.com/georgejieh/open-trestle/worker"
 )
 
-func localModelWorkerFixture(t *testing.T) ([]string, func(string) string, *daemonBudgetedModelFixture, evidence.RepositoryIdentity, evidence.RevisionIdentity, evidence.RevisionIdentity, runtimeconfig.RuntimePolicy, runtimeconfig.RouteInventory) {
+func localModelWorkerFixture(t *testing.T) ([]string, func(string) string, *daemonFakeModelFixture, evidence.RepositoryIdentity, evidence.RevisionIdentity, evidence.RevisionIdentity, runtimeconfig.RuntimePolicy, runtimeconfig.RouteInventory) {
 	t.Helper()
 	args, originalEnv, repository, base, head, basePolicy, _ := localFullDaemonFixture(t)
-	fake := newDaemonBudgetedModelFixture(t, basePolicy.ReviewPolicyIdentity())
+	fake := newDaemonFakeModelFixture(t, basePolicy.ReviewPolicyIdentity())
 	inventoryBytes, err := os.ReadFile(fake.inventoryPath)
 	if err != nil {
 		t.Fatal(err)
@@ -48,7 +48,7 @@ func localModelWorkerFixture(t *testing.T) ([]string, func(string) string, *daem
 			route["output_micro_usd_per_million_tokens"] = float64(0)
 		}
 	}
-	inventoryBytes = daemonBudgetedModelJSON(t, inventoryWire)
+	inventoryBytes = daemonFakeModelJSON(t, inventoryWire)
 	if err := os.WriteFile(fake.inventoryPath, inventoryBytes, 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func localModelWorkerFixture(t *testing.T) ([]string, func(string) string, *daem
 	policyWire["verification_route_record_identity"] = records["daemon-adapter-b"]
 	policyWire["pinned_route_record_identity"] = records["daemon-adapter-a"]
 	policyWire["preferred_route_record_identities"] = []string{records["daemon-adapter-b"]}
-	policyBytes = daemonBudgetedModelJSON(t, policyWire)
+	policyBytes = daemonFakeModelJSON(t, policyWire)
 	if err := os.WriteFile(fake.policyPath, policyBytes, 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -92,10 +92,10 @@ func localModelWorkerFixture(t *testing.T) ([]string, func(string) string, *daem
 	}
 	getenv := func(key string) string {
 		switch key {
-		case daemonBudgetedModelGenerationKeyEnv:
-			return daemonBudgetedModelGenerationKey
-		case daemonBudgetedModelVerificationKeyEnv:
-			return daemonBudgetedModelVerificationKey
+		case daemonFakeModelGenerationKeyEnv:
+			return daemonFakeModelGenerationKey
+		case daemonFakeModelVerificationKeyEnv:
+			return daemonFakeModelVerificationKey
 		default:
 			return originalEnv(key)
 		}
@@ -132,7 +132,7 @@ func TestDaemonLocalModelWorkersRejectSingleRouteBeforeDispatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	wire["routes"] = wire["routes"].([]any)[:1]
-	if err := os.WriteFile(fake.inventoryPath, daemonBudgetedModelJSON(t, wire), 0600); err != nil {
+	if err := os.WriteFile(fake.inventoryPath, daemonFakeModelJSON(t, wire), 0600); err != nil {
 		t.Fatal(err)
 	}
 	args = append(args, "--local-model-workers")
@@ -637,7 +637,7 @@ func TestDaemonLocalModelWorkersVerificationOutcomes(t *testing.T) {
 			if err != nil || progress.Progress.Verification.Verified == nil || *progress.Progress.Verification.Verified != 0 {
 				t.Fatalf("verified zero missing: %v", err)
 			}
-			for _, endpoint := range []*daemonBudgetedModelEndpoint{fake.generation, fake.verification} {
+			for _, endpoint := range []*daemonFakeModelEndpoint{fake.generation, fake.verification} {
 				if calls, _, _, failures := endpoint.snapshot(); calls != 1 || len(failures) != 0 {
 					t.Fatalf("dispatch calls=%d failures=%v", calls, failures)
 				}
@@ -690,7 +690,7 @@ func TestDaemonLocalModelWorkersVerificationOutcomes(t *testing.T) {
 			if err != nil || !bytes.Equal(beforeProgress, afterProgress) {
 				t.Fatalf("verdict progress changed after restart: %v", err)
 			}
-			for _, endpoint := range []*daemonBudgetedModelEndpoint{fake.generation, fake.verification} {
+			for _, endpoint := range []*daemonFakeModelEndpoint{fake.generation, fake.verification} {
 				if calls, _, _, failures := endpoint.snapshot(); calls != 1 || len(failures) != 0 {
 					t.Fatalf("verdict restart redispatched: calls=%d failures=%v", calls, failures)
 				}
@@ -823,7 +823,7 @@ func testDaemonLocalModelWorkersCanceledRestart(t *testing.T, mode string) {
 	if err != nil || !bytes.Equal(before, encoded) {
 		t.Fatalf("canceled result changed after restart: %v", err)
 	}
-	for _, endpoint := range []*daemonBudgetedModelEndpoint{fake.generation, fake.verification} {
+	for _, endpoint := range []*daemonFakeModelEndpoint{fake.generation, fake.verification} {
 		if calls, _, _, failures := endpoint.snapshot(); calls != 0 || len(failures) != 0 {
 			t.Fatalf("canceled run dispatched: calls=%d failures=%v", calls, failures)
 		}
@@ -869,7 +869,7 @@ func testDaemonLocalModelWorkersCanceledRestart(t *testing.T, mode string) {
 			t.Fatalf("mixed canceled/completed restart changed result: %v", err)
 		}
 	}
-	for _, endpoint := range []*daemonBudgetedModelEndpoint{fake.generation, fake.verification} {
+	for _, endpoint := range []*daemonFakeModelEndpoint{fake.generation, fake.verification} {
 		if calls, _, _, failures := endpoint.snapshot(); calls != 1 || len(failures) != 0 {
 			t.Fatalf("later-run dispatch calls=%d failures=%v", calls, failures)
 		}
@@ -1028,7 +1028,7 @@ func TestDaemonLocalModelWorkersOfflineBackupPreservesOwnerBoundary(t *testing.T
 			if err != nil || after.Identity() != before.Identity() {
 				t.Fatalf("restored result changed: %v", err)
 			}
-			for _, endpoint := range []*daemonBudgetedModelEndpoint{fake.generation, fake.verification} {
+			for _, endpoint := range []*daemonFakeModelEndpoint{fake.generation, fake.verification} {
 				if calls, _, _, failures := endpoint.snapshot(); calls != 1 || len(failures) != 0 {
 					t.Fatalf("restore dispatched: calls=%d failures=%v", calls, failures)
 				}
@@ -1050,7 +1050,7 @@ func TestDaemonLocalModelWorkersExpiredPacketLaterRunAndRestart(t *testing.T) {
 func testDaemonLocalModelWorkersExpiredPacketRestart(t *testing.T, mode string) {
 	args, getenv, fake, repository, base, head, policy, inventory := localModelWorkerFixture(t)
 	args = append(args, "--local-model-workers")
-	clock := &daemonBudgetedHandlerClock{at: time.Now().UTC().Truncate(time.Millisecond)}
+	clock := &daemonFakeHandlerClock{at: time.Now().UTC().Truncate(time.Millisecond)}
 	var d *daemon
 	var expiryErr error
 	sanitizerCalled := false
@@ -1109,7 +1109,7 @@ func testDaemonLocalModelWorkersExpiredPacketRestart(t *testing.T, mode string) 
 	if _, err := os.Lstat(marker); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("boot fixture has unresolved marker: %v", err)
 	}
-	for _, endpoint := range []*daemonBudgetedModelEndpoint{fake.generation, fake.verification} {
+	for _, endpoint := range []*daemonFakeModelEndpoint{fake.generation, fake.verification} {
 		if calls, _, _, failures := endpoint.snapshot(); calls != 0 || len(failures) != 0 {
 			t.Fatalf("expired packet dispatched: calls=%d failures=%v", calls, failures)
 		}
@@ -1233,7 +1233,7 @@ func testDaemonLocalModelWorkersExpiredPacketRestart(t *testing.T, mode string) 
 	if _, err := d.artifactStore.Get(context.Background(), scope, packetIdentity, clock.Now()); err != nil {
 		t.Fatalf("expired packet evidence lost: %v", err)
 	}
-	for _, endpoint := range []*daemonBudgetedModelEndpoint{fake.generation, fake.verification} {
+	for _, endpoint := range []*daemonFakeModelEndpoint{fake.generation, fake.verification} {
 		if calls, _, _, failures := endpoint.snapshot(); calls != 1 || len(failures) != 0 {
 			t.Fatalf("mixed restart calls=%d failures=%v", calls, failures)
 		}

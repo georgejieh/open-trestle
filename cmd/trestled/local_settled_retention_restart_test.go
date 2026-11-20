@@ -41,7 +41,7 @@ func TestDaemonLocalModelWorkersSettledRunsStartAfterRetention(t *testing.T) {
 				fake.generation.rateLimits, fake.generation.generationOutcome = 2, "malformed"
 			}
 			args = append(args, "--local-model-workers")
-			clock := &daemonBudgetedHandlerClock{at: time.Now().UTC().Truncate(time.Millisecond)}
+			clock := &daemonFakeHandlerClock{at: time.Now().UTC().Truncate(time.Millisecond)}
 			statePath := daemonTestFlagValue(t, args, "--state-dir")
 			d, api, server := startContextRefusalDaemon(t, args, getenv, clock)
 			scope, err := audit.NewReviewScope("tenant-a", "repo-a", "run-"+mode)
@@ -148,7 +148,7 @@ func TestDaemonLocalModelWorkersSettledRunsAfterRetentionRefusals(t *testing.T) 
 				fake.generation.generationOutcome = "malformed"
 			}
 			args = append(args, "--local-model-workers")
-			clock := &daemonBudgetedHandlerClock{at: time.Now().UTC().Truncate(time.Millisecond)}
+			clock := &daemonFakeHandlerClock{at: time.Now().UTC().Truncate(time.Millisecond)}
 			statePath := daemonTestFlagValue(t, args, "--state-dir")
 			d, api, server := startContextRefusalDaemon(t, args, getenv, clock)
 			scope := runLocalFullReviewOnSupervisors(t, d, api, "run-"+mode, repository, base, head, policy, inventory, clock.Now())
@@ -206,7 +206,7 @@ func TestDaemonLocalModelWorkersSettledRunsAfterRetentionRefusals(t *testing.T) 
 func TestDaemonLocalModelWorkersProjectAfterRetentionKeepsServing(t *testing.T) {
 	args, getenv, fake, repository, base, head, policy, inventory := localModelWorkerFixture(t)
 	args = append(args, "--local-model-workers")
-	clock := &daemonBudgetedHandlerClock{at: time.Now().UTC().Truncate(time.Millisecond)}
+	clock := &daemonFakeHandlerClock{at: time.Now().UTC().Truncate(time.Millisecond)}
 	statePath := daemonTestFlagValue(t, args, "--state-dir")
 	d, api, server := startContextRefusalDaemon(t, args, getenv, clock)
 	scope := runLocalFullReviewOnSupervisors(t, d, api, "run-projected-late", repository, base, head, policy, inventory, clock.Now())

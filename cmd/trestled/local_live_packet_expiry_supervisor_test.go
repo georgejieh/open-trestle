@@ -76,7 +76,7 @@ func (s scopedLivePacketExpirySanitizer) SanitizeGeneration(ctx context.Context,
 func TestDaemonLocalModelWorkersLivePacketExpiryContinues(t *testing.T) {
 	args, getenv, fake, repository, base, head, policy, inventory := localModelWorkerFixture(t)
 	args = append(args, "--local-model-workers")
-	clock := &daemonBudgetedHandlerClock{at: time.Now().UTC().Truncate(time.Millisecond)}
+	clock := &daemonFakeHandlerClock{at: time.Now().UTC().Truncate(time.Millisecond)}
 	scope, err := audit.NewReviewScope("tenant-a", "repo-a", "run-live-packet")
 	if err != nil {
 		t.Fatal(err)
@@ -242,7 +242,7 @@ func TestDaemonLocalModelWorkersLivePacketExpiryContinues(t *testing.T) {
 			t.Fatal("live expiry gained route evidence")
 		}
 	}
-	for _, endpoint := range []*daemonBudgetedModelEndpoint{fake.generation, fake.verification} {
+	for _, endpoint := range []*daemonFakeModelEndpoint{fake.generation, fake.verification} {
 		if calls, _, _, failures := endpoint.snapshot(); calls != 0 || len(failures) != 0 {
 			t.Fatalf("live expiry dispatched: calls=%d failures=%v", calls, failures)
 		}
@@ -268,7 +268,7 @@ func TestDaemonLocalModelWorkersLivePacketExpiryContinues(t *testing.T) {
 	if err != nil || later.Outcome() != diagnostics.FinalOutcomeCompleted {
 		t.Fatalf("later diagnostic=%s err=%v", later.Outcome(), err)
 	}
-	for _, endpoint := range []*daemonBudgetedModelEndpoint{fake.generation, fake.verification} {
+	for _, endpoint := range []*daemonFakeModelEndpoint{fake.generation, fake.verification} {
 		if calls, _, _, failures := endpoint.snapshot(); calls != 1 || len(failures) != 0 {
 			t.Fatalf("later calls=%d failures=%v", calls, failures)
 		}

@@ -132,7 +132,7 @@ func testPackagedLocalFullReview(t *testing.T, modelWorkers, development bool) {
 		t.Fatal("not two commits")
 	}
 	args, getenv, repository, _, _, _, _ := localFullDaemonFixture(t)
-	var model *daemonBudgetedModelFixture
+	var model *daemonFakeModelFixture
 	var barrier *packagedVerifierBarrier
 	if modelWorkers {
 		args, getenv, model, repository, _, _, _, _ = localModelWorkerFixture(t)
@@ -352,7 +352,7 @@ func testPackagedLocalFullReview(t *testing.T, modelWorkers, development bool) {
 	proc := exec.Command(daemon, args...)
 	isolatedEnv := []string{"PATH=/usr/bin:/bin", "HOME=" + root, "OPEN_TRESTLE_API_TOKEN=" + getenv("OPEN_TRESTLE_API_TOKEN"), "OPEN_TRESTLE_PROVIDER_FIXTURE_A=fixture-only-a", "OPEN_TRESTLE_PROVIDER_FIXTURE_B=fixture-only-b", "NO_PROXY=*"}
 	if modelWorkers {
-		isolatedEnv = append(isolatedEnv, daemonBudgetedModelGenerationKeyEnv+"="+daemonBudgetedModelGenerationKey, daemonBudgetedModelVerificationKeyEnv+"="+daemonBudgetedModelVerificationKey)
+		isolatedEnv = append(isolatedEnv, daemonFakeModelGenerationKeyEnv+"="+daemonFakeModelGenerationKey, daemonFakeModelVerificationKeyEnv+"="+daemonFakeModelVerificationKey)
 	}
 	proc.Env = isolatedEnv
 	logPath := filepath.Join(build, "daemon.log")

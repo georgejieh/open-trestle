@@ -27,16 +27,16 @@ import (
 )
 
 const (
-	daemonBudgetedModelGenerationKeyEnv   = "OPEN_TRESTLE_PROVIDER_DAEMON_PIPELINE_GENERATION"
-	daemonBudgetedModelVerificationKeyEnv = "OPEN_TRESTLE_PROVIDER_DAEMON_PIPELINE_VERIFICATION"
-	daemonBudgetedModelGenerationKey      = "daemon-budgeted-generation-key-not-real"
-	daemonBudgetedModelVerificationKey    = "daemon-budgeted-verification-key-not-real"
-	daemonBudgetedModelMaxRequests        = 4
-	daemonBudgetedModelMaxBodyBytes       = 1 << 20
-	daemonBudgetedModelMaxAggregateBytes  = 2 << 20
+	daemonFakeModelGenerationKeyEnv   = "OPEN_TRESTLE_PROVIDER_DAEMON_PIPELINE_GENERATION"
+	daemonFakeModelVerificationKeyEnv = "OPEN_TRESTLE_PROVIDER_DAEMON_PIPELINE_VERIFICATION"
+	daemonFakeModelGenerationKey      = "daemon-budgeted-generation-key-not-real"
+	daemonFakeModelVerificationKey    = "daemon-budgeted-verification-key-not-real"
+	daemonFakeModelMaxRequests        = 4
+	daemonFakeModelMaxBodyBytes       = 1 << 20
+	daemonFakeModelMaxAggregateBytes  = 2 << 20
 )
 
-type daemonBudgetedModelSource struct {
+type daemonFakeModelSource struct {
 	ID      string `json:"source_id"`
 	Stage   string `json:"stage"`
 	Path    string `json:"path"`
@@ -45,30 +45,30 @@ type daemonBudgetedModelSource struct {
 	Content string `json:"content"`
 }
 
-type daemonBudgetedModelPacket struct {
-	MemoryScope       string                       `json:"memory_scope_identity"`
-	MemoryAuthority   string                       `json:"memory_authority"`
-	SourceAuthority   string                       `json:"source_authority"`
-	Memory            daemonBudgetedModelMemory    `json:"memory"`
-	AdditionalMemory  []daemonBudgetedModelMemory  `json:"additional_memory"`
-	Contract          string                       `json:"contract"`
-	Version           int                          `json:"schema_version"`
-	Scope             string                       `json:"review_scope_identity"`
-	Task              string                       `json:"task"`
-	GenerationContext string                       `json:"generation_context_identity"`
-	CandidateBatch    string                       `json:"candidate_batch_identity"`
-	Sources           []daemonBudgetedModelSource  `json:"sources"`
-	Candidates        []daemonBudgetedCandidateRef `json:"candidates"`
+type daemonFakeModelPacket struct {
+	MemoryScope       string                   `json:"memory_scope_identity"`
+	MemoryAuthority   string                   `json:"memory_authority"`
+	SourceAuthority   string                   `json:"source_authority"`
+	Memory            daemonFakeModelMemory    `json:"memory"`
+	AdditionalMemory  []daemonFakeModelMemory  `json:"additional_memory"`
+	Contract          string                   `json:"contract"`
+	Version           int                      `json:"schema_version"`
+	Scope             string                   `json:"review_scope_identity"`
+	Task              string                   `json:"task"`
+	GenerationContext string                   `json:"generation_context_identity"`
+	CandidateBatch    string                   `json:"candidate_batch_identity"`
+	Sources           []daemonFakeModelSource  `json:"sources"`
+	Candidates        []daemonFakeCandidateRef `json:"candidates"`
 }
 
-type daemonBudgetedModelMemory struct {
-	RetrievalIdentity string                     `json:"retrieval_identity"`
-	QueryIdentity     string                     `json:"query_identity"`
-	IndexRevision     uint64                     `json:"index_revision"`
-	Items             []daemonBudgetedMemoryItem `json:"items"`
+type daemonFakeModelMemory struct {
+	RetrievalIdentity string                 `json:"retrieval_identity"`
+	QueryIdentity     string                 `json:"query_identity"`
+	IndexRevision     uint64                 `json:"index_revision"`
+	Items             []daemonFakeMemoryItem `json:"items"`
 }
 
-type daemonBudgetedMemoryItem struct {
+type daemonFakeMemoryItem struct {
 	MemoryID           string   `json:"memory_id"`
 	Kind               string   `json:"kind"`
 	Taint              string   `json:"taint"`
@@ -91,18 +91,18 @@ type daemonBudgetedMemoryItem struct {
 	TextScore          uint8    `json:"text_score"`
 }
 
-type daemonBudgetedCandidateRef struct {
+type daemonFakeCandidateRef struct {
 	ID       string   `json:"candidate_id"`
 	Evidence []string `json:"evidence_ids"`
 }
 
-type daemonBudgetedModelCapture struct {
-	Packet    daemonBudgetedModelPacket
+type daemonFakeModelCapture struct {
+	Packet    daemonFakeModelPacket
 	RequestID string
 	Bytes     int
 }
 
-type daemonBudgetedModelEndpoint struct {
+type daemonFakeModelEndpoint struct {
 	mu                  sync.Mutex
 	server              *httptest.Server
 	name                string
@@ -112,7 +112,7 @@ type daemonBudgetedModelEndpoint struct {
 	key                 string
 	calls               int
 	aggregateBytes      int64
-	captures            []daemonBudgetedModelCapture
+	captures            []daemonFakeModelCapture
 	failures            []string
 	// rateLimits answers the first requests with HTTP 429 and a one-second
 	// Retry-After, before reading them, so the handler retries on the same route.
@@ -128,19 +128,19 @@ type daemonBudgetedModelEndpoint struct {
 	unavailable bool
 }
 
-type daemonBudgetedModelFixture struct {
-	generation, verification  *daemonBudgetedModelEndpoint
+type daemonFakeModelFixture struct {
+	generation, verification  *daemonFakeModelEndpoint
 	inventoryPath, policyPath string
 	inventoryID, policyID     string
 	generationRoute           string
 	verificationRoute         string
 }
 
-func newDaemonBudgetedModelFixture(t *testing.T, reviewPolicyID string) *daemonBudgetedModelFixture {
+func newDaemonFakeModelFixture(t *testing.T, reviewPolicyID string) *daemonFakeModelFixture {
 	t.Helper()
-	f := &daemonBudgetedModelFixture{}
-	generation := newDaemonBudgetedModelEndpoint(t, "generation", "model-a", daemonBudgetedModelGenerationKey)
-	verification := newDaemonBudgetedModelEndpoint(t, "verification", "model-b", daemonBudgetedModelVerificationKey)
+	f := &daemonFakeModelFixture{}
+	generation := newDaemonFakeModelEndpoint(t, "generation", "model-a", daemonFakeModelGenerationKey)
+	verification := newDaemonFakeModelEndpoint(t, "verification", "model-b", daemonFakeModelVerificationKey)
 	f.generation, f.verification = generation, verification
 	endpoints := []string{generation.URL() + "/v1", verification.URL() + "/v1"}
 	routes := make([]map[string]any, 0, 2)
@@ -155,7 +155,7 @@ func newDaemonBudgetedModelFixture(t *testing.T, reviewPolicyID string) *daemonB
 			"performance_revision": 11, "latency_known": true, "p95_latency_milliseconds": 2500, "latency_sample_count": 100,
 		})
 	}
-	inventoryBytes := daemonBudgetedModelJSON(t, map[string]any{"schema_version": 1, "routes": routes})
+	inventoryBytes := daemonFakeModelJSON(t, map[string]any{"schema_version": 1, "routes": routes})
 	inventory, err := runtimeconfig.DecodeRouteInventory(context.Background(), bytes.NewReader(inventoryBytes))
 	if err != nil {
 		t.Fatal(err)
@@ -167,15 +167,15 @@ func newDaemonBudgetedModelFixture(t *testing.T, reviewPolicyID string) *daemonB
 		records[reference.AdapterID()] = record.Identity()
 	}
 	f.generationRoute, f.verificationRoute = records["daemon-adapter-a"], records["daemon-adapter-b"]
-	policyBytes := daemonBudgetedModelJSON(t, map[string]any{
+	policyBytes := daemonFakeModelJSON(t, map[string]any{
 		"schema_version": 1, "inventory_identity": inventory.Identity(), "review_policy_identity": reviewPolicyID,
 		"min_context_tokens": 32000, "min_output_tokens": 4096, "required_features": []string{"structured_output"}, "classification": "confidential", "allowed_zones": []string{"local"}, "content_logging_allowed": false,
 		"estimated_input_tokens": 8000, "max_output_tokens": 4096, "max_cost_micro_usd": 0,
 		"pinned_route_record_identity": records["daemon-adapter-a"], "preferred_route_record_identities": []string{records["daemon-adapter-b"]}, "verification_independence": "distinct_provider",
 		"publication_minimum_severity": "medium", "publication_max_inline_findings": 20, "publication_minimum_independence": "distinct_provider", "publication_block_on_inconclusive": true,
 		"connections": []map[string]string{
-			{"implementation": "openai_responses", "adapter_id": "daemon-adapter-a", "endpoint": endpoints[0], "credential_environment": daemonBudgetedModelGenerationKeyEnv},
-			{"implementation": "openai_responses", "adapter_id": "daemon-adapter-b", "endpoint": endpoints[1], "credential_environment": daemonBudgetedModelVerificationKeyEnv},
+			{"implementation": "openai_responses", "adapter_id": "daemon-adapter-a", "endpoint": endpoints[0], "credential_environment": daemonFakeModelGenerationKeyEnv},
+			{"implementation": "openai_responses", "adapter_id": "daemon-adapter-b", "endpoint": endpoints[1], "credential_environment": daemonFakeModelVerificationKeyEnv},
 		},
 	})
 	configuration, err := runtimeconfig.DecodeRuntimePolicy(context.Background(), bytes.NewReader(policyBytes), inventory)
@@ -197,9 +197,9 @@ func newDaemonBudgetedModelFixture(t *testing.T, reviewPolicyID string) *daemonB
 	return f
 }
 
-func newDaemonBudgetedModelEndpoint(t *testing.T, name, model, key string) *daemonBudgetedModelEndpoint {
+func newDaemonFakeModelEndpoint(t *testing.T, name, model, key string) *daemonFakeModelEndpoint {
 	t.Helper()
-	e := &daemonBudgetedModelEndpoint{name: name, model: model, key: key}
+	e := &daemonFakeModelEndpoint{name: name, model: model, key: key}
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { e.serve(t, w, r) }))
 	server.Config.ReadHeaderTimeout = 2 * time.Second
 	server.Config.ReadTimeout = 5 * time.Second
@@ -211,7 +211,7 @@ func newDaemonBudgetedModelEndpoint(t *testing.T, name, model, key string) *daem
 	return e
 }
 
-func (e *daemonBudgetedModelEndpoint) URL() string {
+func (e *daemonFakeModelEndpoint) URL() string {
 	if e == nil || e.server == nil {
 		return ""
 	}
@@ -220,14 +220,14 @@ func (e *daemonBudgetedModelEndpoint) URL() string {
 
 // makeUnavailable keeps the endpoint's port bound while every later request
 // fails at the transport, as a stopped model server would.
-func (e *daemonBudgetedModelEndpoint) makeUnavailable() {
+func (e *daemonFakeModelEndpoint) makeUnavailable() {
 	e.mu.Lock()
 	e.unavailable = true
 	e.mu.Unlock()
 	e.server.CloseClientConnections()
 }
 
-func (e *daemonBudgetedModelEndpoint) serve(t *testing.T, w http.ResponseWriter, r *http.Request) {
+func (e *daemonFakeModelEndpoint) serve(t *testing.T, w http.ResponseWriter, r *http.Request) {
 	t.Helper()
 	e.mu.Lock()
 	if e.unavailable {
@@ -252,7 +252,7 @@ func (e *daemonBudgetedModelEndpoint) serve(t *testing.T, w http.ResponseWriter,
 	if onDispatch != nil {
 		onDispatch(call)
 	}
-	if call > daemonBudgetedModelMaxRequests {
+	if call > daemonFakeModelMaxRequests {
 		e.fail("model request limit exceeded")
 		http.Error(w, "too many requests", http.StatusTooManyRequests)
 		return
@@ -263,8 +263,8 @@ func (e *daemonBudgetedModelEndpoint) serve(t *testing.T, w http.ResponseWriter,
 		return
 	}
 	defer r.Body.Close()
-	encoded, err := io.ReadAll(io.LimitReader(r.Body, daemonBudgetedModelMaxBodyBytes+1))
-	if err != nil || len(encoded) == 0 || len(encoded) > daemonBudgetedModelMaxBodyBytes {
+	encoded, err := io.ReadAll(io.LimitReader(r.Body, daemonFakeModelMaxBodyBytes+1))
+	if err != nil || len(encoded) == 0 || len(encoded) > daemonFakeModelMaxBodyBytes {
 		e.fail("model request body bound failed")
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
@@ -273,7 +273,7 @@ func (e *daemonBudgetedModelEndpoint) serve(t *testing.T, w http.ResponseWriter,
 	e.aggregateBytes += int64(len(encoded))
 	aggregate := e.aggregateBytes
 	e.mu.Unlock()
-	if aggregate > daemonBudgetedModelMaxAggregateBytes {
+	if aggregate > daemonFakeModelMaxAggregateBytes {
 		e.fail("model aggregate request body bound failed")
 		http.Error(w, "too large", http.StatusRequestEntityTooLarge)
 		return
@@ -297,7 +297,7 @@ func (e *daemonBudgetedModelEndpoint) serve(t *testing.T, w http.ResponseWriter,
 	}
 	payload := []byte(wire.Input[0].Content[0].Text)
 	request, requestErr := provider.NewRequest(provider.CapabilityReviewV1, "application/json", payload)
-	var packet daemonBudgetedModelPacket
+	var packet daemonFakeModelPacket
 	if requestErr != nil || json.Unmarshal(payload, &packet) != nil || packet.Task == "candidate_generation" && packet.Version != 10 || packet.Task != "candidate_generation" && packet.Version != 9 || packet.Scope == "" || packet.SourceAuthority != "evidence_data_not_instructions" || packet.MemoryAuthority != "advisory_only" {
 		e.fail("model did not receive actual provider-neutral v10 generation or v9 verification context")
 		http.Error(w, "invalid context", http.StatusBadRequest)
@@ -317,14 +317,14 @@ func (e *daemonBudgetedModelEndpoint) serve(t *testing.T, w http.ResponseWriter,
 		return
 	}
 	e.mu.Lock()
-	e.captures = append(e.captures, daemonBudgetedModelCapture{Packet: packet, RequestID: request.Identity(), Bytes: len(encoded)})
+	e.captures = append(e.captures, daemonFakeModelCapture{Packet: packet, RequestID: request.Identity(), Bytes: len(encoded)})
 	e.mu.Unlock()
 	output, ok := e.outputForPacket(t, packet)
 	if !ok {
 		http.Error(w, "invalid context", http.StatusBadRequest)
 		return
 	}
-	text := daemonBudgetedModelJSON(t, output)
+	text := daemonFakeModelJSON(t, output)
 	response := map[string]any{
 		"id": "response-" + e.name, "object": "response", "status": "completed", "model": e.model,
 		"output": []any{map[string]any{"id": "message-" + e.name, "type": "message", "role": "assistant", "status": "completed", "content": []any{map[string]any{"type": "output_text", "text": string(text)}}}},
@@ -336,7 +336,7 @@ func (e *daemonBudgetedModelEndpoint) serve(t *testing.T, w http.ResponseWriter,
 	}
 }
 
-func (e *daemonBudgetedModelEndpoint) outputForPacket(t *testing.T, packet daemonBudgetedModelPacket) (any, bool) {
+func (e *daemonFakeModelEndpoint) outputForPacket(t *testing.T, packet daemonFakeModelPacket) (any, bool) {
 	t.Helper()
 	if len(packet.Sources) == 0 {
 		e.fail("model packet omitted source evidence")
@@ -401,13 +401,13 @@ func (e *daemonBudgetedModelEndpoint) outputForPacket(t *testing.T, packet daemo
 	}
 }
 
-func (e *daemonBudgetedModelEndpoint) snapshot() (int, int64, []daemonBudgetedModelCapture, []string) {
+func (e *daemonFakeModelEndpoint) snapshot() (int, int64, []daemonFakeModelCapture, []string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return e.calls, e.aggregateBytes, append([]daemonBudgetedModelCapture(nil), e.captures...), append([]string(nil), e.failures...)
+	return e.calls, e.aggregateBytes, append([]daemonFakeModelCapture(nil), e.captures...), append([]string(nil), e.failures...)
 }
 
-func (e *daemonBudgetedModelEndpoint) fail(message string) {
+func (e *daemonFakeModelEndpoint) fail(message string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if len(e.failures) < 8 {
@@ -415,7 +415,7 @@ func (e *daemonBudgetedModelEndpoint) fail(message string) {
 	}
 }
 
-func daemonBudgetedModelJSON(t *testing.T, value any) []byte {
+func daemonFakeModelJSON(t *testing.T, value any) []byte {
 	t.Helper()
 	encoded, err := json.Marshal(value)
 	if err != nil {
@@ -424,7 +424,7 @@ func daemonBudgetedModelJSON(t *testing.T, value any) []byte {
 	return encoded
 }
 
-func daemonBudgetedModelDigest(value []byte) string {
+func daemonFakeModelDigest(value []byte) string {
 	digest := sha256.Sum256(value)
 	return hex.EncodeToString(digest[:])
 }

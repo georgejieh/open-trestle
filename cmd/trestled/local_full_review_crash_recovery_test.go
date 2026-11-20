@@ -118,7 +118,7 @@ func TestDaemonRecoversPreparedContextAbstentionBeforeExpiredLeaseSettlement(t *
 					t.Fatal(err)
 				}
 			}
-			futureClock := daemonBudgetedRawClock{at: time.Now().UTC().Add(35 * time.Second).Truncate(time.Millisecond)}
+			futureClock := daemonFakeRawClock{at: time.Now().UTC().Add(35 * time.Second).Truncate(time.Millisecond)}
 			d, err = buildDaemonWithDependencies(context.Background(), args, getenv, &bytes.Buffer{}, daemonDependencies{clock: futureClock, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()})
 			if err != nil {
 				t.Fatalf("recovery startup after lease expiry: %v", err)
