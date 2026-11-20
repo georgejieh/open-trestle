@@ -218,7 +218,7 @@ func TestLocalInferenceCheckerNeverBuildsBeforeExactLocalPolicyReceipt(t *testin
 	}
 	remoteInv, remotePol := setupRuntimeDocuments(t, "private_remote", []string{"https://one.example/v1", "https://two.example/v1"}, 100000, false)
 	remoteInventory, remotePolicy := parseSetupRuntimeDocuments(t, remoteInv, remotePol)
-	remotePlan, _ := NewPlan(ProfileControlledHybrid, "tenant-a", "repo-a", "owner", setupTime(1))
+	remotePlan, _ := NewPlan(ProfileLocalSingleNode, "tenant-a", "repo-a", "owner", setupTime(1))
 	remoteChecker, _ := NewRuntimePolicyChecker(remoteInventory, remotePolicy, setupRuntimeApproval(t, remotePlan, remoteInventory, remotePolicy))
 	remotePlan = policyCheckedPlan(t, remotePlan, remoteChecker)
 	checker, _ = NewLocalInferenceChecker(remoteChecker, factory)

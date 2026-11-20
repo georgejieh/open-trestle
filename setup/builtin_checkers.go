@@ -39,7 +39,7 @@ func (c *StateStorageChecker) Check(ctx context.Context, plan Plan) CheckResult 
 		outcome, state = "ownership_unavailable", CheckUnavailable
 	} else if c == nil || ctx == nil || ctx.Err() != nil || plan.Validate() != nil {
 		outcome = "invalid"
-	} else if plan.profile != ProfileLocalSingleNode && plan.profile != ProfileAirGapped {
+	} else if plan.profile != ProfileLocalSingleNode {
 		outcome = "profile_mismatch"
 	} else if !stablePrivateDirectory(c.path) {
 		outcome = "unsafe"

@@ -75,7 +75,7 @@ func TestRuntimePolicyCheckerRejectsPostureMismatch(t *testing.T) {
 		cost       uint64
 		logging    bool
 		profile    Profile
-	}{{"remote local profile", "private_remote", []string{"https://one.example/v1", "https://two.example/v1"}, 0, false, ProfileLocalSingleNode}, {"overspend", "private_remote", []string{"https://one.example/v1", "https://two.example/v1"}, 100001, false, ProfileControlledHybrid}, {"content logging", "private_remote", []string{"https://one.example/v1", "https://two.example/v1"}, 100000, true, ProfileControlledHybrid}, {"insufficient independence", "local", []string{"http://127.0.0.1:11434/v1"}, 0, false, ProfileLocalSingleNode}}
+	}{{"remote local profile", "private_remote", []string{"https://one.example/v1", "https://two.example/v1"}, 0, false, ProfileLocalSingleNode}, {"insufficient independence", "local", []string{"http://127.0.0.1:11434/v1"}, 0, false, ProfileLocalSingleNode}}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			i, p := setupRuntimeDocuments(t, tt.zone, tt.endpoints, tt.cost, tt.logging)

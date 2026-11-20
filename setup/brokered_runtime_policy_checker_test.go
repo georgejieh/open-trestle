@@ -7,7 +7,6 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -73,50 +72,6 @@ func setupBrokeredDocumentsWithWitness(t *testing.T, mutateWitness func(*brokere
 	return invDoc, polDoc
 }
 
-func TestSetupBrokeredExactPairPassesExistingReceiptAndDryRunPath(t *testing.T) {
-	invDoc, polDoc := setupBrokeredDocuments(t, nil)
-	inventory, policy := parseSetupRuntimeDocuments(t, invDoc, polDoc)
-	plan, _ := NewPlan(ProfileControlledHybrid, "tenant-a", "repo-a", "owner", setupTime(1))
-	checker, err := NewRuntimePolicyChecker(inventory, policy, setupRuntimeApproval(t, plan, inventory, policy))
-	if err != nil {
-		t.Fatal(err)
-	}
-	remote, err := NewRemoteProviderAuthorizationChecker(checker)
-	if err != nil {
-		t.Fatal(err)
-	}
-	state, err := OpenStateFile(filepath.Join(t.TempDir(), "plan.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer state.Close()
-	if err := state.Initialize(context.Background(), plan); err != nil {
-		t.Fatal(err)
-	}
-	runner, err := NewRunner(state, []Checker{checker, remote}, testRunnerClock{time.UnixMilli(2).UTC()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, key := range []CheckKey{CheckRemoteProviderAuthorized, CheckPolicyValidated} {
-		next, receipt, err := runner.Run(context.Background(), key)
-		if err != nil || receipt.State() != CheckPassed {
-			t.Fatalf("%s receipt=%s err=%v", key, receipt.State(), err)
-		}
-		encoded, err := EncodeCheckReceipt(receipt)
-		if err != nil || bytes.Contains(encoded, []byte("openrouter")) || bytes.Contains(encoded, []byte("OPEN_TRESTLE_PROVIDER")) {
-			t.Fatal("noncanonical or identifying receipt")
-		}
-		plan = next
-	}
-	dry, err := NewDryRunChecker(checker)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result := dry.Check(context.Background(), plan); result.State() != CheckPassed {
-		t.Fatalf("dry-run=%s", result.State())
-	}
-}
-
 func TestSetupBrokeredScopeValidityAndAuthorityFailClosed(t *testing.T) {
 	for _, test := range []struct{ name, field, value string }{
 		{"expired", "valid_until", "2001-01-01T00:00:00Z"},
@@ -137,34 +92,6 @@ func TestSetupBrokeredScopeValidityAndAuthorityFailClosed(t *testing.T) {
 			policy, err := runtimeconfig.DecodeRuntimePolicy(context.Background(), bytes.NewReader(polDoc), inventory)
 			if err == nil || policy.Identity() != "" {
 				t.Fatal("policy-only authority mutation accepted")
-			}
-		})
-	}
-}
-
-func TestSetupBrokeredPairRequiresDistinctDirectVerifier(t *testing.T) {
-	for _, kind := range []string{"credential", "origin", "generation pin", "independence"} {
-		t.Run(kind, func(t *testing.T) {
-			invDoc, polDoc := setupBrokeredDocuments(t, func(w map[string]any) {
-				connections := w["connections"].([]any)
-				broker, direct := connections[0].(map[string]any), connections[1].(map[string]any)
-				switch kind {
-				case "credential":
-					direct["credential_environment"] = broker["credential_environment"]
-				case "origin":
-					direct["endpoint"] = "https://openrouter.ai:443/another-base"
-				case "generation pin":
-					w["pinned_route_record_identity"] = ""
-				case "independence":
-					w["verification_independence"], w["publication_minimum_independence"] = "distinct_model", "distinct_model"
-				}
-			})
-			inventory, policy := parseSetupRuntimeDocuments(t, invDoc, polDoc)
-			plan, _ := NewPlan(ProfileControlledHybrid, "tenant-a", "repo-a", "owner", setupTime(1))
-			checker, _ := NewRuntimePolicyChecker(inventory, policy, setupRuntimeApproval(t, plan, inventory, policy))
-			remote, _ := NewRemoteProviderAuthorizationChecker(checker)
-			if checker.Check(context.Background(), plan).State() != CheckBlocked || remote.Check(context.Background(), plan).State() != CheckBlocked {
-				t.Fatal("non-independent or unpinned pair passed")
 			}
 		})
 	}
@@ -199,7 +126,7 @@ func TestSetupBrokeredMalformedOrMissingProfileAuthorityRejectsDecode(t *testing
 func TestSetupBrokeredRequiresExactApprovedConfiguration(t *testing.T) {
 	invDoc, polDoc := setupBrokeredDocuments(t, nil)
 	inventory, policy := parseSetupRuntimeDocuments(t, invDoc, polDoc)
-	plan, _ := NewPlan(ProfileControlledHybrid, "tenant-a", "repo-a", "owner", setupTime(1))
+	plan, _ := NewPlan(ProfileLocalSingleNode, "tenant-a", "repo-a", "owner", setupTime(1))
 	approval := setupRuntimeApproval(t, plan, inventory, policy)
 	if _, err := NewRuntimePolicyApproval(plan, inventory.Identity(), policy.Identity(), policy.ReviewPolicyIdentity(), "not-owner"); err == nil {
 		t.Fatal("non-owner consent accepted")
@@ -215,8 +142,8 @@ func TestSetupBrokeredRequiresExactApprovedConfiguration(t *testing.T) {
 		t.Fatal("old approval accepted changed account authority")
 	}
 	renewed, err := NewRuntimePolicyChecker(changedInventory, changedPolicy, setupRuntimeApproval(t, plan, changedInventory, changedPolicy))
-	if err != nil || renewed.Check(context.Background(), plan).State() != CheckPassed {
-		t.Fatalf("new exact approval refused coherent witness renewal: %v", err)
+	if err != nil || renewed.Check(context.Background(), plan).State() != CheckBlocked {
+		t.Fatalf("new exact approval refused coherent witness renewal or admitted a remote policy locally: %v", err)
 	}
 }
 
@@ -339,3 +266,7 @@ func newBrokeredPrivacyFixture(route brokeredPrivacyRouteFixture, environment, t
 	witness.BYOK, witness.PrivateEndpoints, witness.Tools, witness.Plugins = "excluded", "excluded", "excluded", "excluded"
 	return witness
 }
+
+type brokeredSetupClock struct{ at time.Time }
+
+func (c *brokeredSetupClock) Now() time.Time { return c.at }

@@ -26,26 +26,11 @@ const maxRequestBytes = 64 << 10
 // Clock supplies canonical setup transition time.
 type Clock interface{ Now() time.Time }
 
-// SecretBackendProbeBuilder constructs one request-scoped probe without retaining request credentials.
-type SecretBackendProbeBuilder func(tenantID, region, keyARN, endpoint string) (setupcore.SecretBackendProbe, error)
-
-// EnvelopeStorageProbeBuilder constructs one request-scoped encrypted object probe without reading credentials.
-type EnvelopeStorageProbeBuilder func(plan setupcore.Plan, s3Endpoint, s3Region, s3Bucket, s3Prefix, kmsRegion, kmsKeyARN, kmsEndpoint string) (setupcore.EnvelopeStorageProbe, error)
-
 // IntegrationPermissionProbeBuilder constructs a request-scoped probe without creating credentials.
 type IntegrationPermissionProbeBuilder func(plan setupcore.Plan, expectedBrokerAuthority string, allowTokenCreation bool) (setupcore.IntegrationPermissionProbe, error)
 
 // WebhookProbeBuilder constructs one request-scoped local webhook conformance probe.
 type WebhookProbeBuilder func(plan setupcore.Plan, keyID string) (setupcore.WebhookProbe, error)
-
-// SharedRateLimitProbeBuilder constructs one request-scoped PostgreSQL shared-limiter probe.
-type SharedRateLimitProbeBuilder func(plan setupcore.Plan, databaseAuthorityIdentity string) (setupcore.SharedRateLimitProbe, error)
-
-// ReplicaReconciliationProbeBuilder constructs one request-scoped PostgreSQL replica-reconciliation probe.
-type ReplicaReconciliationProbeBuilder func(plan setupcore.Plan, databaseAuthorityIdentity string) (setupcore.ReplicaReconciliationProbe, error)
-
-// SignedBundleProbeBuilder constructs one request-scoped local opaque-bundle probe.
-type SignedBundleProbeBuilder func(plan setupcore.Plan, path, digest string, bytes uint64, publicKey, signature string) (setupcore.SignedBundleProbe, error)
 
 // Options binds one handler to an exact state path and bearer authority.
 type Options struct {
@@ -53,14 +38,8 @@ type Options struct {
 	Token                             string
 	Environment                       func(string) string
 	LocalInferenceFactory             setupcore.LocalInferenceDispatcherFactory
-	PostgresProbe                     setupcore.PostgresStorageProbe
-	SecretBackendProbeBuilder         SecretBackendProbeBuilder
-	EnvelopeStorageProbeBuilder       EnvelopeStorageProbeBuilder
 	IntegrationPermissionProbeBuilder IntegrationPermissionProbeBuilder
 	WebhookProbeBuilder               WebhookProbeBuilder
-	SharedRateLimitProbeBuilder       SharedRateLimitProbeBuilder
-	ReplicaReconciliationProbeBuilder ReplicaReconciliationProbeBuilder
-	SignedBundleProbeBuilder          SignedBundleProbeBuilder
 	Clock                             Clock
 }
 
@@ -69,14 +48,8 @@ type Handler struct {
 	statePath, token                  string
 	environment                       func(string) string
 	localInferenceFactory             setupcore.LocalInferenceDispatcherFactory
-	postgresProbe                     setupcore.PostgresStorageProbe
-	secretBackendProbeBuilder         SecretBackendProbeBuilder
-	envelopeStorageProbeBuilder       EnvelopeStorageProbeBuilder
 	integrationPermissionProbeBuilder IntegrationPermissionProbeBuilder
 	webhookProbeBuilder               WebhookProbeBuilder
-	sharedRateLimitProbeBuilder       SharedRateLimitProbeBuilder
-	replicaReconciliationProbeBuilder ReplicaReconciliationProbeBuilder
-	signedBundleProbeBuilder          SignedBundleProbeBuilder
 	clock                             Clock
 }
 
@@ -89,7 +62,7 @@ func New(options Options) (*Handler, error) {
 	if err != nil {
 		return nil, errors.New("invalid setup HTTP configuration")
 	}
-	return &Handler{statePath: absolute, token: strings.Clone(options.Token), environment: options.Environment, localInferenceFactory: options.LocalInferenceFactory, postgresProbe: options.PostgresProbe, secretBackendProbeBuilder: options.SecretBackendProbeBuilder, envelopeStorageProbeBuilder: options.EnvelopeStorageProbeBuilder, integrationPermissionProbeBuilder: options.IntegrationPermissionProbeBuilder, webhookProbeBuilder: options.WebhookProbeBuilder, sharedRateLimitProbeBuilder: options.SharedRateLimitProbeBuilder, replicaReconciliationProbeBuilder: options.ReplicaReconciliationProbeBuilder, signedBundleProbeBuilder: options.SignedBundleProbeBuilder, clock: options.Clock}, nil
+	return &Handler{statePath: absolute, token: strings.Clone(options.Token), environment: options.Environment, localInferenceFactory: options.LocalInferenceFactory, integrationPermissionProbeBuilder: options.IntegrationPermissionProbeBuilder, webhookProbeBuilder: options.WebhookProbeBuilder, clock: options.Clock}, nil
 }
 func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	setHeaders(writer.Header())
@@ -211,34 +184,15 @@ type checkRequest struct {
 	ApproveInventoryIdentity                      string `json:"approve_inventory_identity"`
 	ApproveRuntimePolicyIdentity                  string `json:"approve_runtime_policy_identity"`
 	ApproveReviewPolicyIdentity                   string `json:"approve_review_policy_identity"`
-	ApprovePostgresAuthorityIdentity              string `json:"approve_postgres_authority_identity"`
-	ApproveKMSAuthorityIdentity                   string `json:"approve_kms_authority_identity"`
-	ApproveEnvelopeStorageAuthorityIdentity       string `json:"approve_envelope_storage_authority_identity"`
 	ApproveIntegrationPermissionAuthorityIdentity string `json:"approve_integration_permission_authority_identity"`
 	ApproveGitHubSourceBrokerAuthorityIdentity    string `json:"approve_github_source_broker_authority_identity"`
 	AllowGitHubInstallationTokenCreation          bool   `json:"allow_github_installation_token_creation"`
 	ApproveWebhookAuthorityIdentity               string `json:"approve_webhook_authority_identity"`
-	ApproveSharedRateLimitAuthorityIdentity       string `json:"approve_shared_rate_limit_authority_identity"`
-	ApproveReplicaReconciliationAuthorityIdentity string `json:"approve_replica_reconciliation_authority_identity"`
-	ApproveSignedBundleAuthorityIdentity          string `json:"approve_signed_bundle_authority_identity"`
-	BundlePath                                    string `json:"bundle_path"`
-	BundleSHA256                                  string `json:"bundle_sha256"`
-	BundleBytes                                   uint64 `json:"bundle_bytes"`
-	PublicKey                                     string `json:"public_key"`
-	Signature                                     string `json:"signature"`
-	PostgresDatabaseAuthorityIdentity             string `json:"postgres_database_authority_identity"`
 	GitHubAPIEndpoint                             string `json:"github_api_endpoint"`
 	GitHubAPIVersion                              string `json:"github_api_version"`
 	GitHubInstallationID                          uint64 `json:"github_installation_id"`
 	GitHubRepositoryFullName                      string `json:"github_repository_full_name"`
 	GitHubWebhookKeyID                            string `json:"github_webhook_key_id"`
-	S3Endpoint                                    string `json:"s3_endpoint"`
-	S3Region                                      string `json:"s3_region"`
-	S3Bucket                                      string `json:"s3_bucket"`
-	S3Prefix                                      string `json:"s3_prefix"`
-	KMSRegion                                     string `json:"kms_region"`
-	KMSKeyARN                                     string `json:"kms_key_arn"`
-	KMSEndpoint                                   string `json:"kms_endpoint"`
 	ApprovedBy                                    string `json:"approved_by"`
 }
 
@@ -305,11 +259,6 @@ func (h *Handler) checker(plan setupcore.Plan, key setupcore.CheckKey, value che
 		return setupcore.NewLocalAdministratorChecker(plan, value.ApprovedBy)
 	case setupcore.CheckBackupValidated:
 		return setupcore.NewBackupSnapshotChecker(h.statePath, value.BackupSnapshotPath, plan)
-	case setupcore.CheckPostgresStorageValidated:
-		if nilInterface(h.postgresProbe) {
-			return nil, errors.New("PostgreSQL setup probe unavailable")
-		}
-		return setupcore.NewPostgresStorageChecker(plan, value.ApprovePostgresAuthorityIdentity, value.ApprovedBy, h.postgresProbe)
 	case setupcore.CheckIntegrationPermissionsValidated:
 		if h.integrationPermissionProbeBuilder == nil {
 			return nil, errors.New("integration permission setup probe unavailable")
@@ -319,33 +268,6 @@ func (h *Handler) checker(plan setupcore.Plan, key setupcore.CheckKey, value che
 			return nil, err
 		}
 		return setupcore.NewIntegrationPermissionChecker(plan, value.ApproveIntegrationPermissionAuthorityIdentity, value.ApprovedBy, probe)
-	case setupcore.CheckSharedRateLimitValidated:
-		if h.sharedRateLimitProbeBuilder == nil {
-			return nil, errors.New("shared rate-limit setup probe unavailable")
-		}
-		probe, err := h.sharedRateLimitProbeBuilder(plan, value.PostgresDatabaseAuthorityIdentity)
-		if err != nil {
-			return nil, err
-		}
-		return setupcore.NewSharedRateLimitChecker(plan, value.ApproveSharedRateLimitAuthorityIdentity, value.ApprovedBy, probe)
-	case setupcore.CheckReplicaReconciliationValidated:
-		if h.replicaReconciliationProbeBuilder == nil {
-			return nil, errors.New("replica reconciliation setup probe unavailable")
-		}
-		probe, err := h.replicaReconciliationProbeBuilder(plan, value.PostgresDatabaseAuthorityIdentity)
-		if err != nil {
-			return nil, err
-		}
-		return setupcore.NewReplicaReconciliationChecker(plan, value.ApproveReplicaReconciliationAuthorityIdentity, value.ApprovedBy, probe)
-	case setupcore.CheckSignedBundleValidated:
-		if h.signedBundleProbeBuilder == nil {
-			return nil, errors.New("signed bundle setup probe unavailable")
-		}
-		probe, err := h.signedBundleProbeBuilder(plan, value.BundlePath, value.BundleSHA256, value.BundleBytes, value.PublicKey, value.Signature)
-		if err != nil {
-			return nil, err
-		}
-		return setupcore.NewSignedBundleChecker(plan, value.ApproveSignedBundleAuthorityIdentity, value.ApprovedBy, probe)
 	case setupcore.CheckWebhookValidated:
 		if h.webhookProbeBuilder == nil {
 			return nil, errors.New("webhook setup probe unavailable")
@@ -355,24 +277,6 @@ func (h *Handler) checker(plan setupcore.Plan, key setupcore.CheckKey, value che
 			return nil, err
 		}
 		return setupcore.NewWebhookChecker(plan, value.ApproveWebhookAuthorityIdentity, value.ApprovedBy, probe)
-	case setupcore.CheckEnvelopeStorageValidated:
-		if h.envelopeStorageProbeBuilder == nil {
-			return nil, errors.New("envelope storage setup probe unavailable")
-		}
-		probe, err := h.envelopeStorageProbeBuilder(plan, value.S3Endpoint, value.S3Region, value.S3Bucket, value.S3Prefix, value.KMSRegion, value.KMSKeyARN, value.KMSEndpoint)
-		if err != nil {
-			return nil, err
-		}
-		return setupcore.NewEnvelopeStorageChecker(plan, value.ApproveEnvelopeStorageAuthorityIdentity, value.ApprovedBy, probe)
-	case setupcore.CheckSecretBackendValidated:
-		if h.secretBackendProbeBuilder == nil {
-			return nil, errors.New("secret backend setup probe unavailable")
-		}
-		probe, err := h.secretBackendProbeBuilder(plan.TenantID(), value.KMSRegion, value.KMSKeyARN, value.KMSEndpoint)
-		if err != nil {
-			return nil, err
-		}
-		return setupcore.NewSecretBackendChecker(plan, value.ApproveKMSAuthorityIdentity, value.ApprovedBy, probe)
 	case setupcore.CheckRemoteProviderAuthorized, setupcore.CheckPolicyValidated, setupcore.CheckDryRunValidated, setupcore.CheckLocalInferenceValidated:
 		approval, err := setupcore.NewRuntimePolicyApproval(plan, value.ApproveInventoryIdentity, value.ApproveRuntimePolicyIdentity, value.ApproveReviewPolicyIdentity, value.ApprovedBy)
 		if err != nil {
@@ -413,18 +317,6 @@ func validCheckShape(key setupcore.CheckKey, value checkRequest, fields map[stri
 	hasStorage := present("storage_root")
 	hasBackup := present("backup_snapshot_path")
 	hasApproval := present("approved_by")
-	hasPostgres := present("approve_postgres_authority_identity")
-	hasKMSAuthority := present("approve_kms_authority_identity")
-	hasEnvelopeAuthority := present("approve_envelope_storage_authority_identity")
-	hasS3Endpoint := present("s3_endpoint")
-	hasS3Region := present("s3_region")
-	hasS3Bucket := present("s3_bucket")
-	hasS3Prefix := present("s3_prefix")
-	hasKMSRegion := present("kms_region")
-	hasKMSKey := present("kms_key_arn")
-	hasKMSEndpoint := present("kms_endpoint")
-	anyKMSConfiguration := hasKMSRegion || hasKMSKey || hasKMSEndpoint
-	anyEnvelope := hasEnvelopeAuthority || hasS3Endpoint || hasS3Region || hasS3Bucket || hasS3Prefix
 	hasIntegrationAuthority := present("approve_integration_permission_authority_identity")
 	hasGitHubEndpoint := present("github_api_endpoint")
 	hasGitHubVersion := present("github_api_version")
@@ -434,18 +326,6 @@ func validCheckShape(key setupcore.CheckKey, value checkRequest, fields map[stri
 	hasWebhookAuthority := present("approve_webhook_authority_identity")
 	hasWebhookKeyID := present("github_webhook_key_id")
 	anyWebhook := hasWebhookAuthority || hasWebhookKeyID
-	hasSharedRateLimitAuthority := present("approve_shared_rate_limit_authority_identity")
-	hasReplicaReconciliationAuthority := present("approve_replica_reconciliation_authority_identity")
-	hasPostgresDatabaseAuthority := present("postgres_database_authority_identity")
-	anyPostgresRuntimeCheck := hasSharedRateLimitAuthority || hasReplicaReconciliationAuthority || hasPostgresDatabaseAuthority
-	hasSignedBundleAuthority := present("approve_signed_bundle_authority_identity")
-	hasBundlePath := present("bundle_path")
-	hasBundleDigest := present("bundle_sha256")
-	hasBundleBytes := present("bundle_bytes")
-	hasPublicKey := present("public_key")
-	hasSignature := present("signature")
-	anySignedBundle := hasSignedBundleAuthority || hasBundlePath || hasBundleDigest || hasBundleBytes || hasPublicKey || hasSignature
-	anySecret := hasKMSAuthority || anyKMSConfiguration
 	policyNames := []string{"route_inventory_path", "runtime_policy_path", "approve_inventory_identity", "approve_runtime_policy_identity", "approve_review_policy_identity"}
 	anyPolicy, allPolicy := false, true
 	for _, name := range policyNames {
@@ -453,41 +333,24 @@ func validCheckShape(key setupcore.CheckKey, value checkRequest, fields map[stri
 		anyPolicy = anyPolicy || found
 		allPolicy = allPolicy && found
 	}
-	completeSecret := hasKMSAuthority && hasKMSRegion && hasKMSKey && validDigest(value.ApproveKMSAuthorityIdentity) && validSecretInput(value.KMSRegion, 128) && validSecretInput(value.KMSKeyARN, 2048) && (!hasKMSEndpoint || validSecretInput(value.KMSEndpoint, 2048)) && hasApproval && validLabel(value.ApprovedBy)
-	completeEnvelope := hasEnvelopeAuthority && hasS3Endpoint && hasS3Region && hasS3Bucket && hasS3Prefix && hasKMSRegion && hasKMSKey && validDigest(value.ApproveEnvelopeStorageAuthorityIdentity) && validSecretInput(value.S3Endpoint, 2048) && validSecretInput(value.S3Region, 128) && validSecretInput(value.S3Bucket, 128) && validSecretInput(value.S3Prefix, 1024) && validSecretInput(value.KMSRegion, 128) && validSecretInput(value.KMSKeyARN, 2048) && (!hasKMSEndpoint || validSecretInput(value.KMSEndpoint, 2048)) && hasApproval && validLabel(value.ApprovedBy)
 	completeIntegration := hasIntegrationAuthority && hasGitHubEndpoint && hasGitHubVersion && hasGitHubInstallation && hasGitHubRepository && validDigest(value.ApproveIntegrationPermissionAuthorityIdentity) && validGitHubPermissionEndpoint(value.GitHubAPIEndpoint) && validGitHubPermissionVersion(value.GitHubAPIVersion) && value.GitHubInstallationID > 0 && value.GitHubInstallationID <= 9_007_199_254_740_991 && validGitHubPermissionRepository(value.GitHubRepositoryFullName) && hasApproval && validLabel(value.ApprovedBy)
 	completeWebhook := hasWebhookAuthority && hasWebhookKeyID && validDigest(value.ApproveWebhookAuthorityIdentity) && validSecretInput(value.GitHubWebhookKeyID, 128) && hasApproval && validLabel(value.ApprovedBy)
-	completeSharedRateLimit := hasSharedRateLimitAuthority && !hasReplicaReconciliationAuthority && hasPostgresDatabaseAuthority && validDigest(value.ApproveSharedRateLimitAuthorityIdentity) && validDigest(value.PostgresDatabaseAuthorityIdentity) && hasApproval && validLabel(value.ApprovedBy)
-	completeReplicaReconciliation := !hasSharedRateLimitAuthority && hasReplicaReconciliationAuthority && hasPostgresDatabaseAuthority && validDigest(value.ApproveReplicaReconciliationAuthorityIdentity) && validDigest(value.PostgresDatabaseAuthorityIdentity) && hasApproval && validLabel(value.ApprovedBy)
-	completeSignedBundle := hasSignedBundleAuthority && hasBundlePath && hasBundleDigest && hasBundleBytes && hasPublicKey && hasSignature && validDigest(value.ApproveSignedBundleAuthorityIdentity) && validSignedBundleRequest(value) && hasApproval && validLabel(value.ApprovedBy)
 	completePolicy := allPolicy && hasApproval && validRequestPath(value.RouteInventoryPath) && validRequestPath(value.RuntimePolicyPath) && validDigest(value.ApproveInventoryIdentity) && validDigest(value.ApproveRuntimePolicyIdentity) && validDigest(value.ApproveReviewPolicyIdentity) && validLabel(value.ApprovedBy)
 	switch key {
 	case setupcore.CheckStateStoragePostureValidated:
-		return hasStorage && validRequestPath(value.StorageRoot) && !hasBackup && !hasApproval && !hasPostgres && !anyPolicy && !anySecret && !anyEnvelope && !anyIntegration && !anyWebhook && !anyPostgresRuntimeCheck && !anySignedBundle
+		return hasStorage && validRequestPath(value.StorageRoot) && !hasBackup && !hasApproval && !anyPolicy && !anyIntegration && !anyWebhook
 	case setupcore.CheckObserverCredentialPostureValidated:
-		return !hasStorage && !hasBackup && !hasApproval && !hasPostgres && !anyPolicy && !anySecret && !anyEnvelope && !anyIntegration && !anyWebhook && !anyPostgresRuntimeCheck && !anySignedBundle
+		return !hasStorage && !hasBackup && !hasApproval && !anyPolicy && !anyIntegration && !anyWebhook
 	case setupcore.CheckLocalAdministratorValidated:
-		return !hasStorage && !hasBackup && hasApproval && validLabel(value.ApprovedBy) && !hasPostgres && !anyPolicy && !anySecret && !anyEnvelope && !anyIntegration && !anyWebhook && !anyPostgresRuntimeCheck && !anySignedBundle
+		return !hasStorage && !hasBackup && hasApproval && validLabel(value.ApprovedBy) && !anyPolicy && !anyIntegration && !anyWebhook
 	case setupcore.CheckBackupValidated:
-		return !hasStorage && hasBackup && validRequestPath(value.BackupSnapshotPath) && !hasApproval && !hasPostgres && !anyPolicy && !anySecret && !anyEnvelope && !anyIntegration && !anyWebhook && !anyPostgresRuntimeCheck && !anySignedBundle
-	case setupcore.CheckPostgresStorageValidated:
-		return !hasStorage && !hasBackup && !anyPolicy && hasPostgres && validDigest(value.ApprovePostgresAuthorityIdentity) && hasApproval && validLabel(value.ApprovedBy) && !anySecret && !anyEnvelope && !anyIntegration && !anyWebhook && !anyPostgresRuntimeCheck && !anySignedBundle
+		return !hasStorage && hasBackup && validRequestPath(value.BackupSnapshotPath) && !hasApproval && !anyPolicy && !anyIntegration && !anyWebhook
 	case setupcore.CheckIntegrationPermissionsValidated:
-		return !hasStorage && !hasBackup && !hasPostgres && !anyPolicy && !anySecret && !anyEnvelope && completeIntegration && !anyWebhook && !anyPostgresRuntimeCheck && !anySignedBundle
-	case setupcore.CheckSharedRateLimitValidated:
-		return !hasStorage && !hasBackup && !hasPostgres && !anyPolicy && !anySecret && !anyEnvelope && !anyIntegration && !anyWebhook && !anySignedBundle && completeSharedRateLimit
-	case setupcore.CheckReplicaReconciliationValidated:
-		return !hasStorage && !hasBackup && !hasPostgres && !anyPolicy && !anySecret && !anyEnvelope && !anyIntegration && !anyWebhook && !anySignedBundle && completeReplicaReconciliation
-	case setupcore.CheckSignedBundleValidated:
-		return !hasStorage && !hasBackup && !hasPostgres && !anyPolicy && !anySecret && !anyEnvelope && !anyIntegration && !anyWebhook && !anyPostgresRuntimeCheck && completeSignedBundle
+		return !hasStorage && !hasBackup && !anyPolicy && completeIntegration && !anyWebhook
 	case setupcore.CheckWebhookValidated:
-		return !hasStorage && !hasBackup && !hasPostgres && !anyPolicy && !anySecret && !anyEnvelope && !anyIntegration && completeWebhook && !anyPostgresRuntimeCheck && !anySignedBundle
-	case setupcore.CheckEnvelopeStorageValidated:
-		return !hasStorage && !hasBackup && !hasPostgres && !anyPolicy && !hasKMSAuthority && completeEnvelope && !anyIntegration && !anyWebhook && !anyPostgresRuntimeCheck && !anySignedBundle
-	case setupcore.CheckSecretBackendValidated:
-		return !hasStorage && !hasBackup && !hasPostgres && !anyPolicy && completeSecret && !anyEnvelope && !anyIntegration && !anyWebhook && !anyPostgresRuntimeCheck && !anySignedBundle
+		return !hasStorage && !hasBackup && !anyPolicy && !anyIntegration && completeWebhook
 	case setupcore.CheckRemoteProviderAuthorized, setupcore.CheckPolicyValidated, setupcore.CheckDryRunValidated, setupcore.CheckLocalInferenceValidated:
-		return !hasStorage && !hasBackup && !hasPostgres && completePolicy && !anySecret && !anyEnvelope && !anyIntegration && !anyWebhook && !anyPostgresRuntimeCheck && !anySignedBundle
+		return !hasStorage && !hasBackup && completePolicy && !anyIntegration && !anyWebhook
 	default:
 		return false
 	}
@@ -513,13 +376,6 @@ func validBrokerIntegrationCheckShape(value checkRequest, fields map[string]stru
 		validDigest(value.PlanIdentity) && validDigest(value.ApproveIntegrationPermissionAuthorityIdentity) &&
 		validDigest(value.ApproveGitHubSourceBrokerAuthorityIdentity) && value.AllowGitHubInstallationTokenCreation &&
 		validLabel(value.ApprovedBy)
-}
-func validSignedBundleRequest(value checkRequest) bool {
-	if len(value.BundlePath) == 0 || len(value.BundlePath) > 4096 || !filepath.IsAbs(value.BundlePath) || filepath.Clean(value.BundlePath) != value.BundlePath || strings.ContainsAny(value.BundlePath, "\x00\r\n") {
-		return false
-	}
-	_, err := setupcore.SignedBundleAuthorityIdentity(value.BundleSHA256, value.BundleBytes, value.PublicKey, value.Signature)
-	return err == nil
 }
 func validGitHubPermissionEndpoint(value string) bool {
 	endpoint, err := providerconfig.ParseServiceEndpoint(value)

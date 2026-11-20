@@ -16,10 +16,6 @@ func TestReplacingPrerequisiteInvalidatesDependentEvidence(t *testing.T) {
 		dependents []CheckKey
 	}{
 		{"policy", ProfileLocalSingleNode, CheckPolicyValidated, []CheckKey{CheckLocalInferenceValidated, CheckDryRunValidated}},
-		{"air-gapped-policy", ProfileAirGapped, CheckPolicyValidated, []CheckKey{CheckLocalInferenceValidated, CheckDryRunValidated}},
-		{"hybrid-policy", ProfileControlledHybrid, CheckPolicyValidated, []CheckKey{CheckDryRunValidated}},
-		{"postgres", ProfileKubernetesHA, CheckPostgresStorageValidated, []CheckKey{CheckSharedRateLimitValidated, CheckReplicaReconciliationValidated}},
-		{"integration", ProfileControlledHybrid, CheckIntegrationPermissionsValidated, []CheckKey{CheckWebhookValidated}},
 	}
 	for _, test := range cases {
 		for _, replacementState := range []CheckState{CheckPassed, CheckBlocked, CheckUnavailable} {

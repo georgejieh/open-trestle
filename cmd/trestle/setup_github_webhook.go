@@ -28,7 +28,7 @@ func (c setupGitHubWebhookConfiguration) GoString() string {
 	return "main.setupGitHubWebhookConfiguration{<redacted>}"
 }
 func (c setupGitHubWebhookConfiguration) Format(state fmt.State, verb rune) {
-	writeSetupEnvelopeFormat(state, verb, c.String(), c.GoString())
+	writeSetupRedactedFormat(state, verb, c.String(), c.GoString())
 }
 
 type setupGitHubWebhookExecutor func(context.Context, setupGitHubWebhookConfiguration, []byte) (string, error)
@@ -143,7 +143,7 @@ func (p *setupGitHubWebhookProbe) GoString() string {
 	return "main.setupGitHubWebhookProbe{<redacted>}"
 }
 func (p *setupGitHubWebhookProbe) Format(state fmt.State, verb rune) {
-	writeSetupEnvelopeFormat(state, verb, p.String(), p.GoString())
+	writeSetupRedactedFormat(state, verb, p.String(), p.GoString())
 }
 
 func executeSetupGitHubWebhook(ctx context.Context, configuration setupGitHubWebhookConfiguration, secret []byte) (string, error) {

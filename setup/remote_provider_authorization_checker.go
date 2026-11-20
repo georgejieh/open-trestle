@@ -42,7 +42,7 @@ func (c *RemoteProviderAuthorizationChecker) Check(ctx context.Context, plan Pla
 		switch {
 		case c.policyChecker.configurationIdentity != c.policyConfigurationIdentity || approval.Identity() != c.approvalIdentity:
 			outcome = "checker_changed"
-		case plan.Profile() != ProfileControlledHybrid && plan.Profile() != ProfileKubernetesHA || plan.Posture().Inference() != InferenceApprovedRemote || plan.Posture().Egress() != EgressAllowlisted:
+		case plan.Posture().Inference() != InferenceApprovedRemote || plan.Posture().Egress() != EgressAllowlisted:
 			outcome = "profile_mismatch"
 		case approval.rootIdentity != plan.RootIdentity() || approval.tenantID != plan.TenantID() || approval.repositoryID != plan.RepositoryID() || approval.approvedBy != plan.RecoveryOwner():
 			outcome = "approval_mismatch"
