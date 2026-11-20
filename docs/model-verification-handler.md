@@ -39,17 +39,19 @@ The verification-context schema version follows the generation context version:
 
 | Generation context | Verification-context schema |
 | --- | --- |
-| Version 9 | Version 8 |
+| Version 11 | Version 10 |
+| Recorded version 10 | Version 9 |
+| Recorded version 9 | Version 8 |
 | Recorded version 8 | Version 7 |
 | Recorded version 7 | Version 6 |
 
-Version 7 is version 6 plus one sentence that explains `removed_lines` sources. Version 8 is version 7 plus the optional `stated_intent` object and one sentence that explains it. When a change contradicts its stated intent, the verifier checks that claim against both the intent and the source evidence.
+Version 7 is version 6 plus one sentence that explains `removed_lines` sources. Version 8 is version 7 plus the optional `stated_intent` object and one sentence that explains it. When a change contradicts its stated intent, the verifier checks that claim against both the intent and the source evidence. Version 9 is version 8 plus the index stages and one sentence for them. Version 10 is version 9 plus the generation context's `check_runs` object, copied unchanged, and one sentence for it: a regression listed there is deterministic evidence that the change broke that test and can support a candidate located on the code that causes it, while a check that could not run, or the absence of a regression, is not evidence that the code is correct (see [repository checks](repository-checks.md)). The verifier does not receive `pattern_hygiene`, `context_manifest` or `repository_checks`.
 
 Version 6 keeps the version 5 verdict rules and opens with the instruction-hierarchy paragraph of the [prompt-injection boundary](prompt-injection-boundary.md). It sends that contract in the system channel, and the payload binds it by `instructions_identity`. The verifier does not receive candidate categories, fix guidance or specialist guidance. Categories and fixes are bound through `candidate_batch_identity` and each `candidate_id`.
 
 The verifier receives every generation source, so it sees the removed base text at a deletion point. A verified verdict may cite a `removed_lines` source, but its base line numbers do not count as covering the candidate's head lines (`review.ParseContextVerificationBatch`). The handler rejects a categorized batch against a generation context from before version 7.
 
-New verifier requests are built from a version 10 generation context only. Recorded verification contexts of versions 2, 3, 5, 6, 7 and 8, and recorded generation contexts of versions 5, 7, 8 and 9, are reconstructed for readback but grant no new verification. Readback means reloading a stored result and checking it against its sources.
+New verifier requests are built from a version 11 generation context only. Recorded verification contexts of versions 2, 3, 5, 6, 7, 8 and 9, and recorded generation contexts of versions 5, 7, 8, 9 and 10, are reconstructed for readback but grant no new verification. Readback means reloading a stored result and checking it against its sources.
 
 The verifier response must contain one verdict for every accepted candidate. A verified verdict requires supported source evidence and a final severity. Rejected and inconclusive verdicts cannot carry a final severity. The handler rejects a response with unknown candidates, omitted candidates, duplicate verdicts, unsupported evidence or an incomplete set of verdicts.
 
