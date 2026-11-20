@@ -51,7 +51,9 @@ func probe(args []string) int {
 	case "spawn":
 		return spawnMany(args[0])
 	case "fill":
-		return fillDisk()
+		return fillDisk(false)
+	case "fill-deleted":
+		return fillDisk(true)
 	case "hang":
 		child := sleeper(args[0])
 		if err := child.Start(); err != nil {
@@ -114,11 +116,16 @@ func spawnMany(count string) int {
 }
 
 // fillDisk writes to the scratch until writing fails and prints how much
-// it wrote.
-func fillDisk() int {
-	file, err := os.Create(filepath.Join(os.Getenv("TMPDIR"), "fill"))
+// it wrote; with deleted, it first deletes the file it holds open, where
+// the system allows that.
+func fillDisk(deleted bool) int {
+	path := filepath.Join(os.Getenv("TMPDIR"), "fill")
+	file, err := os.Create(path)
 	if err != nil {
 		return 1
+	}
+	if deleted {
+		_ = os.Remove(path)
 	}
 	chunk := make([]byte, 1<<20)
 	var written int64

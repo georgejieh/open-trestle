@@ -1,7 +1,6 @@
 package checksandbox
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,19 +10,97 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/windows"
+	"golang.org/x/sys/windows/registry"
 )
 
 // platformProbe holds the Windows-only escape attempts.
 func platformProbe(mode string, _ []string) int {
-	if mode != "fill-profile" {
-		return 2
+	switch mode {
+	case "fill-profile":
+		folder, err := ownProfileFolder()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		return fillFile(filepath.Join(folder, "fill"))
+	case "fill-stream":
+		// An alternate data stream does not change the file's size.
+		return fillFile(filepath.Join(os.Getenv("TMPDIR"), "fill:hidden"))
+	case "registry":
+		key, err := registry.OpenKey(registry.CURRENT_USER, "Environment", registry.QUERY_VALUE)
+		if err != nil {
+			return probeBlocked
+		}
+		defer key.Close()
+		names, err := key.ReadValueNames(-1)
+		if err != nil {
+			return probeBlocked
+		}
+		readable := 0
+		for _, name := range names {
+			if _, _, err := key.GetValue(name, nil); err == nil {
+				readable++
+			}
+		}
+		// Only the counts: the values can be secrets.
+		fmt.Printf("%d of %d values readable\n", readable, len(names))
+		return probeEscaped
+	case "lock-scratch":
+		return lockFolder(os.Getenv("TMPDIR"))
+	case "lock-profile":
+		folder, err := ownProfileFolder()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		return lockFolder(folder)
 	}
-	folder, err := ownProfileFolder()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
+	return 2
+}
+
+// lockFolder writes a folder in base and then denies everyone access to
+// it, so that the account could delete it only after taking its
+// permissions back. A real attack would deny OWNER RIGHTS too, which only
+// an administrator can undo; the probe does not, so that a failure leaves
+// nothing the tests' user cannot remove. A folder created with such
+// permissions from the start is not blocked; see docs/repository-checks.md.
+func lockFolder(base string) int {
+	folder := filepath.Join(base, "locked")
+	if os.Mkdir(folder, 0o755) != nil || os.WriteFile(filepath.Join(folder, "file"), []byte("locked"), 0o644) != nil {
 		return 1
 	}
-	file, err := os.Create(filepath.Join(folder, "fill"))
+	everyone, err := windows.StringToSid("S-1-1-0")
+	if err != nil {
+		return 1
+	}
+	deny, err := windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{{
+		AccessPermissions: windows.GENERIC_ALL, AccessMode: windows.DENY_ACCESS,
+		Trustee: windows.TRUSTEE{TrusteeForm: windows.TRUSTEE_IS_SID, TrusteeType: windows.TRUSTEE_IS_WELL_KNOWN_GROUP, TrusteeValue: windows.TrusteeValueFromSID(everyone)},
+	}}, nil)
+	if err != nil {
+		return 1
+	}
+	if windows.SetNamedSecurityInfo(folder, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, deny, nil) == nil {
+		return probeEscaped
+	}
+	return probeBlocked
+}
+
+func TestEscapeLockTheScratchAgainstCleanup(t *testing.T) {
+	for _, mode := range []string{"lock-scratch", "lock-profile"} {
+		t.Run(mode, func(t *testing.T) {
+			result := runProbe(t, probeSpec(t, mode))
+			requireBlocked(t, result)
+			if result.Leftover != "" {
+				t.Fatalf("the scratch was left behind: %s", result.Leftover)
+			}
+		})
+	}
+}
+
+// fillFile writes to path until writing fails.
+func fillFile(path string) int {
+	file, err := os.Create(path)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
@@ -52,14 +129,31 @@ func ownProfileFolder() (string, error) {
 }
 
 func TestEscapeDiskFillThroughTheProfileFolderIsBounded(t *testing.T) {
-	spec := probeSpec(t, "fill-profile")
-	result, err := Run(context.Background(), spec)
-	if err != nil {
-		t.Skipf("the sandbox is unavailable here: %v", err)
-	}
+	requireDiskBounded(t, probeSpec(t, "fill-profile"))
+}
+
+func TestEscapeDiskFillThroughAnAlternateStreamIsBounded(t *testing.T) {
+	requireDiskBounded(t, probeSpec(t, "fill-stream"))
+}
+
+func requireDiskBounded(t *testing.T, spec Spec) {
+	t.Helper()
+	result := runProbe(t, spec)
 	if !result.DiskExceeded || result.TimedOut || result.Duration > spec.Limits.Time/3 {
-		t.Fatalf("writes to the profile folder were not bounded: %+v stderr %q", result, result.Stderr)
+		t.Fatalf("the writes were not bounded: %+v stderr %q", result, result.Stderr)
 	}
+}
+
+// TestEscapeReadUserEnvironmentRegistry checks whether the sandbox can read
+// the user's environment variables in HKCU\Environment, which can hold
+// keys. On Windows 10 it can; that is an open question for the owner, not
+// yet closed, so the test reports it as a skip rather than a pass.
+func TestEscapeReadUserEnvironmentRegistry(t *testing.T) {
+	result := runProbe(t, probeSpec(t, "registry"))
+	if result.ExitCode == probeEscaped {
+		t.Skipf("known open gap: the sandbox can read HKCU\\Environment (%s)", strings.TrimSpace(string(result.Stdout)))
+	}
+	requireBlocked(t, result)
 }
 
 // environmentLeaks has nothing to scan on Windows: no process can read

@@ -14,12 +14,6 @@ import (
 
 const sandboxExec = "/usr/bin/sandbox-exec"
 
-// run starts the command under sandbox-exec with a deny-by-default profile
-// in its own process group. macOS has no unprivileged per-tree process or
-// memory limit, so those rely on the system's per-user limits, and a
-// process that starts a new session escapes the group kill, though not the
-// sandbox; file size, open files, time, output and scratch size are bounded
-// here.
 func available() error {
 	if _, err := os.Stat(sandboxExec); err != nil {
 		return unavailable("sandbox-exec is missing")
@@ -27,15 +21,21 @@ func available() error {
 	return nil
 }
 
-func run(ctx context.Context, spec Spec) (Result, error) {
+// run starts the command under sandbox-exec with a deny-by-default profile
+// in its own process group. macOS has no unprivileged per-tree process or
+// memory limit, so those rely on the system's per-user limits. A process
+// that starts a new session leaves the group, so the kill at the end of
+// the run misses it: it stays inside the profile but has no time bound.
+// File size, open files, time, output and scratch size are bounded here.
+func run(ctx context.Context, spec Spec) (result Result, err error) {
 	if err := available(); err != nil {
 		return Result{}, err
 	}
-	created, err := os.MkdirTemp("", "open-trestle-check-")
+	created, err := os.MkdirTemp("", scratchFolderPrefix)
 	if err != nil {
 		return Result{}, unavailable("the scratch folder could not be created")
 	}
-	defer os.RemoveAll(created)
+	defer func() { result.Leftover = leftover(created) }()
 	// The profile matches resolved paths, and the temporary folder is
 	// usually reached through the /var link.
 	scratch, err := filepath.EvalSymlinks(created)
@@ -73,7 +73,8 @@ func run(ctx context.Context, spec Spec) (Result, error) {
 	stderr := newCapture(spec.Limits.OutputBytes, cancel)
 	paths := sandboxPaths{home: home, temporary: temporary, work: work}
 	limits := "ulimit -n 4096 && ulimit -c 0 && ulimit -f " + strconv.FormatInt(spec.Limits.DiskBytes/512, 10) + ` && exec "$@"`
-	command := exec.Command(sandboxExec, append([]string{"-p", seatbeltProfile(scratch, readOnly), "/bin/sh", "-c", limits, "sh", program}, paths.args(spec.Args)[1:]...)...)
+	profile := seatbeltProfile(scratch, []string{work, home, temporary}, readOnly)
+	command := exec.Command(sandboxExec, append([]string{"-p", profile, "/bin/sh", "-c", limits, "sh", program}, paths.args(spec.Args)[1:]...)...)
 	command.Dir = filepath.Join(work, spec.Dir)
 	command.Env = append([]string{
 		"PATH=" + strings.Join(append(append([]string{}, spec.Path...), "/usr/bin", "/bin", "/usr/sbin", "/sbin"), ":"),
@@ -87,6 +88,7 @@ func run(ctx context.Context, spec Spec) (Result, error) {
 	// group kill, still inside the sandbox; it must not keep the run open
 	// by holding the output pipes.
 	command.WaitDelay = time.Second
+	meter := newScratchMeter([]string{scratch}, spec.Limits.DiskBytes)
 	started := time.Now()
 	if err := command.Start(); err != nil {
 		return Result{}, unavailable("%s could not be started (%v)", spec.Args[0], err)
@@ -96,13 +98,13 @@ func run(ctx context.Context, spec Spec) (Result, error) {
 		<-ctx.Done()
 		_ = syscall.Kill(-group, syscall.SIGKILL)
 	}()
-	diskOver := watchDisk(ctx, []string{scratch}, spec.Limits.DiskBytes, cancel)
+	diskOver := watchDisk(ctx, meter, cancel)
 	err = command.Wait()
 	_ = syscall.Kill(-group, syscall.SIGKILL)
 	outputExceeded := stdout.exceededLimit() || stderr.exceededLimit()
-	result := Result{
+	result = Result{
 		ExitCode: -1, Stdout: stdout.bytes(), Stderr: stderr.bytes(), Duration: time.Since(started),
-		OutputExceeded: outputExceeded, DiskExceeded: diskOver.Load(),
+		OutputExceeded: outputExceeded, DiskExceeded: diskOver.Load() || meter.exceeded(),
 	}
 	var exit *exec.ExitError
 	if err == nil {

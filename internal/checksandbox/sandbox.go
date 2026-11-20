@@ -94,6 +94,10 @@ type Result struct {
 	// Report is the report file's content, or nil when it was not written.
 	Report   []byte
 	Duration time.Duration
+	// Leftover names the scratch folder when it could not be removed after
+	// the run, such as when a process the run left is still writing to it.
+	// SweepStale tries again later.
+	Leftover string
 }
 
 // Succeeded reports that the command ran to completion with status zero.

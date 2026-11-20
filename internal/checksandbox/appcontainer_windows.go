@@ -5,6 +5,10 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -46,12 +50,15 @@ type appContainer struct {
 	folder string
 }
 
+// profilePrefix starts the name of every sandbox's AppContainer profile.
+const profilePrefix = "OpenTrestle.Check."
+
 func newAppContainer() (*appContainer, error) {
 	random := make([]byte, 8)
 	if _, err := rand.Read(random); err != nil {
 		return nil, err
 	}
-	name := "OpenTrestle.Check." + hex.EncodeToString(random)
+	name := profilePrefix + hex.EncodeToString(random)
 	name16, err := windows.UTF16PtrFromString(name)
 	if err != nil {
 		return nil, err
@@ -73,6 +80,11 @@ func newAppContainer() (*appContainer, error) {
 		return nil, err
 	}
 	folder, err := profileFolder(copied)
+	if err == nil {
+		// Windows gives the package full control of its folder; it gets the
+		// scratch's rights there instead (see scratchAccess).
+		err = changeAccess(folder, copied, windows.SET_ACCESS, scratchAccess)
+	}
 	if err != nil {
 		deleteProfile(name16)
 		return nil, err
@@ -102,6 +114,28 @@ func (container *appContainer) close() {
 
 func deleteProfile(name *uint16) {
 	_, _, _ = procDeleteAppContainerProfile.Call(uintptr(unsafe.Pointer(name)))
+}
+
+// sweepProfiles deletes the sandbox profiles whose folders, named after the
+// profile in lower case, are older than cutoff: what runs that were killed
+// left behind.
+func sweepProfiles(cutoff time.Time) {
+	local, err := os.UserCacheDir()
+	if err != nil {
+		return
+	}
+	entries, err := os.ReadDir(filepath.Join(local, "Packages"))
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if !strings.HasPrefix(strings.ToLower(entry.Name()), strings.ToLower(profilePrefix)) || !olderThan(entry, cutoff) {
+			continue
+		}
+		if name16, err := windows.UTF16PtrFromString(entry.Name()); err == nil {
+			deleteProfile(name16)
+		}
+	}
 }
 
 // capabilitySid derives the SID of a named capability.

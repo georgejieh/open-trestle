@@ -65,15 +65,15 @@ func available() error {
 	return nil
 }
 
-func run(ctx context.Context, spec Spec) (Result, error) {
+func run(ctx context.Context, spec Spec) (result Result, err error) {
 	if err := available(); err != nil {
 		return Result{}, err
 	}
-	scratch, err := os.MkdirTemp("", "open-trestle-check-")
+	scratch, err := os.MkdirTemp("", scratchFolderPrefix)
 	if err != nil {
 		return Result{}, unavailable("the scratch folder could not be created")
 	}
-	defer os.RemoveAll(scratch)
+	defer func() { result.Leftover = leftover(scratch) }()
 
 	paths := sandboxPaths{home: sandboxHome, temporary: sandboxTemp, work: sandboxWork}
 	env := append([]string{
@@ -139,7 +139,7 @@ func run(ctx context.Context, spec Spec) (Result, error) {
 	statusBytes, _ := io.ReadAll(io.LimitReader(statusRead, 2*reportLimit))
 	_ = command.Wait()
 	outputExceeded := stdout.exceededLimit() || stderr.exceededLimit()
-	result := Result{
+	result = Result{
 		ExitCode: -1, Stdout: stdout.bytes(), Stderr: stderr.bytes(), Duration: time.Since(started),
 		OutputExceeded: outputExceeded,
 		TimedOut:       !outputExceeded && errors.Is(ctx.Err(), context.DeadlineExceeded),

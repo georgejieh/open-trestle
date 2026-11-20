@@ -4,9 +4,11 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -18,7 +20,23 @@ func TestMain(m *testing.M) {
 	if len(os.Args) >= 3 && os.Args[1] == "__probe" {
 		os.Exit(probe(os.Args[2:]))
 	}
-	os.Exit(m.Run())
+	os.Exit(runTests(m))
+}
+
+// runTests keeps the record of the folders the tests' runs grant on
+// Windows apart from the user's, and takes those grants back at the end.
+func runTests(m *testing.M) int {
+	state, err := os.MkdirTemp("", "checksandbox-state-")
+	if err != nil || os.Setenv("XDG_STATE_HOME", state) != nil {
+		return 1
+	}
+	defer os.RemoveAll(state)
+	code := m.Run()
+	if err := RemoveToolchainGrants(); err != nil {
+		fmt.Fprintln(os.Stderr, "the tests' grants were not all taken back:", err)
+		return 1
+	}
+	return code
 }
 
 func testLimits() Limits {
@@ -110,6 +128,23 @@ func TestEscapeReadHomeFile(t *testing.T) {
 	requireBlocked(t, runProbe(t, probeSpec(t, "read", planted)))
 }
 
+func TestEscapeReadHomeFileThroughALinkInTheTree(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("no home folder")
+	}
+	planted := filepath.Join(home, ".open-trestle-escape-"+marker(t))
+	if err := os.WriteFile(planted, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(planted)
+	spec := probeSpec(t, "read", filepath.Join("$WORK", "link"))
+	if err := os.Symlink(planted, filepath.Join(spec.Tree, "link")); err != nil {
+		t.Skipf("a symbolic link cannot be created here: %v", err)
+	}
+	requireBlocked(t, runProbe(t, spec))
+}
+
 func TestEscapeReadEnvironmentSecret(t *testing.T) {
 	value := marker(t)
 	t.Setenv("OPEN_TRESTLE_PROVIDER_ESCAPE_TEST_KEY", value)
@@ -165,6 +200,9 @@ func TestEscapeWriteOutsideScratch(t *testing.T) {
 }
 
 func TestEscapeForkBombIsBounded(t *testing.T) {
+	if runtime.GOOS != "linux" && runtime.GOOS != "windows" {
+		t.Skip("this system has no per-tree process limit; its per-user limit applies")
+	}
 	spec := probeSpec(t, "spawn", "500")
 	result := runProbe(t, spec)
 	alive, ok := strings.CutPrefix(strings.TrimSpace(string(result.Stdout)), "alive ")
@@ -195,6 +233,25 @@ func TestEscapeDiskFillIsBounded(t *testing.T) {
 		if count, _ := strconv.ParseInt(written, 10, 64); count > spec.Limits.DiskBytes {
 			t.Fatalf("wrote %d bytes, limit %d", count, spec.Limits.DiskBytes)
 		}
+	}
+}
+
+// TestEscapeDiskFillOfADeletedFileIsBounded writes to a file deleted while
+// open, which no folder walk can see.
+func TestEscapeDiskFillOfADeletedFileIsBounded(t *testing.T) {
+	spec := probeSpec(t, "fill-deleted")
+	result := runProbe(t, spec)
+	if result.TimedOut || result.Duration > spec.Limits.Time/3 {
+		t.Fatalf("the writes ran for %v under a %v time limit", result.Duration, spec.Limits.Time)
+	}
+	written, wrote := strings.CutPrefix(strings.TrimSpace(string(result.Stdout)), "wrote ")
+	if count, _ := strconv.ParseInt(written, 10, 64); wrote && count > spec.Limits.DiskBytes {
+		t.Fatalf("wrote %d bytes, limit %d", count, spec.Limits.DiskBytes)
+	}
+	// Linux bounds the scratch itself, so the writes fail and the probe
+	// reports them; elsewhere the run is stopped.
+	if !wrote && !result.DiskExceeded {
+		t.Fatalf("the disk limit was not reported: %+v stdout %q stderr %q", result, result.Stdout, result.Stderr)
 	}
 }
 

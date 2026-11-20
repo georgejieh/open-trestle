@@ -26,7 +26,7 @@ func available() error { return nil }
 // the toolchain one, so it has no network and reaches only its scratch and
 // the folders granted to every sandbox, inside a job object that bounds and
 // kills the whole tree.
-func run(ctx context.Context, spec Spec) (Result, error) {
+func run(ctx context.Context, spec Spec) (result Result, err error) {
 	container, err := newAppContainer()
 	if err != nil {
 		return Result{}, unavailable("an AppContainer could not be created (%v)", err)
@@ -37,12 +37,12 @@ func run(ctx context.Context, spec Spec) (Result, error) {
 			return Result{}, unavailable("the sandbox could not be given read access to %s (%v)", path, err)
 		}
 	}
-	scratch, err := os.MkdirTemp("", "open-trestle-check-")
+	scratch, err := os.MkdirTemp("", scratchFolderPrefix)
 	if err != nil {
 		return Result{}, unavailable("the scratch folder could not be created")
 	}
-	defer os.RemoveAll(scratch)
-	if err := grant(scratch, container.sid, windows.GENERIC_ALL); err != nil {
+	defer func() { result.Leftover = leftover(scratch) }()
+	if err := grant(scratch, container.sid, scratchAccess); err != nil {
 		return Result{}, unavailable("the scratch folder could not be shared with the sandbox (%v)", err)
 	}
 	// Windows gives an AppContainer process the temporary folder of its
@@ -112,6 +112,7 @@ func runContained(ctx context.Context, spec Spec, container *appContainer, appli
 		_ = windows.TerminateProcess(information.Process, 1)
 		return Result{}, unavailable("the command could not be placed in its job object (%v)", err)
 	}
+	meter := newScratchMeter([]string{scratch, container.folder}, spec.Limits.DiskBytes)
 	started := time.Now()
 	if _, err := windows.ResumeThread(information.Thread); err != nil {
 		terminate()
@@ -131,8 +132,7 @@ func runContained(ctx context.Context, spec Spec, container *appContainer, appli
 			_, _ = io.Copy(pair.to, pair.from)
 		}()
 	}
-	writable := []string{scratch, container.folder}
-	diskOver := watchDisk(ctx, writable, spec.Limits.DiskBytes, cancel)
+	diskOver := watchDisk(ctx, meter, cancel)
 	exited := make(chan struct{})
 	go func() {
 		_, _ = windows.WaitForSingleObject(information.Process, windows.INFINITE)
@@ -155,7 +155,7 @@ func runContained(ctx context.Context, spec Spec, container *appContainer, appli
 		Duration: time.Since(started), OutputExceeded: outputExceeded, DiskExceeded: diskOver.Load(),
 	}
 	result.TimedOut = !outputExceeded && !result.DiskExceeded && errors.Is(ctx.Err(), context.DeadlineExceeded)
-	if !result.DiskExceeded && foldersSize(writable, spec.Limits.DiskBytes) > spec.Limits.DiskBytes {
+	if !result.DiskExceeded && meter.exceeded() {
 		result.DiskExceeded = true
 	}
 	if spec.Report != "" {
