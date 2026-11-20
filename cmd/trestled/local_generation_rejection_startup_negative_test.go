@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	postgresstore "github.com/georgejieh/open-trestle/adapters/storage/postgres"
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/controlplane/httpapi"
 	"github.com/georgejieh/open-trestle/internal/review"
@@ -72,7 +71,7 @@ func testGenerationRejectionStartupRefusals(t *testing.T, args []string, getenv 
 		}
 	}
 	deps := func() daemonDependencies {
-		return daemonDependencies{openPostgres: postgresstore.Open, clock: httpapi.SystemClock{}, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()}
+		return daemonDependencies{clock: httpapi.SystemClock{}, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()}
 	}
 	for _, path := range []string{auditPath, rejectionPath} {
 		saved, err := os.ReadFile(path)

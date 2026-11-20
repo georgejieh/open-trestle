@@ -15,7 +15,6 @@ import (
 	"testing"
 	"time"
 
-	postgresstore "github.com/georgejieh/open-trestle/adapters/storage/postgres"
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/client"
 	"github.com/georgejieh/open-trestle/controlplane"
@@ -178,7 +177,7 @@ func assertContextRouteRefusal(t *testing.T, d *daemon, api *client.Client, fake
 
 func startContextRefusalDaemon(t *testing.T, args []string, getenv func(string) string, clock *daemonBudgetedHandlerClock) (*daemon, *client.Client, *httptest.Server) {
 	t.Helper()
-	d, err := buildDaemonWithDependencies(context.Background(), args, getenv, &bytes.Buffer{}, daemonDependencies{openPostgres: postgresstore.Open, clock: clock, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()})
+	d, err := buildDaemonWithDependencies(context.Background(), args, getenv, &bytes.Buffer{}, daemonDependencies{clock: clock, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()})
 	if err != nil {
 		t.Fatal(err)
 	}

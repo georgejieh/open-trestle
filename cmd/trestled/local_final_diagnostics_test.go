@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	postgresstore "github.com/georgejieh/open-trestle/adapters/storage/postgres"
 	"github.com/georgejieh/open-trestle/artifact"
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/client"
@@ -231,7 +230,7 @@ func (finalProjectorClock) Now() time.Time { return time.Now().UTC() }
 
 func TestLocalFinalProjectorVerifierUnavailableProjectsInconclusiveWithoutV5(t *testing.T) {
 	args, getenv, repository, base, head, policy, inventory := localFullDaemonFixture(t)
-	deps := daemonDependencies{openPostgres: postgresstore.Open, clock: httpapi.SystemClock{}, generationSanitizer: testsupport.NewCleanGenerationSanitizer(), verificationSanitizer: reviewcore.NewFixedVerificationRequestSanitizer(nil)}
+	deps := daemonDependencies{clock: httpapi.SystemClock{}, generationSanitizer: testsupport.NewCleanGenerationSanitizer(), verificationSanitizer: reviewcore.NewFixedVerificationRequestSanitizer(nil)}
 	d, err := buildDaemonWithDependencies(context.Background(), args, getenv, &bytes.Buffer{}, deps)
 	if err != nil {
 		t.Fatal(err)
@@ -401,7 +400,7 @@ func TestLocalFinalProjectorValidContextAbstention(t *testing.T) {
 	args, getenv, repository, base, _, policy, inventory := localFullDaemonFixture(t)
 	objects := daemonTestFlagValue(t, args, "--local-git-objects-root")
 	head := abstentionHeadRevision(t, objects, "package-lock.json", []byte("{\"lockfileVersion\": \"unsupported-marker\"}\n"))
-	deps := daemonDependencies{openPostgres: postgresstore.Open, clock: httpapi.SystemClock{}, generationSanitizer: testsupport.NewCleanGenerationSanitizer(), verificationSanitizer: reviewcore.NewFixedVerificationRequestSanitizer(nil)}
+	deps := daemonDependencies{clock: httpapi.SystemClock{}, generationSanitizer: testsupport.NewCleanGenerationSanitizer(), verificationSanitizer: reviewcore.NewFixedVerificationRequestSanitizer(nil)}
 	d, err := buildDaemonWithDependencies(context.Background(), args, getenv, &bytes.Buffer{}, deps)
 	if err != nil {
 		t.Fatal(err)

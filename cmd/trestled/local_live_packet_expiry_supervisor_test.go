@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	postgresstore "github.com/georgejieh/open-trestle/adapters/storage/postgres"
 	"github.com/georgejieh/open-trestle/artifact"
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/client"
@@ -144,7 +143,7 @@ func TestDaemonLocalModelWorkersLivePacketExpiryContinues(t *testing.T) {
 		clock.mu.Unlock()
 		return nil
 	}}
-	d, err = buildDaemonWithDependencies(context.Background(), args, getenv, &bytes.Buffer{}, daemonDependencies{openPostgres: postgresstore.Open, clock: clock, generationSanitizer: sanitizer, verificationSanitizer: daemonTestVerificationSanitizer()})
+	d, err = buildDaemonWithDependencies(context.Background(), args, getenv, &bytes.Buffer{}, daemonDependencies{clock: clock, generationSanitizer: sanitizer, verificationSanitizer: daemonTestVerificationSanitizer()})
 	if err != nil {
 		t.Fatal(err)
 	}

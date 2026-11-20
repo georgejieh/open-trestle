@@ -14,7 +14,6 @@ import (
 	"testing"
 	"time"
 
-	postgresstore "github.com/georgejieh/open-trestle/adapters/storage/postgres"
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/client"
 	"github.com/georgejieh/open-trestle/controlplane"
@@ -25,7 +24,7 @@ import (
 
 func TestDaemonRestartsAfterOwnerInputSettlement(t *testing.T) {
 	args, getenv, repository, base, head, policy, inventory := localFullDaemonFixture(t)
-	deps := daemonDependencies{openPostgres: postgresstore.Open, clock: httpapi.SystemClock{}, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()}
+	deps := daemonDependencies{clock: httpapi.SystemClock{}, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()}
 	ctx := context.Background()
 	d, err := buildDaemonWithDependencies(ctx, args, getenv, &bytes.Buffer{}, deps)
 	if err != nil {

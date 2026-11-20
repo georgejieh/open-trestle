@@ -16,7 +16,6 @@ import (
 	"testing"
 	"time"
 
-	postgresstore "github.com/georgejieh/open-trestle/adapters/storage/postgres"
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/client"
 	"github.com/georgejieh/open-trestle/controlplane"
@@ -151,7 +150,7 @@ func TestDaemonLocalModelWorkersRejectSingleRouteBeforeDispatch(t *testing.T) {
 func TestDaemonLocalModelWorkersOptInOnly(t *testing.T) {
 	t.Parallel()
 	args, getenv, fake, repository, base, head, policy, inventory := localModelWorkerFixture(t)
-	d, err := buildDaemonWithDependencies(context.Background(), args, getenv, &bytes.Buffer{}, daemonDependencies{openPostgres: postgresstore.Open, clock: httpapi.SystemClock{}, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()})
+	d, err := buildDaemonWithDependencies(context.Background(), args, getenv, &bytes.Buffer{}, daemonDependencies{clock: httpapi.SystemClock{}, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +209,7 @@ func TestDaemonLocalModelWorkersExecuteAdmittedReview(t *testing.T) {
 	t.Parallel()
 	args, getenv, fake, repository, base, head, policy, inventory := localModelWorkerFixture(t)
 	args = append(args, "--local-model-workers")
-	d, err := buildDaemonWithDependencies(context.Background(), args, getenv, &bytes.Buffer{}, daemonDependencies{openPostgres: postgresstore.Open, clock: httpapi.SystemClock{}, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()})
+	d, err := buildDaemonWithDependencies(context.Background(), args, getenv, &bytes.Buffer{}, daemonDependencies{clock: httpapi.SystemClock{}, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -340,7 +339,7 @@ func TestDaemonLocalModelWorkersResumeAfterCandidatesWithoutRedispatch(t *testin
 	t.Parallel()
 	args, getenv, fake, repository, base, head, policy, inventory := localModelWorkerFixture(t)
 	args = append(args, "--local-model-workers")
-	d, err := buildDaemonWithDependencies(context.Background(), args, getenv, &bytes.Buffer{}, daemonDependencies{openPostgres: postgresstore.Open, clock: httpapi.SystemClock{}, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()})
+	d, err := buildDaemonWithDependencies(context.Background(), args, getenv, &bytes.Buffer{}, daemonDependencies{clock: httpapi.SystemClock{}, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -417,7 +416,7 @@ func TestDaemonLocalModelWorkersResumeAfterCandidatesWithoutRedispatch(t *testin
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
-	d, err = buildDaemonWithDependencies(context.Background(), args, getenv, &bytes.Buffer{}, daemonDependencies{openPostgres: postgresstore.Open, clock: httpapi.SystemClock{}, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()})
+	d, err = buildDaemonWithDependencies(context.Background(), args, getenv, &bytes.Buffer{}, daemonDependencies{clock: httpapi.SystemClock{}, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -459,7 +458,7 @@ func TestDaemonLocalModelWorkersMissingVerifierDoesNotPromote(t *testing.T) {
 	t.Parallel()
 	args, getenv, fake, repository, base, head, policy, inventory := localModelWorkerFixture(t)
 	args = append(args, "--local-model-workers")
-	d, err := buildDaemonWithDependencies(context.Background(), args, getenv, &bytes.Buffer{}, daemonDependencies{openPostgres: postgresstore.Open, clock: httpapi.SystemClock{}, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()})
+	d, err := buildDaemonWithDependencies(context.Background(), args, getenv, &bytes.Buffer{}, daemonDependencies{clock: httpapi.SystemClock{}, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -516,7 +515,7 @@ func TestDaemonLocalModelWorkersLaterRunAndRestart(t *testing.T) {
 	args = append(args, "--local-model-workers")
 	build := func() *daemon {
 		t.Helper()
-		d, err := buildDaemonWithDependencies(context.Background(), args, getenv, &bytes.Buffer{}, daemonDependencies{openPostgres: postgresstore.Open, clock: httpapi.SystemClock{}, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()})
+		d, err := buildDaemonWithDependencies(context.Background(), args, getenv, &bytes.Buffer{}, daemonDependencies{clock: httpapi.SystemClock{}, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -602,7 +601,7 @@ func TestDaemonLocalModelWorkersVerificationOutcomes(t *testing.T) {
 			args, getenv, fake, repository, base, head, policy, inventory := localModelWorkerFixture(t)
 			fake.verification.verificationOutcome = outcome
 			args = append(args, "--local-model-workers")
-			d, err := buildDaemonWithDependencies(context.Background(), args, getenv, &bytes.Buffer{}, daemonDependencies{openPostgres: postgresstore.Open, clock: httpapi.SystemClock{}, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()})
+			d, err := buildDaemonWithDependencies(context.Background(), args, getenv, &bytes.Buffer{}, daemonDependencies{clock: httpapi.SystemClock{}, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -655,7 +654,7 @@ func TestDaemonLocalModelWorkersVerificationOutcomes(t *testing.T) {
 			if err := d.Close(); err != nil {
 				t.Fatal(err)
 			}
-			d, err = buildDaemonWithDependencies(context.Background(), args, getenv, &bytes.Buffer{}, daemonDependencies{openPostgres: postgresstore.Open, clock: httpapi.SystemClock{}, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()})
+			d, err = buildDaemonWithDependencies(context.Background(), args, getenv, &bytes.Buffer{}, daemonDependencies{clock: httpapi.SystemClock{}, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -714,7 +713,7 @@ func testDaemonLocalModelWorkersCanceledRestart(t *testing.T, mode string) {
 	args = append(args, "--local-model-workers")
 	build := func() *daemon {
 		t.Helper()
-		d, err := buildDaemonWithDependencies(context.Background(), args, getenv, &bytes.Buffer{}, daemonDependencies{openPostgres: postgresstore.Open, clock: httpapi.SystemClock{}, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()})
+		d, err := buildDaemonWithDependencies(context.Background(), args, getenv, &bytes.Buffer{}, daemonDependencies{clock: httpapi.SystemClock{}, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -796,7 +795,7 @@ func testDaemonLocalModelWorkersCanceledRestart(t *testing.T, mode string) {
 		}
 	}
 	if mode != "unclaimed" {
-		restarted, err := buildDaemonWithDependencies(context.Background(), args, getenv, &bytes.Buffer{}, daemonDependencies{openPostgres: postgresstore.Open, clock: httpapi.SystemClock{}, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()})
+		restarted, err := buildDaemonWithDependencies(context.Background(), args, getenv, &bytes.Buffer{}, daemonDependencies{clock: httpapi.SystemClock{}, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()})
 		if restarted != nil || !errors.Is(err, errHistoricalInputIntentQuarantinedAtStartup) {
 			if restarted != nil {
 				restarted.Close()
@@ -887,7 +886,7 @@ func TestDaemonLocalModelWorkersOfflineBackupPreservesOwnerBoundary(t *testing.T
 		t.Run(name, func(t *testing.T) {
 			args, getenv, fake, repository, base, head, policy, inventory := localModelWorkerFixture(t)
 			args = append(args, "--local-model-workers")
-			deps := daemonDependencies{openPostgres: postgresstore.Open, clock: httpapi.SystemClock{}, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()}
+			deps := daemonDependencies{clock: httpapi.SystemClock{}, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()}
 			d, err := buildDaemonWithDependencies(context.Background(), args, getenv, &bytes.Buffer{}, deps)
 			if err != nil {
 				t.Fatal(err)
@@ -1069,7 +1068,7 @@ func testDaemonLocalModelWorkersExpiredPacketRestart(t *testing.T, mode string) 
 	}}, injected: &injectedReturnReached}
 	build := func(expire bool) *daemon {
 		t.Helper()
-		deps := daemonDependencies{openPostgres: postgresstore.Open, clock: clock, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()}
+		deps := daemonDependencies{clock: clock, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()}
 		if expire {
 			deps.generationSanitizer = sanitizer
 		}
@@ -1197,7 +1196,7 @@ func testDaemonLocalModelWorkersExpiredPacketRestart(t *testing.T, mode string) 
 				t.Fatal(err)
 			}
 		}
-		restarted, err := buildDaemonWithDependencies(context.Background(), args, getenv, &bytes.Buffer{}, daemonDependencies{openPostgres: postgresstore.Open, clock: clock, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()})
+		restarted, err := buildDaemonWithDependencies(context.Background(), args, getenv, &bytes.Buffer{}, daemonDependencies{clock: clock, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()})
 		if restarted != nil {
 			restarted.Close()
 			t.Fatal("unproven mixed history admitted")

@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	postgresstore "github.com/georgejieh/open-trestle/adapters/storage/postgres"
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/client"
 	"github.com/georgejieh/open-trestle/controlplane"
@@ -120,7 +119,7 @@ func TestDaemonRecoversPreparedContextAbstentionBeforeExpiredLeaseSettlement(t *
 				}
 			}
 			futureClock := daemonBudgetedRawClock{at: time.Now().UTC().Add(35 * time.Second).Truncate(time.Millisecond)}
-			d, err = buildDaemonWithDependencies(context.Background(), args, getenv, &bytes.Buffer{}, daemonDependencies{openPostgres: postgresstore.Open, clock: futureClock, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()})
+			d, err = buildDaemonWithDependencies(context.Background(), args, getenv, &bytes.Buffer{}, daemonDependencies{clock: futureClock, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()})
 			if err != nil {
 				t.Fatalf("recovery startup after lease expiry: %v", err)
 			}

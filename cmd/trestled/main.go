@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"crypto/tls"
-	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -24,13 +23,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	awskmsclient "github.com/aws/aws-sdk-go-v2/service/kms"
-	"github.com/georgejieh/open-trestle/adapters/keys/awskms"
 	openaiadapter "github.com/georgejieh/open-trestle/adapters/providers/openai"
 	githubsource "github.com/georgejieh/open-trestle/adapters/scm/github"
-	postgresstore "github.com/georgejieh/open-trestle/adapters/storage/postgres"
-	s3store "github.com/georgejieh/open-trestle/adapters/storage/s3"
 	githubwebhook "github.com/georgejieh/open-trestle/adapters/webhook/github"
 	"github.com/georgejieh/open-trestle/artifact"
 	"github.com/georgejieh/open-trestle/audit"
@@ -48,7 +42,6 @@ import (
 	"github.com/georgejieh/open-trestle/internal/evidence"
 	"github.com/georgejieh/open-trestle/internal/fileauthority"
 	memorycore "github.com/georgejieh/open-trestle/internal/memory"
-	providerconfig "github.com/georgejieh/open-trestle/internal/provider"
 	reviewcore "github.com/georgejieh/open-trestle/internal/review"
 	"github.com/georgejieh/open-trestle/internal/scm"
 	"github.com/georgejieh/open-trestle/runtimeadmin"
@@ -120,32 +113,13 @@ func main() {
 		os.Exit(1)
 	}
 }
-func newDaemonRemoteStorageTransport() *http.Transport {
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.Proxy = nil
-	transport.DisableKeepAlives = true
-	transport.ForceAttemptHTTP2 = false
-	protocols := new(http.Protocols)
-	protocols.SetHTTP1(true)
-	transport.Protocols = protocols
-	transport.TLSNextProto = map[string]func(string, *tls.Conn) http.RoundTripper{}
-	transport.TLSClientConfig.NextProtos = []string{"http/1.1"}
-	transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
-	transport.ResponseHeaderTimeout = 10 * time.Second
-	transport.MaxResponseHeaderBytes = 1 << 20
-	return transport
-}
-
-type daemonCloserFunc func() error
-
-func (f daemonCloserFunc) Close() error { return f() }
 
 // buildDaemon prepares the secret scanner's cache only once the configuration
 // is valid, so a configuration error is reported at once.
 func buildDaemon(ctx context.Context, args []string, getenv func(string) string, stderr io.Writer) (*daemon, error) {
 	scanner := installedDaemonScanner(getenv)
 	sanitizer := scanner.sanitizer()
-	d, err := buildDaemonWithDependencies(ctx, args, getenv, stderr, daemonDependencies{openPostgres: postgresstore.Open, clock: httpapi.SystemClock{}, generationSanitizer: reviewcore.NewFixedGenerationRequestSanitizer(sanitizer), verificationSanitizer: reviewcore.NewFixedVerificationRequestSanitizer(sanitizer)})
+	d, err := buildDaemonWithDependencies(ctx, args, getenv, stderr, daemonDependencies{clock: httpapi.SystemClock{}, generationSanitizer: reviewcore.NewFixedGenerationRequestSanitizer(sanitizer), verificationSanitizer: reviewcore.NewFixedVerificationRequestSanitizer(sanitizer)})
 	if err != nil {
 		return nil, err
 	}
@@ -162,7 +136,7 @@ func publicationContentScannerFromGenerationSanitizer(sanitizer reviewcore.Gener
 }
 
 func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func(string) string, stderr io.Writer, deps daemonDependencies) (result *daemon, err error) {
-	if daemonNilDependency(ctx) || getenv == nil || daemonNilDependency(stderr) || deps.openPostgres == nil || daemonNilDependency(deps.clock) {
+	if daemonNilDependency(ctx) || getenv == nil || daemonNilDependency(stderr) || daemonNilDependency(deps.clock) {
 		return nil, ErrInvalidDaemonConfiguration
 	}
 	if err := ctx.Err(); err != nil {
@@ -186,21 +160,6 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 	localGitRepositoryName := flags.String("local-git-repository-name", "", "local Git repository name")
 	localFullReview := flags.Bool("local-full-review", false, "admit policy-bound local reviews")
 	localModelWorkers := flags.Bool("local-model-workers", false, "execute policy-bound local generation, verification, and readiness tasks")
-	metadataStore := flags.String("metadata-store", "local", "metadata store: local or postgres")
-	postgresAuthorityIdentity := flags.String("postgres-authority-identity", "", "non-secret PostgreSQL publication authority identity")
-	postgresDatabaseAuthorityIdentity := flags.String("postgres-database-authority-identity", "", "expected runtime-role PostgreSQL database authority identity")
-	applyMigrations := flags.Bool("apply-migrations", false, "apply PostgreSQL migrations before startup")
-	artifactStoreMode := flags.String("artifact-store", "local", "artifact store: local or s3")
-	artifactErasureMode := flags.String("artifact-erasure-mode", "legacy", "artifact erasure mode: legacy or budgeted")
-	erasurePolicyPath := flags.String("erasure-policy", "", "protected artifact erasure policy path")
-	s3ErasureTrustedCAPath := flags.String("s3-erasure-trusted-ca", "", "protected S3 erasure CA PEM path")
-	s3Endpoint := flags.String("s3-endpoint", "", "path-style S3 endpoint")
-	s3Region := flags.String("s3-region", "", "S3 region")
-	s3Bucket := flags.String("s3-bucket", "", "S3 artifact bucket")
-	s3Prefix := flags.String("s3-prefix", "open-trestle", "S3 object prefix")
-	kmsRegion := flags.String("kms-region", "", "AWS KMS region")
-	kmsKeyARN := flags.String("kms-key-arn", "", "exact tenant AWS KMS key ARN")
-	kmsEndpoint := flags.String("kms-endpoint", "", "optional AWS KMS endpoint")
 	tenantID := flags.String("tenant", "", "tenant identifier")
 	tlsCertificate := flags.String("tls-cert", "", "TLS certificate file")
 	tlsKey := flags.String("tls-key", "", "TLS private key file")
@@ -214,11 +173,7 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 	githubFullName := flags.String("github-repository-full-name", "", "lowercase owner/name expected in GitHub payloads")
 	githubPolicyIdentity := flags.String("github-review-policy-identity", "", "exact review policy identity")
 	githubPublisherID := flags.String("github-publisher-id", githubwebhook.DefaultGitHubPublisherID, "exact publisher implementation identifier")
-	githubEnablePublication := flags.Bool("github-enable-publication", false, "enable repository-policy-authorized GitHub publication")
-	githubPublicationPolicyIdentity := flags.String("github-publication-policy-identity", "", "publication effect policy identity")
-	githubPublicationPrincipalIdentity := flags.String("github-publication-principal-identity", "", "publication authority principal identity")
-	githubPublicationAuthorizationTTL := flags.Duration("github-publication-authorization-ttl", 10*time.Minute, "lifetime of a scope-bound publication authorization")
-	githubReviewMode := flags.String("github-review-mode", "advisory", "review mode: local, advisory, or required")
+	githubReviewMode := flags.String("github-review-mode", "advisory", "review mode: local or advisory")
 	var githubHandlers repositoryFlags
 	flags.Var(&githubHandlers, "github-handler", "task kind=handler identity; repeat for each required kind")
 	var repositories repositoryFlags
@@ -226,43 +181,11 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 	if err := flags.Parse(args); err != nil {
 		return nil, ErrInvalidDaemonConfiguration
 	}
-	if *localModelWorkers && (!*localFullReview || *setupState == "" || *localGitObjectsRoot == "" || *runtimeRouteInventory == "" || *runtimePolicy == "" || *githubOpenRuns || *githubLocalDeterministicWorkers || *githubEnablePublication || *metadataStore != "local" || *artifactStoreMode != "local" || !daemonLoopbackAddress(*listenAddress)) {
+	if *localModelWorkers && (!*localFullReview || *setupState == "" || *localGitObjectsRoot == "" || *runtimeRouteInventory == "" || *runtimePolicy == "" || *githubOpenRuns || *githubLocalDeterministicWorkers || !daemonLoopbackAddress(*listenAddress)) {
 		return nil, ErrInvalidDaemonConfiguration
 	}
 	credential := getenv("OPEN_TRESTLE_API_TOKEN")
 	observerCredential := getenv("OPEN_TRESTLE_OBSERVER_TOKEN")
-	postgresURL := getenv("OPEN_TRESTLE_POSTGRES_URL")
-	migrationURL := getenv("OPEN_TRESTLE_POSTGRES_MIGRATION_URL")
-	awsAccessKey := getenv("OPEN_TRESTLE_AWS_ACCESS_KEY_ID")
-	awsSecretKey := getenv("OPEN_TRESTLE_AWS_SECRET_ACCESS_KEY")
-	awsSessionToken := getenv("OPEN_TRESTLE_AWS_SESSION_TOKEN")
-	s3AccessKey := getenv("OPEN_TRESTLE_S3_ACCESS_KEY_ID")
-	s3SecretKey := getenv("OPEN_TRESTLE_S3_SECRET_ACCESS_KEY")
-	s3SessionToken := getenv("OPEN_TRESTLE_S3_SESSION_TOKEN")
-	budgetedArtifactErasure := *artifactErasureMode == "budgeted"
-	validArtifactErasureMode := *artifactErasureMode == "legacy" || budgetedArtifactErasure
-	if !validArtifactErasureMode || !budgetedArtifactErasure && (*erasurePolicyPath != "" || *s3ErasureTrustedCAPath != "") {
-		return nil, ErrInvalidDaemonConfiguration
-	}
-	if budgetedArtifactErasure && (*erasurePolicyPath == "" || *s3ErasureTrustedCAPath == "" || *metadataStore != "postgres" || *artifactStoreMode != "s3" || *applyMigrations || migrationURL != "") {
-		return nil, ErrInvalidDaemonConfiguration
-	}
-	validStore := *metadataStore == "local" || *metadataStore == "postgres"
-	validPostgres := *metadataStore != "postgres" || postgresURL != "" && daemonNonzeroDigest(*postgresDatabaseAuthorityIdentity) && (*applyMigrations == (migrationURL != ""))
-	validLocal := *metadataStore != "local" || postgresURL == "" && migrationURL == "" && !*applyMigrations && *postgresAuthorityIdentity == "" && *postgresDatabaseAuthorityIdentity == ""
-	if !validStore || !validPostgres || !validLocal {
-		return nil, ErrInvalidDaemonConfiguration
-	}
-	if *postgresAuthorityIdentity != "" && !daemonNonzeroDigest(*postgresAuthorityIdentity) || *postgresDatabaseAuthorityIdentity != "" && !daemonNonzeroDigest(*postgresDatabaseAuthorityIdentity) {
-		return nil, ErrInvalidDaemonConfiguration
-	}
-	remoteValues := *s3Endpoint != "" || *s3Region != "" || *s3Bucket != "" || *kmsRegion != "" || *kmsKeyARN != "" || *kmsEndpoint != "" || awsAccessKey != "" || awsSecretKey != "" || awsSessionToken != "" || s3AccessKey != "" || s3SecretKey != "" || s3SessionToken != ""
-	validArtifactMode := *artifactStoreMode == "local" || *artifactStoreMode == "s3"
-	validS3 := *artifactStoreMode != "s3" || *metadataStore == "postgres" && *s3Endpoint != "" && *s3Region != "" && *s3Bucket != "" && *kmsRegion != "" && *kmsKeyARN != "" && s3AccessKey != "" && s3SecretKey != "" && awsAccessKey != "" && awsSecretKey != "" && s3AccessKey != awsAccessKey && (*kmsEndpoint == "" || validSecureServiceEndpoint(*kmsEndpoint))
-	validLocalArtifact := *artifactStoreMode != "local" || !remoteValues
-	if !validArtifactMode || !validS3 || !validLocalArtifact {
-		return nil, ErrInvalidDaemonConfiguration
-	}
 	githubSecretValue := getenv("OPEN_TRESTLE_GITHUB_WEBHOOK_SECRET")
 	githubSecret := []byte(githubSecretValue)
 	githubSecretValue = ""
@@ -282,8 +205,7 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 			return nil, ErrInvalidDaemonConfiguration
 		}
 	}
-	githubSecretDigest := sha256.Sum256(githubSecret)
-	plannerConfigured := *githubOpenRuns || *githubLocalDeterministicWorkers || *githubFullName != "" || *githubPolicyIdentity != "" || len(githubHandlers) != 0 || *githubReviewMode != "advisory" || *githubPublisherID != githubwebhook.DefaultGitHubPublisherID || *githubEnablePublication || *githubPublicationPolicyIdentity != "" || *githubPublicationPrincipalIdentity != "" || *githubPublicationAuthorizationTTL != 10*time.Minute
+	plannerConfigured := *githubOpenRuns || *githubLocalDeterministicWorkers || *githubFullName != "" || *githubPolicyIdentity != "" || len(githubHandlers) != 0 || *githubReviewMode != "advisory" || *githubPublisherID != githubwebhook.DefaultGitHubPublisherID
 	runtimeConfigured := *runtimeRouteInventory != "" || *runtimePolicy != ""
 	localGitValues := []string{*setupState, *expectedSetupRootIdentity, *localGitObjectsRoot, *localGitRepositoryAuthority, *localGitRepositoryNamespace, *localGitRepositoryName}
 	localGitConfigured := false
@@ -295,10 +217,10 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 	if *localModelWorkers && (!*localFullReview || !localGitConfigured) {
 		return nil, ErrInvalidDaemonConfiguration
 	}
-	if localGitConfigured && (!localGitComplete || githubConfigured || plannerConfigured || runtimeConfigured != *localFullReview || *metadataStore != "local" || *artifactStoreMode != "local" || len(repositories) != 1 || *tlsCertificate != "" || *tlsKey != "" || !daemonLoopbackAddress(*listenAddress)) {
+	if localGitConfigured && (!localGitComplete || githubConfigured || plannerConfigured || runtimeConfigured != *localFullReview || len(repositories) != 1 || *tlsCertificate != "" || *tlsKey != "" || !daemonLoopbackAddress(*listenAddress)) {
 		return nil, ErrInvalidDaemonConfiguration
 	}
-	if *metadataStore == "local" && *setupState != "" {
+	if *setupState != "" {
 		stateRoot, rootErr := filepath.Abs(*stateDirectory)
 		setupParent, parentErr := filepath.Abs(filepath.Dir(*setupState))
 		if rootErr != nil || parentErr != nil {
@@ -326,8 +248,8 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 	if *localFullReview && !localGitConfigured || runtimeConfigured && (*runtimeRouteInventory == "" || *runtimePolicy == "" || !*githubLocalDeterministicWorkers && !*localFullReview) {
 		return nil, ErrInvalidDaemonConfiguration
 	}
-	publicationConfigured := *githubEnablePublication || *githubPublicationPolicyIdentity != "" || *githubPublicationPrincipalIdentity != "" || *githubPublicationAuthorizationTTL != 10*time.Minute
-	if publicationConfigured != *githubEnablePublication || *githubEnablePublication && (!runtimeConfigured || *githubReviewMode != "required" || *metadataStore != "postgres" || !daemonNonzeroDigest(*postgresAuthorityIdentity) || !daemonNonzeroDigest(*githubPublicationPolicyIdentity) || !daemonNonzeroDigest(*githubPublicationPrincipalIdentity) || *githubPublicationAuthorizationTTL < time.Minute || *githubPublicationAuthorizationTTL > 24*time.Hour || *githubPublicationAuthorizationTTL%time.Millisecond != 0) {
+	// Required review needs a publication fence, which no local store provides.
+	if *githubReviewMode == "required" {
 		return nil, ErrInvalidDaemonConfiguration
 	}
 	if plannerConfigured != *githubOpenRuns || *githubOpenRuns && !githubConfigured || *githubLocalDeterministicWorkers && !*githubOpenRuns || githubAPIToken != "" && !*githubLocalDeterministicWorkers {
@@ -380,18 +302,6 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 	}
 	var daemonGitHubSourceClock githubsource.BrokerClock = githubsource.SystemBrokerClock{}
 	var daemonWebhookClock githubwebhook.Clock = githubwebhook.SystemClock{}
-	var budgetedClock daemonErasureClock
-	var budgetedStartupSample time.Time
-	if budgetedArtifactErasure {
-		budgetedClock = daemonErasureClock{inner: deps.clock}
-		budgetedStartupSample = budgetedClock.Now()
-		if !daemonValidErasureClockSample(budgetedStartupSample) {
-			return nil, ErrInvalidDaemonConfiguration
-		}
-		daemonArtifactClock = budgetedClock
-		daemonGitHubSourceClock = budgetedClock
-		daemonWebhookClock = budgetedClock
-	}
 	var generationStartup *localGenerationStartupAuthority
 	if *localFullReview {
 		generationStartup, err = loadLocalGenerationStartupAuthority(ctx, *runtimeRouteInventory, *runtimePolicy, getenv, deps.generationSanitizer)
@@ -427,255 +337,51 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 			return nil, rootErr
 		}
 	}
-	if *metadataStore == "local" && *artifactStoreMode != "local" {
-		if mixedErr := rejectMixedLocalOwner(*stateDirectory); mixedErr != nil {
-			return nil, mixedErr
-		}
-	}
 	var journal controlplane.RunJournal
 	var packetOwner *localPacketOwner
 	var artifactStore artifact.RetentionStore
-	var artifactKeyProvider artifact.EnvelopeKeyProvider
-	var budgetedPolicy artifact.ProtectedErasurePolicy
-	var budgetedErasureBackend *s3store.ErasureBackend
-	budgetedErasureConstructed := false
 	artifactProtection := artifact.ProtectionProcessPrivate
-	if *artifactStoreMode == "local" && *metadataStore == "local" {
-		active, fileJournal, bootOwner, gateErr := startLocalSourceOwnerGateWithAuthority(ctx, resources, *stateDirectory, *setupState, &localSetupPlan, *tenantID, repositories[0], localRepository, localObjectsRoot, localObjectStore, localSourceAdapter, localRootDigest, daemonArtifactClock, generationStartup, nil)
-		if gateErr != nil {
-			if localGitConfigured && (errors.Is(gateErr, errLocalSourceOwnerSnapshot) || errors.Is(gateErr, errLocalMissingStateBoundary)) {
-				return nil, errors.Join(ErrInvalidDaemonConfiguration, gateErr)
-			}
-			return nil, gateErr
+	active, fileJournal, bootOwner, gateErr := startLocalSourceOwnerGateWithAuthority(ctx, resources, *stateDirectory, *setupState, &localSetupPlan, *tenantID, repositories[0], localRepository, localObjectsRoot, localObjectStore, localSourceAdapter, localRootDigest, daemonArtifactClock, generationStartup, nil)
+	if gateErr != nil {
+		if localGitConfigured && (errors.Is(gateErr, errLocalSourceOwnerSnapshot) || errors.Is(gateErr, errLocalMissingStateBoundary)) {
+			return nil, errors.Join(ErrInvalidDaemonConfiguration, gateErr)
 		}
-		artifactStore = active
-		journal = fileJournal
-		packetOwner = bootOwner
-		if packetOwner != nil && len(packetOwner.pendingExpiredPackets) > 0 && (!*localFullReview || !localGitConfigured) {
-			return nil, errHistoricalPacketExpiryStartup
-		}
-	} else if *artifactStoreMode == "local" {
-		physicalArtifacts, storeErr := artifact.NewFileStore(filepath.Join(*stateDirectory, "artifacts"))
-		if storeErr != nil {
-			return nil, storeErr
-		}
-		resources.closers = append(resources.closers, physicalArtifacts)
-		artifactStore = physicalArtifacts
-	} else {
-		s3Credentials, err := s3store.NewCredentials(s3AccessKey, s3SecretKey, s3SessionToken)
-		if err != nil {
-			return nil, ErrInvalidDaemonConfiguration
-		}
-		var s3Backend *s3store.Backend
-		if !budgetedArtifactErasure {
-			s3CredentialProvider, err := s3store.NewStaticCredentialsProvider(s3Credentials)
-			if err != nil {
-				return nil, ErrInvalidDaemonConfiguration
-			}
-			s3Transport := newDaemonRemoteStorageTransport()
-			s3HTTPClient := &http.Client{Transport: s3Transport, Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return ErrInvalidDaemonConfiguration }}
-			s3Backend, err = s3store.New(s3store.Config{Endpoint: *s3Endpoint, Region: *s3Region, Bucket: *s3Bucket, Credentials: s3CredentialProvider, HTTPClient: s3HTTPClient})
-			if err != nil {
-				s3Transport.CloseIdleConnections()
-				return nil, ErrInvalidDaemonConfiguration
-			}
-			resources.closers = append(resources.closers, daemonCloserFunc(func() error { s3Transport.CloseIdleConnections(); return nil }))
-		}
-		transport := newDaemonRemoteStorageTransport()
-		kmsHTTPClient := &http.Client{
-			Transport:     boundedResponseTransport{inner: transport, maximum: 1 << 20},
-			Timeout:       30 * time.Second,
-			CheckRedirect: func(*http.Request, []*http.Request) error { return ErrInvalidDaemonConfiguration },
-		}
-		kmsCredentials := aws.NewCredentialsCache(aws.CredentialsProviderFunc(func(context.Context) (aws.Credentials, error) {
-			return aws.Credentials{AccessKeyID: awsAccessKey, SecretAccessKey: awsSecretKey, SessionToken: awsSessionToken, Source: "open-trestle-explicit"}, nil
-		}))
-		awsConfiguration := aws.Config{
-			Region: *kmsRegion, Credentials: kmsCredentials, HTTPClient: kmsHTTPClient,
-			RetryMaxAttempts: 3, RetryMode: aws.RetryModeStandard,
-		}
-		kmsClient := awskmsclient.NewFromConfig(awsConfiguration, func(options *awskmsclient.Options) {
-			if *kmsEndpoint != "" {
-				options.BaseEndpoint = aws.String(*kmsEndpoint)
-			}
-		})
-		keyProvider, err := awskms.New(kmsClient, *kmsRegion, []awskms.TenantKey{{TenantID: *tenantID, KeyARN: *kmsKeyARN}})
-		if err != nil {
-			transport.CloseIdleConnections()
-			return nil, ErrInvalidDaemonConfiguration
-		}
-		resources.closers = append(resources.closers, daemonCloserFunc(func() error { transport.CloseIdleConnections(); return nil }))
-		artifactKeyProvider = keyProvider
-		if budgetedArtifactErasure {
-			policy, policyErr := artifact.LoadProtectedErasurePolicy(ctx, *erasurePolicyPath)
-			if policyErr != nil {
-				return nil, ErrInvalidDaemonConfiguration
-			}
-			trustedCAPEM, caErr := loadProtectedErasureTrustedCA(ctx, *s3ErasureTrustedCAPath)
-			if caErr != nil {
-				return nil, caErr
-			}
-			erasureBackend, backendErr := s3store.NewErasureBackend(s3store.ErasureConfig{Endpoint: *s3Endpoint, Region: *s3Region, Bucket: *s3Bucket, Credentials: s3Credentials, TrustedCAPEM: trustedCAPEM})
-			clear(trustedCAPEM)
-			if backendErr != nil {
-				return nil, ErrInvalidDaemonConfiguration
-			}
-			if err := validateBudgetedErasureStartupPolicy(policy, erasureBackend, *postgresDatabaseAuthorityIdentity, *s3Prefix, budgetedStartupSample); err != nil {
-				return nil, err
-			}
-			budgetedPolicy = policy
-			budgetedErasureBackend = erasureBackend
-		} else {
-			envelopeStore, err := artifact.NewEnvelopeStore(*s3Prefix, s3Backend, keyProvider)
-			if err != nil {
-				return nil, ErrInvalidDaemonConfiguration
-			}
-			artifactStore = envelopeStore
-		}
-		artifactProtection = artifact.ProtectionEnvelopeEncrypted
+		return nil, gateErr
+	}
+	artifactStore = active
+	journal = fileJournal
+	packetOwner = bootOwner
+	if packetOwner != nil && len(packetOwner.pendingExpiredPackets) > 0 && (!*localFullReview || !localGitConfigured) {
+		return nil, errHistoricalPacketExpiryStartup
 	}
 	var taskNotificationQueue controlplane.TaskNotificationQueue
 	var diagnosticStore diagnostics.Store
 	var auditLedger audit.Ledger
-	var publicationAttemptGuard reviewcore.PublicationAttemptGuard
-	var postgresDatabase *sql.DB
-	if *metadataStore == "local" {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		if *artifactStoreMode != "local" {
-			fileJournal, journalErr := controlplane.NewFileRunJournal(*stateDirectory)
-			if journalErr != nil {
-				return nil, journalErr
-			}
-			resources.closers = append(resources.closers, fileJournal)
-			if *artifactStoreMode != "local" {
-				if mixedErr := fileJournal.WithOwnedRoot(ctx, func(root *os.Root) error {
-					if err := noGitOwnerAbsent(root); err != nil {
-						return err
-					}
-					if _, err := fileJournal.InspectStartupInventory(ctx); err != nil {
-						return localStartupInventoryError(err)
-					}
-					return noGitOwnerAbsent(root)
-				}); mixedErr != nil {
-					return nil, mixedErr
-				}
-			} else if _, inventoryErr := fileJournal.InspectStartupInventory(ctx); inventoryErr != nil {
-				return nil, localStartupInventoryError(inventoryErr)
-			}
-			journal = fileJournal
-		}
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		fileAudit, err := audit.NewFileLedger(filepath.Join(*stateDirectory, "audit"))
-		if err != nil {
-			return nil, err
-		}
-		resources.closers = append(resources.closers, fileAudit)
-		auditLedger = fileAudit
-		if packetOwner != nil && packetOwner.pendingSettlementAudit {
-			if err := verifyOwnerSettledStartup(ctx, packetOwner, fileAudit, localObjectsRoot); err != nil {
-				return nil, err
-			}
-			packetOwner.pendingSettlementAudit = false
-		}
-		taskNotificationQueue = controlplane.NewMemoryTaskNotificationQueue()
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		fileDiagnostics, err := diagnostics.NewFileStore(filepath.Join(*stateDirectory, "diagnostics"))
-		if err != nil {
-			return nil, err
-		}
-		resources.closers = append(resources.closers, fileDiagnostics)
-		diagnosticStore = fileDiagnostics
-	} else {
-		if *applyMigrations {
-			migrationContext, cancel := context.WithTimeout(ctx, 45*time.Second)
-			migrationDatabase, openErr := deps.openPostgres(migrationContext, migrationURL, postgresstore.PoolOptions{})
-			if openErr == nil {
-				openErr = postgresstore.ApplyMigrations(migrationContext, migrationDatabase)
-			}
-			if migrationDatabase != nil {
-				_ = migrationDatabase.Close()
-			}
-			cancel()
-			if openErr != nil {
-				return nil, openErr
-			}
-		}
-		connectContext, cancel := context.WithTimeout(ctx, 15*time.Second)
-		database, err := deps.openPostgres(connectContext, postgresURL, postgresstore.PoolOptions{})
-		if err == nil {
-			var databaseAuthority postgresstore.VerifiedDatabaseAuthority
-			databaseAuthority, err = postgresstore.VerifyDatabaseStorageAuthority(connectContext, database)
-			if err == nil && databaseAuthority.Identity() != *postgresDatabaseAuthorityIdentity {
-				err = postgresstore.ErrDatabaseAuthorityMismatch
-			}
-		}
-		cancel()
-		if err != nil {
-			if database != nil {
-				_ = database.Close()
-			}
-			return nil, err
-		}
-		resources.closers = append(resources.closers, database)
-		postgresDatabase = database
-		var postgresJournal *postgresstore.Store
-		if *postgresAuthorityIdentity != "" {
-			authorityContext, authorityCancel := context.WithTimeout(ctx, 15*time.Second)
-			postgresJournal, err = postgresstore.NewWithPublicationAuthority(authorityContext, database, *postgresAuthorityIdentity)
-			authorityCancel()
-		} else {
-			postgresJournal, err = postgresstore.New(database)
-		}
-		if err != nil {
-			return nil, err
-		}
-		index, err := postgresstore.NewArtifactIndex(database)
-		if err != nil {
-			return nil, err
-		}
-		var indexedArtifacts *postgresstore.IndexedArtifactStore
-		if budgetedArtifactErasure {
-			budgetedIndexContext, budgetedIndexCancel := context.WithTimeout(ctx, 15*time.Second)
-			budgetedIndexAuthority, verifyErr := postgresstore.VerifyBudgetedErasureIndex(budgetedIndexContext, index)
-			budgetedIndexCancel()
-			if verifyErr != nil {
-				return nil, verifyErr
-			}
-			indexedArtifacts, err = postgresstore.NewIndexedBudgetedEnvelopeStore(index, postgresstore.BudgetedEnvelopeDependencies{
-				Backend: budgetedErasureBackend, Keys: artifactKeyProvider, Clock: budgetedClock, IndexAuthority: budgetedIndexAuthority,
-			}, budgetedPolicy)
-			if err == nil {
-				budgetedErasureConstructed = true
-			}
-		} else {
-			indexedArtifacts, err = postgresstore.NewIndexedArtifactStore(index, artifactStore)
-		}
-		if err != nil {
-			return nil, err
-		}
-		artifactStore = indexedArtifacts
-		postgresDiagnostics, err := postgresstore.NewDiagnosticStore(database, artifactStore, postgresstore.DiagnosticStoreOptions{
-			Classification: artifact.ClassificationRestricted, Protection: artifactProtection,
-			Retention: 30 * 24 * time.Hour, Clock: daemonArtifactClock,
-		})
-		if err != nil {
-			return nil, err
-		}
-		journal, diagnosticStore = postgresJournal, postgresDiagnostics
-		publicationAttemptGuard = postgresJournal
-		postgresAudit, err := postgresstore.NewAuditLedger(database)
-		if err != nil {
-			return nil, err
-		}
-		auditLedger = postgresAudit
-		taskNotificationQueue = postgresJournal
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
+	fileAudit, err := audit.NewFileLedger(filepath.Join(*stateDirectory, "audit"))
+	if err != nil {
+		return nil, err
+	}
+	resources.closers = append(resources.closers, fileAudit)
+	auditLedger = fileAudit
+	if packetOwner != nil && packetOwner.pendingSettlementAudit {
+		if err := verifyOwnerSettledStartup(ctx, packetOwner, fileAudit, localObjectsRoot); err != nil {
+			return nil, err
+		}
+		packetOwner.pendingSettlementAudit = false
+	}
+	taskNotificationQueue = controlplane.NewMemoryTaskNotificationQueue()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	fileDiagnostics, err := diagnostics.NewFileStore(filepath.Join(*stateDirectory, "diagnostics"))
+	if err != nil {
+		return nil, err
+	}
+	resources.closers = append(resources.closers, fileDiagnostics)
+	diagnosticStore = fileDiagnostics
 	taskScheduler, err := controlplane.NewTaskNotificationScheduler(journal, taskNotificationQueue)
 	if err != nil {
 		return nil, err
@@ -834,26 +540,15 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 		if policyErr != nil {
 			return nil, ErrInvalidDaemonConfiguration
 		}
-		if *metadataStore == "local" {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-			fileInbox, err := webhook.NewFileStore(filepath.Join(*stateDirectory, "webhook-inbox"))
-			if err != nil {
-				return nil, err
-			}
-			resources.closers = append(resources.closers, fileInbox)
-			inboxStore = fileInbox
-		} else {
-			postgresInbox, err := postgresstore.NewWebhookStore(postgresDatabase, artifactStore, postgresstore.WebhookStoreOptions{
-				Classification: artifact.ClassificationRestricted, Protection: artifactProtection,
-				Retention: 24 * time.Hour, Clock: daemonArtifactClock,
-			})
-			if err != nil {
-				return nil, err
-			}
-			inboxStore = postgresInbox
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
+		fileInbox, err := webhook.NewFileStore(filepath.Join(*stateDirectory, "webhook-inbox"))
+		if err != nil {
+			return nil, err
+		}
+		resources.closers = append(resources.closers, fileInbox)
+		inboxStore = fileInbox
 		inbox, inboxErr := webhook.NewInbox(inboxStore, policy)
 		if inboxErr != nil {
 			return nil, inboxErr
@@ -884,9 +579,6 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 				localHandlers := []controlplane.TaskHandler{source.handler, changeTask, analysisTask, memoryTask}
 				var pipeline runtimecatalog.PipelineCatalog
 				if runtimeConfigured {
-					if mode == controlplane.ReviewRunRequired && !*githubEnablePublication {
-						return nil, ErrInvalidDaemonConfiguration
-					}
 					inventory, configuration, configErr := loadRuntimeConfiguration(ctx, *runtimeRouteInventory, *runtimePolicy)
 					if configErr != nil || configuration.ReviewPolicyIdentity() != *githubPolicyIdentity {
 						return nil, ErrInvalidDaemonConfiguration
@@ -910,21 +602,6 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 						return nil, ErrInvalidDaemonConfiguration
 					}
 					localHandlers = append(localHandlers, contextTask, generationTask, verificationTask, readinessTask)
-					if mode == controlplane.ReviewRunRequired {
-						effectAuthorizer, effectErr := reviewcore.NewRepositoryPublicationAuthorizer(*tenantID, *githubRepository, *githubPublicationPolicyIdentity, *githubPublicationPrincipalIdentity, *githubPublicationAuthorizationTTL)
-						publicationCredentials := repositoryPublicationTokenProvider{tenantID: *tenantID, repositoryID: *githubRepository, repositoryFullName: *githubFullName, publisherID: *githubPublisherID, environment: "OPEN_TRESTLE_GITHUB_PUBLICATION_TOKEN", forbiddenCredentialDigest: githubSecretDigest, getenv: getenv}
-						publicationAdapter, adapterErr := githubsource.NewPublicationAdapter(githubsource.PublicationConfig{PublisherID: *githubPublisherID, RepositoryAuthority: "github.com", Credentials: publicationCredentials, CredentialIdentity: publicationCredentials.ConfigurationIdentity(), AttemptGuard: publicationAttemptGuard})
-						if effectErr != nil || adapterErr != nil {
-							return nil, ErrInvalidDaemonConfiguration
-						}
-						publishers, publisherErr := reviewcore.NewPublisherCatalog([]reviewcore.Publisher{publicationAdapter})
-						resolvers, resolverErr := reviewcore.NewHeadResolverCatalog([]reviewcore.HeadResolver{publicationAdapter})
-						publicationTask, publicationErr := publicationhandler.NewHandler(artifactStore, daemonArtifactClock, auditLedger, configuration.ReviewPolicyIdentity(), configuration.Publication(), effectAuthorizer, publishers, resolvers)
-						if publisherErr != nil || resolverErr != nil || publicationErr != nil {
-							return nil, ErrInvalidDaemonConfiguration
-						}
-						localHandlers = append(localHandlers, publicationTask)
-					}
 					pipeline, configErr = runtimecatalog.NewPipelineCatalog(mode, localHandlers)
 					if configErr != nil {
 						return nil, ErrInvalidDaemonConfiguration
@@ -994,12 +671,6 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 	}
 	componentReadiness := readiness
 	componentNames := append([]string(nil), resources.supervisorNames...)
-	if budgetedErasureConstructed {
-		ready := make(chan struct{})
-		close(ready)
-		componentReadiness = append(componentReadiness, ready)
-		componentNames = append(componentNames, "artifact_erasure_budgeted")
-	}
 	statusMode := runtimeadmin.ReviewDisabled
 	if localGitConfigured {
 		statusMode = runtimeadmin.ReviewLocal
@@ -1014,24 +685,10 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 			statusMode = runtimeadmin.ReviewRequired
 		}
 	}
-	metadataBackend := runtimeadmin.MetadataBackend(*metadataStore)
-	artifactBackend := runtimeadmin.ArtifactBackend(*artifactStoreMode)
-	notificationBackend := runtimeadmin.NotificationProcessLocal
-	rateLimitBackend := runtimeadmin.RateLimitProcessLocal
-	rateLimitAuthorityIdentity := ""
-	if *metadataStore == "postgres" {
-		notificationBackend = runtimeadmin.NotificationPostgres
-		rateLimitBackend = runtimeadmin.RateLimitPostgres
-		rateLimitAuthorityIdentity, err = postgresstore.RuntimeAPIRateLimitAuthorityIdentity(*postgresDatabaseAuthorityIdentity)
-		if err != nil {
-			return nil, err
-		}
-	}
 	statusConfiguration, err := runtimeadmin.NewConfiguration(runtimeadmin.ConfigurationOptions{
-		TenantID: *tenantID, RepositoryIDs: []string(repositories), MetadataBackend: metadataBackend, DatabaseAuthorityIdentity: *postgresDatabaseAuthorityIdentity,
-		ArtifactBackend: artifactBackend, ArtifactProtection: runtimeadmin.Protection(artifactProtection.String()), NotificationBackend: notificationBackend, RateLimitBackend: rateLimitBackend, RateLimitAuthorityIdentity: rateLimitAuthorityIdentity,
+		TenantID: *tenantID, RepositoryIDs: []string(repositories), MetadataBackend: runtimeadmin.MetadataLocal,
+		ArtifactBackend: runtimeadmin.ArtifactLocal, ArtifactProtection: runtimeadmin.Protection(artifactProtection.String()), NotificationBackend: runtimeadmin.NotificationProcessLocal, RateLimitBackend: runtimeadmin.RateLimitProcessLocal,
 		ReviewMode: statusMode, WebhookIngress: githubConfigured, LocalWorkers: localGitConfigured || *githubLocalDeterministicWorkers,
-		PublicationEnabled: *githubEnablePublication, PublicationFenceVerified: *postgresAuthorityIdentity != "",
 		RouteInventoryIdentity: statusInventoryIdentity, RuntimePolicyIdentity: statusPolicyIdentity, RouteCount: statusRouteCount, Handlers: statusHandlers,
 	})
 	if err != nil {
@@ -1046,13 +703,9 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 		return nil, ErrInvalidDaemonConfiguration
 	}
 	var requestLimiter, principalLimiter httpapi.RateLimiter
-	if postgresDatabase != nil {
-		requestLimiter, principalLimiter, err = postgresstore.NewRuntimeAPIRateLimiters(postgresDatabase, *postgresDatabaseAuthorityIdentity)
-	} else {
-		requestLimiter, err = httpapi.NewMemoryRateLimiter(120, time.Minute, 10_000)
-		if err == nil {
-			principalLimiter, err = httpapi.NewMemoryRateLimiter(600, time.Minute, 1_024)
-		}
+	requestLimiter, err = httpapi.NewMemoryRateLimiter(120, time.Minute, 10_000)
+	if err == nil {
+		principalLimiter, err = httpapi.NewMemoryRateLimiter(600, time.Minute, 1_024)
 	}
 	if err != nil {
 		return nil, err
@@ -1327,54 +980,6 @@ func openRuntimeConfigurationFile(path string) (*os.File, error) {
 	return file, nil
 }
 
-type repositoryPublicationTokenProvider struct {
-	tenantID, repositoryID, repositoryFullName, publisherID, environment string
-	forbiddenCredentialDigest                                            [sha256.Size]byte
-	getenv                                                               func(string) string
-}
-
-func (p repositoryPublicationTokenProvider) ConfigurationIdentity() string {
-	encoded, _ := json.Marshal(struct {
-		Contract                        string `json:"contract"`
-		Version                         int    `json:"version"`
-		Tenant                          string `json:"tenant"`
-		Repository                      string `json:"repository"`
-		FullName                        string `json:"full_name"`
-		Publisher                       string `json:"publisher"`
-		Environment                     string `json:"environment"`
-		WebhookSecretSeparationRequired bool   `json:"webhook_secret_separation_required"`
-	}{"open-trestle/github-publication-credential-provider", 1, p.tenantID, p.repositoryID, p.repositoryFullName, p.publisherID, p.environment, p.forbiddenCredentialDigest != [sha256.Size]byte{}})
-	sum := sha256.Sum256(encoded)
-	return hex.EncodeToString(sum[:])
-}
-
-func (p repositoryPublicationTokenProvider) RetrievePublicationToken(ctx context.Context, scope audit.ReviewScope, target reviewcore.PublicationTarget) (githubsource.Token, error) {
-	if ctx == nil || ctx.Err() != nil || scope.Validate() != nil || target.Validate() != nil || scope.TenantID() != p.tenantID || scope.RepositoryID() != p.repositoryID || target.PublisherID() != p.publisherID || p.getenv == nil {
-		return githubsource.Token{}, githubsource.ErrPublicationCredentialsUnavailable
-	}
-	parts := strings.Split(p.repositoryFullName, "/")
-	repository := target.RepositoryIdentity()
-	if len(parts) != 2 || repository.Authority() != "github.com" || len(repository.Namespace()) != 1 || repository.Namespace()[0] != parts[0] || repository.Name() != parts[1] {
-		return githubsource.Token{}, githubsource.ErrPublicationCredentialsUnavailable
-	}
-	value := p.getenv(p.environment)
-	if value == "" {
-		return githubsource.Token{}, githubsource.ErrPublicationCredentialsUnavailable
-	}
-	raw := []byte(value)
-	value = ""
-	defer clear(raw)
-	digest := sha256.Sum256(raw)
-	if p.forbiddenCredentialDigest != [sha256.Size]byte{} && subtle.ConstantTimeCompare(digest[:], p.forbiddenCredentialDigest[:]) == 1 {
-		return githubsource.Token{}, githubsource.ErrPublicationCredentialsUnavailable
-	}
-	token, err := githubsource.NewToken(raw)
-	if err != nil {
-		return githubsource.Token{}, githubsource.ErrPublicationCredentialsUnavailable
-	}
-	return token, nil
-}
-
 type environmentOpenAICredentialResolver struct{ getenv func(string) string }
 
 func (r environmentOpenAICredentialResolver) ResolveOpenAICredentials(reference string) (openaiadapter.APIKeyProvider, error) {
@@ -1431,56 +1036,6 @@ func mergeGitHubHandlerBindings(bindings []githubwebhook.TaskHandlerBinding, han
 		}
 	}
 	return merged, nil
-}
-
-type boundedResponseTransport struct {
-	inner   http.RoundTripper
-	maximum int64
-}
-
-func (t boundedResponseTransport) RoundTrip(request *http.Request) (*http.Response, error) {
-	response, err := t.inner.RoundTrip(request)
-	if err != nil {
-		return nil, err
-	}
-	if response.ContentLength > t.maximum {
-		_ = response.Body.Close()
-		return nil, ErrInvalidDaemonConfiguration
-	}
-	response.Body = &boundedResponseBody{inner: response.Body, remaining: t.maximum}
-	return response, nil
-}
-
-type boundedResponseBody struct {
-	inner     io.ReadCloser
-	remaining int64
-}
-
-func (b *boundedResponseBody) Read(buffer []byte) (int, error) {
-	if b.remaining == 0 {
-		var probe [1]byte
-		count, err := b.inner.Read(probe[:])
-		if count != 0 {
-			return 0, ErrInvalidDaemonConfiguration
-		}
-		return 0, err
-	}
-	if int64(len(buffer)) > b.remaining {
-		buffer = buffer[:b.remaining]
-	}
-	count, err := b.inner.Read(buffer)
-	b.remaining -= int64(count)
-	return count, err
-}
-func (b *boundedResponseBody) Close() error { return b.inner.Close() }
-
-func validSecureServiceEndpoint(raw string) bool {
-	endpoint, err := providerconfig.ParseServiceEndpoint(raw)
-	if err != nil || endpoint.Path != "" && endpoint.Path != "/" {
-		return false
-	}
-	_, err = providerconfig.ClassifyServiceEndpoint(raw)
-	return err == nil
 }
 
 func daemonLoopbackAddress(address string) bool {
