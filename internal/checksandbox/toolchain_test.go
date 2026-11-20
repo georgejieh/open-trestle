@@ -68,9 +68,8 @@ func TestToolchainsRunInSandbox(t *testing.T) {
 				Path: []string{bin}, ReadOnly: []string{root}, Env: tool.env, Limits: limits,
 			})
 			if IsUnavailable(err) {
-				t.Logf("could not run, as reported: %v", err)
 				if strings.Contains(err.Error(), "unprivileged user namespaces") || strings.Contains(err.Error(), "AppContainer") || strings.Contains(err.Error(), "read access") {
-					return
+					t.Skipf("could not run, as reported: %v", err)
 				}
 				t.Fatalf("unexpected reason: %v", err)
 			}
