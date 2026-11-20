@@ -299,12 +299,11 @@ The release brings the whole loop to Windows and macOS:
   language-server facts could support verification, and heuristics such as
   historical co-change that may only point at review targets. Only the
   `structural` and `syntactic_candidate` grades exist today.
-- **Setup:** reachability checks for external delivery, broader replica and
-  failover coordination, no-egress enforcement, and governed bundle import.
+- **Setup:** reachability checks for external delivery and no-egress
+  enforcement.
 - **Deployment:** supported installation profiles, OpenTelemetry
   observability, a Docker Compose profile for a single operator, Helm charts
-  or Kubernetes manifests for larger installations, restore drills and
-  air-gapped distribution.
+  or Kubernetes manifests for larger installations, and restore drills.
 - **Release:** signing, attestation publication and verification, supported
   production upgrade and crash-recovery guarantees, deployment qualification,
   accessibility evidence, and realistic adjudicated evaluation data with

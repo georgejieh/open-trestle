@@ -172,4 +172,4 @@ Ingress can stay enabled without opening runs automatically, so you can validate
 
 ## Retained delivery history
 
-Expired delivery bodies are left out of reconciliation and of the count of active capacity, before any body is fetched. Their metadata remains, for deduplication. A signed redelivery of a retired ID returns `410 delivery_expired`, with no acceptance receipt and no new wake-up for processing. Queued notices for expired deliveries are ignored. Other store failures still block and surface through the normal retry path. Expiry is a retention rule and does not mean the data was physically erased.
+The file inbox does not expire deliveries. It keeps each accepted delivery's body and metadata under `webhook-inbox` in the state directory, and uses them for deduplication and reconciliation.
