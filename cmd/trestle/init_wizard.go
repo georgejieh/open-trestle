@@ -74,7 +74,7 @@ var initLocalServers = []struct{ name, endpoint string }{
 }
 
 var initStringFlags = []string{"directory", "base", "head", "provider", "endpoint", "verification-endpoint", "transport", "generation-model", "verification-model", "credential-env", "owner", "tenant", "repository", "repository-authority", "repository-namespace", "repository-name", "context-tokens", "output-tokens", "max-output-tokens", "input-micro-usd-per-million-tokens", "output-micro-usd-per-million-tokens", "max-cost-micro-usd", "spending-limit", "spending-alert", "specialists", "generation-provider-slug", "verification-provider-slug", "generation-model-evidence", "verification-model-evidence", "broker-evidence", "account-evidence", "evidence-retrieved-at", "reviewed-at", "valid-from", "valid-until"}
-var initBoolFlags = []string{"no-input", "run-review", "allow-local-probe", "declare-local-capabilities", "declare-remote-route", "without-zdr", "declare-opencode-go-account", "declare-ollama-cloud-signin"}
+var initBoolFlags = []string{"no-input", "run-review", "checks", "allow-local-probe", "declare-local-capabilities", "declare-remote-route", "without-zdr", "declare-opencode-go-account", "declare-ollama-cloud-signin"}
 
 // initStop ends the wizard with a plain-language reason and exit code.
 type initStop struct {

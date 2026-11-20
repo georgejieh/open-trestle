@@ -181,6 +181,34 @@ func (c *reviewIndexContext) load(ctx context.Context) (review.ContextPlan, erro
 	return plan, nil
 }
 
+// dependents lists the files that depend on the change, from the indexed
+// base and head, or reports false when the review has no index or either
+// commit is not indexed.
+func (c *reviewIndexContext) dependents(ctx context.Context) ([]string, bool) {
+	if c == nil {
+		return nil, false
+	}
+	headGraph, err := c.session.index.Load(ctx, c.session.algorithm, c.head.Digest())
+	if err != nil {
+		return nil, false
+	}
+	baseGraph, err := c.session.index.Load(ctx, c.session.algorithm, c.base.Digest())
+	if err != nil {
+		return nil, false
+	}
+	changes, err := c.session.changes(ctx, c.head, baseGraph, headGraph)
+	if err != nil {
+		return nil, false
+	}
+	result := repoindex.Dependents(headGraph, baseGraph, changes, repoindex.DefaultDependentsLimits())
+	paths := slices.Clone(result.TestFiles)
+	for _, file := range result.Files {
+		paths = append(paths, file.Path)
+	}
+	slices.Sort(paths)
+	return slices.Compact(paths), true
+}
+
 // openReviewIndexSession opens the index a review uses: the checkout's, or
 // for an objects root the one kept for that object store.
 func openReviewIndexSession(ctx context.Context, options localModelReviewOptions, base evidence.RevisionIdentity) *indexSession {

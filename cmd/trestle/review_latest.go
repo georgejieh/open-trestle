@@ -196,6 +196,9 @@ type latestReviewOptions struct {
 	all bool
 	// verbose adds the internal tokens to text output.
 	verbose bool
+	// checks and noChecks allow or skip the repository's checks for this
+	// review, whatever the stored answer.
+	checks, noChecks bool
 }
 
 // latestReviewCommand is the saved review command with fresh commits and the
@@ -253,7 +256,7 @@ func latestReviewCommand(template []string, base, head string, options latestRev
 }
 
 func writeLatestReviewUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: trestle review [--format text|json|sarif|markdown] [--all] [--verbose] [--timeout DURATION] [--profile ID | --specialists auto|none|ID[,ID...] [--max-specialists N]] [--exit-code-policy default|findings|strict|always-zero] [--base REF] [--head REF] [--directory PATH]")
+	fmt.Fprintln(w, "usage: trestle review [--format text|json|sarif|markdown] [--all] [--verbose] [--timeout DURATION] [--profile ID | --specialists auto|none|ID[,ID...] [--max-specialists N]] [--exit-code-policy default|findings|strict|always-zero] [--base REF] [--head REF] [--checks|--no-checks] [--directory PATH]")
 	fmt.Fprintln(w, "       review the latest change (HEAD against its merge base with the default branch) with the setup trestle init made; see docs/getting-started.md")
 	fmt.Fprintln(w, "       trestle review <path>   (review a local fixture file)")
 }
@@ -268,6 +271,8 @@ func parseLatestReviewFlags(args []string, stdout, stderr io.Writer) (latestRevi
 	}
 	flags.BoolVar(&options.all, "all", false, "all")
 	flags.BoolVar(&options.verbose, "verbose", false, "verbose")
+	flags.BoolVar(&options.checks, "checks", false, "checks")
+	flags.BoolVar(&options.noChecks, "no-checks", false, "no-checks")
 	seen := map[string]bool{}
 	for _, argument := range args {
 		if name := strings.TrimLeft(strings.SplitN(argument, "=", 2)[0], "-"); strings.HasPrefix(argument, "-") && name != "" {
@@ -290,6 +295,10 @@ func parseLatestReviewFlags(args []string, stdout, stderr io.Writer) (latestRevi
 	if flags.NArg() != 0 {
 		fmt.Fprintf(stderr, "trestle review: unexpected argument %q; give either one fixture path or flags.\n", flags.Arg(0))
 		writeLatestReviewUsage(stderr)
+		return options, 2, true
+	}
+	if options.checks && options.noChecks {
+		fmt.Fprintln(stderr, "trestle review: give --checks or --no-checks, not both.")
 		return options, 2, true
 	}
 	if options.format != "" && options.format != "text" && options.format != "json" && options.format != "sarif" && options.format != "markdown" {
@@ -370,6 +379,10 @@ func missingReviewKeys(setup initSetup) []string {
 	return missing
 }
 
+// reviewChecksInput is where a review reads the answer to the checks
+// question; tests replace it.
+var reviewChecksInput io.Reader = os.Stdin
+
 // runLatestReview is `trestle review` without a fixture path.
 func runLatestReview(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	options, code, done := parseLatestReviewFlags(args, stdout, stderr)
@@ -434,6 +447,9 @@ func reviewLatestChange(ctx context.Context, w *initWizard, repo repositorySetup
 	}
 	w.say("  A review sends the selected source to %s.", repo.setup.destination())
 	command := latestReviewCommand(repo.template, source.base, source.head, options)
+	if reviewChecksAllowed(ctx, w, repo.directory, options, reviewChecksInput) {
+		command = append(command, "--repository-checks")
+	}
 	if _, _, _, _, err := parseLocalModelReview(command[3:]); err != nil {
 		var unknown errUnknownModelReviewProfile
 		if errors.As(err, &unknown) {

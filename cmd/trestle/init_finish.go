@@ -209,6 +209,7 @@ func (w *initWizard) resume() (int, error) {
 	if !outcome.ready {
 		return w.notReady(setup, outcome), nil
 	}
+	w.askChecksConsent()
 	if !latest {
 		w.say("\n  Setup checks: %s. Review the latest change any time with:", outcome.summary)
 		w.sayVerbatim("    " + w.latestCommand())
@@ -734,11 +735,16 @@ func (w *initWizard) finish(setup initSetup, outcome initOutcome) (int, error) {
 			return 0, err
 		}
 	}
+	w.askChecksConsent()
 	if !run {
 		w.say("  No review was run. Run the command above when you are ready.")
 		return initExitDone, nil
 	}
-	return w.review(outcome.reviewCommand), nil
+	command := outcome.reviewCommand
+	if allowed, _ := readChecksConsent(w.a.directory); allowed {
+		command = append(append([]string{}, command...), "--repository-checks")
+	}
+	return w.review(command), nil
 }
 
 // initHangingWrap wraps one "label: value" result line to width, indenting
