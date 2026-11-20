@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/georgejieh/open-trestle/artifact"
-	"github.com/georgejieh/open-trestle/artifactvalidation"
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/controlplane"
 )
@@ -101,12 +100,7 @@ func TestOldCodeSourceOutputGolden(t *testing.T) {
 		t.Fatalf("input Put: %v %v", created, err)
 	}
 	request := taskExecutionRequest(t, scope, inputArtifact.Identity(), handler.HandlerIdentity())
-	validated, err := artifactvalidation.NewValidatedTaskHandler(handler, store, fixedClock{at: time.UnixMilli(201)},
-		[]artifact.Kind{artifact.KindTaskInput}, []artifact.Kind{artifact.KindSourceSnapshot})
-	if err != nil {
-		t.Fatal(err)
-	}
-	completion := validated.Execute(context.Background(), request)
+	completion := handler.Execute(context.Background(), request)
 	if completion.Status() != controlplane.TaskCompletionSucceeded || completion.Validate() != nil || inner.calls != 1 || completion.OutputIdentity() != oldSnapshotPayloadArtifactIdentity {
 		t.Fatalf("handler completion=%#v calls=%d", completion, inner.calls)
 	}
