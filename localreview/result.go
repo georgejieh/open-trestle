@@ -638,8 +638,9 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 				return Result{}, ErrInvalidResult
 			}
 			w.AgentConfigurationSources, w.InstructionLikeSources = agentConfiguration, instructionLike
-			// The walkthrough shows the stated intent and pattern hygiene the
-			// generation context actually carried, read from its exact bytes.
+			// The walkthrough shows the stated intent, pattern hygiene, manifest
+			// and check runs the generation context actually carried, read from
+			// its exact bytes.
 			if walk.intent, err = review.ContextStatedIntent(contextArtifact.Payload()); err != nil {
 				return Result{}, ErrInvalidResult
 			}
@@ -647,6 +648,9 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 				return Result{}, ErrInvalidResult
 			}
 			if walk.manifest, err = review.ContextManifestOf(contextArtifact.Payload()); err != nil {
+				return Result{}, ErrInvalidResult
+			}
+			if walk.checkRuns, err = review.ContextCheckRuns(contextArtifact.Payload()); err != nil {
 				return Result{}, ErrInvalidResult
 			}
 			// Only a direct run knows its sources' stages, so only a direct run

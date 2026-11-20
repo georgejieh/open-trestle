@@ -16,6 +16,7 @@ import (
 	"github.com/georgejieh/open-trestle/audit"
 	contexthandler "github.com/georgejieh/open-trestle/handlers/context"
 	"github.com/georgejieh/open-trestle/internal/evidence"
+	"github.com/georgejieh/open-trestle/internal/review"
 	"github.com/georgejieh/open-trestle/internal/scm"
 	"github.com/georgejieh/open-trestle/internal/testsupport"
 	"github.com/georgejieh/open-trestle/localreview"
@@ -372,7 +373,7 @@ func TestLocalModelSessionCapacityAndTimingRemainBounded(t *testing.T) {
 }
 
 func TestLocalModelSessionCannotReceiveForgeOrCustomHandlerCapabilities(t *testing.T) {
-	allowed := map[string]bool{"TenantID": true, "RepositoryID": true, "Repository": true, "ObjectsRoot": true, "ObjectStoreProfile": true, "ObjectAlgorithm": true, "Inventory": true, "Policy": true, "Egress": true, "Credentials": true, "Clock": true, "Timeout": true, "ArtifactCapacity": true, "RenewalInterval": true, "Retention": true, "RetainedMemoryInput": true, "GenerationSanitizer": true, "VerificationSanitizer": true, "ModelHTTPClient": true, "ModelHTTPClientIdentity": true, "IndexContext": true, "Scanner": true}
+	allowed := map[string]bool{"TenantID": true, "RepositoryID": true, "Repository": true, "ObjectsRoot": true, "ObjectStoreProfile": true, "ObjectAlgorithm": true, "Inventory": true, "Policy": true, "Egress": true, "Credentials": true, "Clock": true, "Timeout": true, "ArtifactCapacity": true, "RenewalInterval": true, "Retention": true, "RetainedMemoryInput": true, "GenerationSanitizer": true, "VerificationSanitizer": true, "ModelHTTPClient": true, "ModelHTTPClientIdentity": true, "IndexContext": true, "Scanner": true, "CheckRuns": true}
 	options := reflect.TypeOf(localreview.SessionOptions{})
 	// The policy-approved transport is a plain identity-bound HTTP client, not a handler.
 	if field, ok := options.FieldByName("ModelHTTPClient"); !ok || field.Type != reflect.TypeOf((*http.Client)(nil)) {
@@ -395,6 +396,10 @@ func TestLocalModelSessionCannotReceiveForgeOrCustomHandlerCapabilities(t *testi
 	retained, ok := options.FieldByName("RetainedMemoryInput")
 	if !ok || retained.Type != reflect.TypeOf((*runtimeconfig.RetainedMemoryInput)(nil)) {
 		t.Fatal("retained memory option must be a protected input pointer")
+	}
+	// Check runs are immutable host-observed outcomes, not a handler.
+	if runs, ok := options.FieldByName("CheckRuns"); !ok || runs.Type != reflect.TypeOf((*review.CheckRuns)(nil)) {
+		t.Fatal("check runs option must be a pointer to the immutable outcomes")
 	}
 	for i := 0; i < options.NumField(); i++ {
 		field := options.Field(i)
