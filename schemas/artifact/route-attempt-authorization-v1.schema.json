@@ -52,8 +52,7 @@
     "kind": {
       "enum": [
         "initial",
-        "retry",
-        "fallback"
+        "retry"
       ]
     },
     "review_scope_identity": {

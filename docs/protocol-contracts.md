@@ -136,7 +136,7 @@ When the provider answers a candidate generation or verification attempt with a 
 
 The seventh, `provider_rate_limited` (429), has failure `transient`.
 
-The route failure class `request_rejected` is never retried and leaves another route eligible for fallback. No published record can carry it. The route execution record v1 and the investigation turn v1 hold successful attempts only, so it appears only in the completed-attempt record, which is not in any release and reads it in place.
+The route failure class `request_rejected` is never retried. No published record can carry it. The route execution record v1 and the investigation turn v1 hold successful attempts only, so it appears only in the completed-attempt record, which is not in any release and reads it in place.
 
 Two more reasons have failure `internal`:
 

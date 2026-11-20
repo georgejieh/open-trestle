@@ -36,7 +36,7 @@ func strictLocalFixtureWithZones(t *testing.T, allowed ...provider.ProviderZone)
 	if err != nil {
 		t.Fatal(err)
 	}
-	route := newFallbackRoute(t, 140_000, provider.ProviderZoneLocal, provider.ContentLoggingDisabled, provider.RouteQualityTier4, pricing)
+	route := newFixtureRoute(t, 140_000, provider.ProviderZoneLocal, provider.ContentLoggingDisabled, provider.RouteQualityTier4, pricing)
 	budget, err := provider.NewModelCostBudget(1, 16_000, 20_000)
 	if err != nil {
 		t.Fatal(err)

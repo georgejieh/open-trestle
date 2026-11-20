@@ -34,7 +34,7 @@ func TestMatchesLocalGenerationAuthorizationChecksCompleteGrant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	failed, err := gateway.NewFailedRouteAttemptOutcome(plan.authorization, gateway.RouteFailureTimeout, gateway.RouteReplayNoSideEffect, zero, 0, 1)
+	failed, err := gateway.NewFailedRouteAttemptOutcome(plan.authorization, gateway.RouteFailureRateLimited, gateway.RouteReplayNoSideEffect, zero, 0, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +42,7 @@ func TestMatchesLocalGenerationAuthorizationChecksCompleteGrant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	retryPolicy, err := gateway.NewRouteRetryPolicy(3, 100, 1000, 0, 2000)
+	retryPolicy, err := gateway.NewRateLimitRetryPolicy(100)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +50,7 @@ func TestMatchesLocalGenerationAuthorizationChecksCompleteGrant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	retry, err := gateway.NewRouteRetryAttemptAuthorization(plan.authorization, failed, cost, decision)
+	retry, err := gateway.NewRateLimitedRetryAttemptAuthorization(plan.authorization, failed, cost, decision)
 	if err != nil {
 		t.Fatal(err)
 	}
