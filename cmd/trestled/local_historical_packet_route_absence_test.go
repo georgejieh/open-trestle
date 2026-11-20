@@ -91,7 +91,7 @@ func TestHistoricalPacketRouteAbsenceEmptyAndAllowedKind(t *testing.T) {
 func TestHistoricalPacketRouteAbsenceRejectsLaterKinds(t *testing.T) {
 	t.Parallel()
 	for kind := audit.EventRouteSelected; kind <= audit.EventInvestigationToolCompleted; kind++ {
-		if kind == audit.EventReviewSnapshotBound {
+		if kind == audit.EventReviewSnapshotBound || kind.Validate() != nil {
 			continue
 		}
 		t.Run(kind.String(), func(t *testing.T) {

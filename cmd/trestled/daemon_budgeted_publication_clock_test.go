@@ -428,7 +428,7 @@ func TestDaemonBudgetedRequiredPublicationBelowThresholdPersistsNoEffectReceiptW
 			t.Fatal(err)
 		}
 		switch event.Kind() {
-		case audit.EventPublicationAuthorized, audit.EventPublicationClaimed, audit.EventPublicationHeadReconciled, audit.EventPublicationCompleted, audit.EventPublicationRetryAuthorized:
+		case audit.EventPublicationAuthorized, audit.EventPublicationClaimed, audit.EventPublicationHeadReconciled, audit.EventPublicationCompleted:
 			t.Fatalf("no-effect branch recorded forbidden publication effect audit event: %s", event.Kind())
 		}
 	}

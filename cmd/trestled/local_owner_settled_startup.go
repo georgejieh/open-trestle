@@ -142,7 +142,7 @@ func verifyOwnerSettledStartup(ctx context.Context, owner *localPacketOwner, led
 				return errors.Join(errHistoricalInputIntentQuarantinedAtStartup, err)
 			}
 			for _, event := range events {
-				if canceledBeforeGeneration && (event.Kind() == audit.EventRouteAttemptClaimed || event.Kind() == audit.EventRouteDispatchCompleted || event.Kind() == audit.EventRouteCostReconciled || event.Kind() == audit.EventRouteContinuationPlanned || event.Kind() == audit.EventPublicationClaimed || event.Kind() == audit.EventPublicationCompleted) {
+				if canceledBeforeGeneration && (event.Kind() == audit.EventRouteAttemptClaimed || event.Kind() == audit.EventRouteDispatchCompleted || event.Kind() == audit.EventRouteCostReconciled || event.Kind() == audit.EventPublicationClaimed || event.Kind() == audit.EventPublicationCompleted) {
 					return errHistoricalInputIntentQuarantinedAtStartup
 				}
 				if event.Kind() == audit.EventRouteSelected && event.SubjectIdentity() == d.SelectionReceiptIdentity {
