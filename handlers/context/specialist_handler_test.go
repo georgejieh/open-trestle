@@ -22,7 +22,7 @@ func TestSpecialistHandlerBindsProfileIntoIdentityOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plain.HandlerIdentity() != deriveHandlerIdentity(authorizer.Identity(), sanitizer.Identity(), review.ContextSpecialist{}, "", "", review.ContextBudget{}) {
+	if plain.HandlerIdentity() != deriveHandlerIdentity(authorizer.Identity(), sanitizer.Identity(), review.ContextSpecialist{}, "", "", review.ContextBudget{}, "") {
 		t.Fatal("plain handler identity changed")
 	}
 	bugHunter, err := review.NewContextSpecialist("bug_hunter")

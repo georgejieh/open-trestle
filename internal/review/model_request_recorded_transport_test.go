@@ -54,7 +54,7 @@ func TestRecordedInvestigationTurnTransportBytesMeasureTheRecordedContract(t *te
 	}
 	// Version 6 verification bytes: version 7 without its sentence, bound to the
 	// version 6 contract identity.
-	v6Verification := bytes.Replace(bytes.Replace(rawVerification.Payload(), []byte(`"schema_version":9`), []byte(`"schema_version":6`), 1), []byte(modelInstructionsIdentity(verificationOutputInstructionsV9)), []byte(modelInstructionsIdentity(verificationOutputInstructionsV6)), 1)
+	v6Verification := bytes.Replace(bytes.Replace(rawVerification.Payload(), []byte(`"schema_version":10`), []byte(`"schema_version":6`), 1), []byte(modelInstructionsIdentity(verificationOutputInstructionsV10)), []byte(modelInstructionsIdentity(verificationOutputInstructionsV6)), 1)
 	if _, err := LocalVerificationPayload(recordedLocalEnvelope(t, v6Verification, scope), scope, provider.ProviderZoneLocal); bytes.Equal(v6Verification, rawVerification.Payload()) || err == nil {
 		t.Fatal("fixture is not a recorded-only version 6 verification envelope")
 	}

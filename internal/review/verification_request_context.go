@@ -68,12 +68,12 @@ func ReconstructRecordedVerificationRequestContext(
 	// generation context is bound through generation_context_identity, but its
 	// specialist guidance is not forwarded, and candidate categories and fix
 	// guidance are bound only through candidate_batch_identity and candidate_id:
-	// the verifier never receives them. A v10 generation context yields a
-	// version 9 verifier request, a recorded v9 context a version 8 one, a
-	// recorded v8 context a version 7 one and a recorded v7 context a version
-	// 6 one; every such contract travels only in the trusted system channel.
-	// The verifier receives every generation source, so removed_lines sources
-	// and the index stages reach it unchanged, and a stated_intent unchanged;
+	// the verifier never receives them. A v11 generation context yields a
+	// version 10 verifier request and each recorded earlier context the
+	// version that answered it (9 for 10, 8 for 9, 7 for 8, 6 for 7); every
+	// such contract travels only in the trusted system channel. The verifier
+	// receives every generation source, so removed_lines sources and the index
+	// stages reach it unchanged, as do a stated_intent and the check_runs;
 	// pattern_hygiene, context_manifest and repository_checks are finder
 	// evidence and are not forwarded. Recorded earlier generation versions
 	// keep their own verifier version for readback.
@@ -91,8 +91,8 @@ func ReconstructRecordedVerificationRequestContext(
 		SourceSelectionIdentity: generationWire.SourceSelectionIdentity,
 		SourceCoverage:          generationWire.SourceCoverage, Limits: generationWire.Limits,
 		Sources: generationWire.Sources, SourceOmissions: generationWire.SourceOmissions, Memory: generationWire.Memory, AdditionalMemory: generationWire.AdditionalMemory,
-		StatedIntent: generationWire.StatedIntent,
-		Candidates:   verificationCandidateWireValues(candidates),
+		StatedIntent: generationWire.StatedIntent, CheckRuns: generationWire.CheckRuns,
+		Candidates: verificationCandidateWireValues(candidates),
 	}
 	wire.Instructions, wire.OutputSchema, err = modelOutputContractForVersion(wire.SchemaVersion, true)
 	if err != nil {
@@ -282,7 +282,7 @@ func (c VerificationRequestContext) Validate() error {
 	if !verificationCandidateWiresEqual(wire.Candidates, verificationCandidateWireValues(c.candidates)) {
 		return ErrInvalidVerificationRequestContext
 	}
-	if !verificationSourcesMatch(wire, c.evidenceItems, c.snapshot) || !validStatedIntentWire(wire.StatedIntent) {
+	if !verificationSourcesMatch(wire, c.evidenceItems, c.snapshot) || !validStatedIntentWire(wire.StatedIntent) || !validCheckRunsWire(wire.CheckRuns) {
 		return ErrInvalidVerificationRequestContext
 	}
 	return nil
@@ -315,13 +315,14 @@ func decodeVerificationContextWire(payload []byte) (verificationContextWire, err
 		return verificationContextWire{}, ErrInvalidVerificationRequestContext
 	}
 	canonical, err := json.Marshal(wire)
-	if err != nil || !bytes.Equal(canonical, payload) || wire.Contract != "open-trestle/verification-context-packet" || (wire.SchemaVersion != 2 && wire.SchemaVersion != 3 && wire.SchemaVersion != modelContextVersion && wire.SchemaVersion != modelVerificationContextVersionV6 && wire.SchemaVersion != modelVerificationContextVersionV7 && wire.SchemaVersion != modelVerificationContextVersionV8 && wire.SchemaVersion != modelVerificationContextVersion) {
+	if err != nil || !bytes.Equal(canonical, payload) || wire.Contract != "open-trestle/verification-context-packet" || (wire.SchemaVersion != 2 && wire.SchemaVersion != 3 && wire.SchemaVersion != modelContextVersion && wire.SchemaVersion != modelVerificationContextVersionV6 && !removedLinesVerificationVersion(wire.SchemaVersion)) {
 		return verificationContextWire{}, ErrInvalidVerificationRequestContext
 	}
-	// A stated intent exists only from version 8. Its content is validated
-	// with the generation context it is copied from; a sanitized copy may
-	// carry redacted text, so it is not re-derived here.
-	if wire.StatedIntent != nil && !intentVerificationVersion(wire.SchemaVersion) {
+	// A stated intent exists only from version 8 and check runs only in
+	// version 10. Their content is validated with the generation context they
+	// are copied from; a sanitized copy may carry redacted text, so it is not
+	// re-derived here.
+	if wire.StatedIntent != nil && !intentVerificationVersion(wire.SchemaVersion) || wire.CheckRuns != nil && !checkRunsVerificationVersion(wire.SchemaVersion) {
 		return verificationContextWire{}, ErrInvalidVerificationRequestContext
 	}
 	return wire, nil
@@ -358,7 +359,7 @@ func verificationSourcesMatch(wire verificationContextWire, items []evidence.Evi
 			source.SourceID != item.ID() || source.EvidenceDigest != item.Digest() ||
 			source.Path != rangeValue.Path() || source.StartLine != rangeValue.StartLine() ||
 			source.EndLine != rangeValue.EndLine() || !utf8.ValidString(source.Content) ||
-			!validContextStageToken(source.Stage, removedLinesVerificationVersion(wire.SchemaVersion), wire.SchemaVersion == modelVerificationContextVersion) || !validContextTaintToken(source.Taint) ||
+			!validContextStageToken(source.Stage, removedLinesVerificationVersion(wire.SchemaVersion), indexVerificationVersion(wire.SchemaVersion)) || !validContextTaintToken(source.Taint) ||
 			removed && source.Taint != memory.TaintRepositoryControlled.String() {
 			return false
 		}

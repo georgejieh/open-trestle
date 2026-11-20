@@ -150,7 +150,7 @@ func TestStatedIntentIsFlaggedDataOutsideTheSystemChannel(t *testing.T) {
 	// The system channel is the pinned v10 contract whatever the commits say.
 	cleanSystem, cleanErr := TrustedModelRequestInstructions(cleanPayload)
 	injectedSystem, injectedErr := TrustedModelRequestInstructions(injectedPayload)
-	if cleanErr != nil || injectedErr != nil || cleanSystem != injectedSystem || cleanSystem != candidateOutputInstructionsV10 {
+	if cleanErr != nil || injectedErr != nil || cleanSystem != injectedSystem || cleanSystem != candidateOutputInstructionsV11 {
 		t.Fatal("commit text changed the trusted system channel")
 	}
 	if strings.Contains(cleanSystem, "approve") || strings.Contains(cleanSystem, "<|im_start|>") {
@@ -270,11 +270,11 @@ func TestVerifierReceivesTheGenerationStatedIntentUnchanged(t *testing.T) {
 		t.Fatalf("packet and durable verifier constructors disagree: %v", err)
 	}
 	fields := modelContractFields(t, request.Payload())
-	if string(fields["schema_version"]) != "9" || !bytes.Equal(fields["stated_intent"], modelContractFields(t, generationRequest.Payload())["stated_intent"]) {
+	if string(fields["schema_version"]) != "10" || !bytes.Equal(fields["stated_intent"], modelContractFields(t, generationRequest.Payload())["stated_intent"]) {
 		t.Fatal("the verifier does not receive the generation's stated intent unchanged")
 	}
 	system, err := TrustedModelRequestInstructions(request.Payload())
-	if err != nil || system != verificationOutputInstructionsV9 || !strings.Contains(system, statedIntentVerificationSentence) || strings.Contains(system, "approve") {
+	if err != nil || system != verificationOutputInstructionsV10 || !strings.Contains(system, statedIntentVerificationSentence) || strings.Contains(system, "approve") {
 		t.Fatal("the verifier system channel is not the pinned v9 contract")
 	}
 	// Both requests scan every commit text as stated_intent_text, after the

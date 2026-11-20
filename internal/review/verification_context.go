@@ -147,8 +147,11 @@ type verificationContextWire struct {
 	AdditionalMemory          []contextMemoryWire         `json:"additional_memory,omitempty"`
 	// StatedIntent exists only from version 8: the generation context's
 	// stated_intent, unchanged, so the verifier can check an intent claim.
-	StatedIntent *statedIntentWire           `json:"stated_intent,omitempty"`
-	Candidates   []verificationCandidateWire `json:"candidates"`
+	StatedIntent *statedIntentWire `json:"stated_intent,omitempty"`
+	// CheckRuns exists only from version 10: the generation context's
+	// check_runs, unchanged.
+	CheckRuns  *checkRunsWire              `json:"check_runs,omitempty"`
+	Candidates []verificationCandidateWire `json:"candidates"`
 }
 
 type verificationCandidateWire struct {
@@ -185,8 +188,8 @@ func encodeVerificationContext(packet VerificationContextPacket) ([]byte, error)
 		},
 		Limits:  generation.limits.wire(),
 		Sources: contextSourceWireValues(generation.sources), SourceOmissions: contextSourceOmissionWireValues(generation.sourceOmissions), Memory: contextMemoryWireValue(generation.retrieval), AdditionalMemory: contextMemoryWireValues(generation.additionalRetrievals),
-		StatedIntent: generation.statedIntent.wire(),
-		Candidates:   make([]verificationCandidateWire, len(packet.candidates.findings)),
+		StatedIntent: generation.statedIntent.wire(), CheckRuns: generation.checkRuns.wire(),
+		Candidates: make([]verificationCandidateWire, len(packet.candidates.findings)),
 	}
 	for index, candidate := range packet.candidates.findings {
 		sourceRange := candidate.SourceRange()

@@ -207,7 +207,8 @@
               "candidate_title",
               "candidate_claim",
               "candidate_path",
-              "stated_intent_text"
+              "stated_intent_text",
+              "check_run_text"
             ]
           },
           "ordinal": {

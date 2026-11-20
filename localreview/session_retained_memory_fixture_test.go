@@ -63,6 +63,7 @@ type rmModelPacket struct {
 	CandidateBatch    string          `json:"candidate_batch_identity"`
 	StatedIntent      json.RawMessage `json:"stated_intent"`
 	PatternHygiene    json.RawMessage `json:"pattern_hygiene"`
+	CheckRuns         json.RawMessage `json:"check_runs"`
 	Sources           []rmModelSource `json:"sources"`
 	Candidates        []struct {
 		ID       string   `json:"candidate_id"`
@@ -175,8 +176,8 @@ func (m *rmModelEndpoint) serve(t *testing.T, w http.ResponseWriter, r *http.Req
 	payload := []byte(wire.Input[0].Content[0].Text)
 	var packet rmModelPacket
 	request, requestErr := provider.NewRequest(provider.CapabilityReviewV1, "application/json", payload)
-	if json.Unmarshal(payload, &packet) != nil || requestErr != nil || packet.Task == "candidate_generation" && packet.Version != 10 || packet.Task != "candidate_generation" && packet.Version != 9 {
-		t.Error("model did not receive the actual v10 generation or v9 verification context")
+	if json.Unmarshal(payload, &packet) != nil || requestErr != nil || packet.Task == "candidate_generation" && packet.Version != 11 || packet.Task != "candidate_generation" && packet.Version != 10 {
+		t.Error("model did not receive the actual v11 generation or v10 verification context")
 		http.Error(w, "invalid context", http.StatusBadRequest)
 		return
 	}

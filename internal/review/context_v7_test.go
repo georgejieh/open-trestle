@@ -30,10 +30,10 @@ func legacyGenerationWire(t *testing.T, wire contextPacketWire, version int) con
 	if err != nil {
 		t.Fatal(err)
 	}
-	// No recorded version before 10 carries a source limit, a manifest or
-	// repository checks, and none before 9 carries stated_intent or
-	// pattern_hygiene.
-	wire.ContextManifest, wire.RepositoryChecks = nil, nil
+	// No recorded version before 11 carries check_runs, none before 10 a
+	// source limit, a manifest or repository checks, and none before 9
+	// stated_intent or pattern_hygiene.
+	wire.ContextManifest, wire.RepositoryChecks, wire.CheckRuns = nil, nil, nil
 	if version != modelGenerationContextVersionV9 {
 		wire.StatedIntent, wire.PatternHygiene = nil, nil
 	}
@@ -156,8 +156,8 @@ func categorizedVerificationContextFixture(t *testing.T) (ContextPacket, Candida
 func TestGenerationContextEncodesExecutableContractAndRejectsLegacyExecution(t *testing.T) {
 	packet, snapshot, payload := v7InstructionFixture(t)
 	fields := modelContractFields(t, payload)
-	if string(fields["schema_version"]) != "10" || string(fields["output_schema_identity"]) != `"`+ModelCandidateBatchSchemaIdentity+`"` || fields["specialist"] != nil || packet.OutputSchemaIdentity() != ModelCandidateBatchSchemaIdentity {
-		t.Fatal("new generation context is not version 10 requesting candidate batch v2")
+	if string(fields["schema_version"]) != "11" || string(fields["output_schema_identity"]) != `"`+ModelCandidateBatchSchemaIdentity+`"` || fields["specialist"] != nil || packet.OutputSchemaIdentity() != ModelCandidateBatchSchemaIdentity {
+		t.Fatal("new generation context is not version 11 requesting candidate batch v2")
 	}
 	instructions, schema, err := modelOutputContractForVersion(modelGenerationContextVersion, false)
 	if err != nil || fields["instructions"] != nil || string(fields["instructions_identity"]) != string(mustJSON(modelInstructionsIdentity(instructions))) || !bytes.Equal(fields["output_schema"], schema) {
@@ -415,8 +415,8 @@ func TestCategorizedVerifierReceivesNoCategoryOrFix(t *testing.T) {
 	}
 	payload := []byte(durable.Payload())
 	fields := modelContractFields(t, payload)
-	if string(fields["schema_version"]) != "9" || fields["instructions"] != nil || string(fields["instructions_identity"]) != string(mustJSON(modelInstructionsIdentity(verificationOutputInstructionsV9))) || bytes.Contains(payload, []byte("Return the checked value")) || bytes.Contains(payload, []byte(`"category"`)) || bytes.Contains(payload, []byte(`"fix"`)) {
-		t.Fatal("verifier request is not the version 9 contract without category or fix")
+	if string(fields["schema_version"]) != "10" || fields["instructions"] != nil || string(fields["instructions_identity"]) != string(mustJSON(modelInstructionsIdentity(verificationOutputInstructionsV10))) || bytes.Contains(payload, []byte("Return the checked value")) || bytes.Contains(payload, []byte(`"category"`)) || bytes.Contains(payload, []byte(`"fix"`)) {
+		t.Fatal("verifier request is not the version 10 contract without category or fix")
 	}
 	if !bytes.Contains(payload, []byte(candidates.Findings()[0].Identity())) || !bytes.Contains(payload, []byte(candidates.Identity())) {
 		t.Fatal("verifier request does not bind the categorized candidate identities")

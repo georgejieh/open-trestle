@@ -20,10 +20,13 @@ import (
 // host-derived. pattern_hygiene carries only kinds, curated rule IDs,
 // host-issued source IDs and numbers, and context_manifest and
 // repository_checks carry only host-issued source IDs, closed tokens and
-// numbers, so they add no scanned field.
+// numbers, so they add no scanned field. Each check_runs run name, reason,
+// regression ID and new-failure ID is repository text, scanned as
+// check_run_text; its source, authority, commit IDs, scope, states and
+// counts are host-derived.
 const (
-	generationSanitizableWireShapeIdentity   = "b3ed8779195a60676206aa38aef8974364053d2609cb98bee14d05438a69e3f4"
-	verificationSanitizableWireShapeIdentity = "6963ac0ac4ea03569d0144a0f1586c598aaa01d01292d197ac39110b8df0789d"
+	generationSanitizableWireShapeIdentity   = "fc577adafd076404306185dec71e5f6aa5c615aa67e8d8c8dfe901ed2eb3ccfe"
+	verificationSanitizableWireShapeIdentity = "3f9776a3b35db4e08311ad05c353e98f1004b11f236e47b8aafdc9eee6e39706"
 )
 
 func wireShapeIdentity(root reflect.Type) string {
@@ -73,8 +76,8 @@ func parseSanitizableRequest(request provider.Request, reviewScopeIdentity strin
 		Contract      string `json:"contract"`
 		SchemaVersion int    `json:"schema_version"`
 	}
-	// Generation admits only the executable context version 10; verification
-	// admits only version 9. Each contract is checked against its own version
+	// Generation admits only the executable context version 11; verification
+	// admits only version 10. Each contract is checked against its own version
 	// below too.
 	if json.Unmarshal(request.Payload(), &header) != nil ||
 		header.Contract == "open-trestle/review-context-packet" && !executableGenerationContextVersion(header.SchemaVersion) ||
@@ -98,6 +101,7 @@ func parseSanitizableRequest(request provider.Request, reviewScopeIdentity strin
 		document := sanitizedRequestDocument{generation: &wire}
 		document.fields = appendContextFieldReferences(document.fields, &wire.Sources, &wire.SourceOmissions, &wire.Memory, wire.AdditionalMemory)
 		document.fields = appendStatedIntentFieldReferences(document.fields, wire.StatedIntent)
+		document.fields = appendCheckRunsFieldReferences(document.fields, wire.CheckRuns)
 		return document, nil
 	case "open-trestle/verification-context-packet":
 		if verificationWireShapeIdentity() != verificationSanitizableWireShapeIdentity || ValidateVerificationModelRequest(request, reviewScopeIdentity) != nil {
@@ -110,6 +114,7 @@ func parseSanitizableRequest(request provider.Request, reviewScopeIdentity strin
 		document := sanitizedRequestDocument{verification: &wire}
 		document.fields = appendContextFieldReferences(document.fields, &wire.Sources, &wire.SourceOmissions, &wire.Memory, wire.AdditionalMemory)
 		document.fields = appendStatedIntentFieldReferences(document.fields, wire.StatedIntent)
+		document.fields = appendCheckRunsFieldReferences(document.fields, wire.CheckRuns)
 		for index := range wire.Candidates {
 			candidate := &wire.Candidates[index]
 			document.fields = append(document.fields,
@@ -152,6 +157,29 @@ func appendStatedIntentFieldReferences(fields []sanitizedFieldReference, intent 
 	for index := range intent.Commits {
 		if intent.Commits[index].Text != "" {
 			fields = append(fields, sanitizedFieldReference{FieldRoleStatedIntentText, &intent.Commits[index].Text})
+		}
+	}
+	return fields
+}
+
+// appendCheckRunsFieldReferences adds, for each run in order, its name, its
+// reason when it has one, then each regression and each new-failure test ID.
+// Masking keeps every value's length, so the object stays within its bounds
+// after scanning.
+func appendCheckRunsFieldReferences(fields []sanitizedFieldReference, runs *checkRunsWire) []sanitizedFieldReference {
+	if runs == nil {
+		return fields
+	}
+	for index := range runs.Runs {
+		run := &runs.Runs[index]
+		fields = append(fields, sanitizedFieldReference{FieldRoleCheckRunText, &run.Name})
+		if run.Reason != "" {
+			fields = append(fields, sanitizedFieldReference{FieldRoleCheckRunText, &run.Reason})
+		}
+		for _, ids := range [][]string{run.Regressions, run.NewFailures} {
+			for idIndex := range ids {
+				fields = append(fields, sanitizedFieldReference{FieldRoleCheckRunText, &ids[idIndex]})
+			}
 		}
 	}
 	return fields

@@ -41,8 +41,12 @@ const (
 	FieldRoleCandidateClaim     FieldRole = "candidate_claim"
 	FieldRoleCandidatePath      FieldRole = "candidate_path"
 	// FieldRoleStatedIntentText is one commit message of a stated_intent
-	// object (generation version 9, verification version 8).
+	// object (generation version 9 and later, verification version 8 and
+	// later).
 	FieldRoleStatedIntentText FieldRole = "stated_intent_text"
+	// FieldRoleCheckRunText is one run name, reason or test ID of a
+	// check_runs object (generation version 11, verification version 10).
+	FieldRoleCheckRunText FieldRole = "check_run_text"
 )
 
 func (role FieldRole) valid() bool {
@@ -50,7 +54,7 @@ func (role FieldRole) valid() bool {
 	case FieldRoleSourcePath, FieldRoleSourceContent, FieldRoleSourceOmissionPath,
 		FieldRoleMemoryPath, FieldRoleMemorySymbol, FieldRoleMemoryText,
 		FieldRoleCandidateTitle, FieldRoleCandidateClaim, FieldRoleCandidatePath,
-		FieldRoleStatedIntentText:
+		FieldRoleStatedIntentText, FieldRoleCheckRunText:
 		return true
 	default:
 		return false
