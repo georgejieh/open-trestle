@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -41,14 +42,14 @@ func TestSeedNeverPassesARepositoryImportAsAFlag(t *testing.T) {
 	}
 	marker := filepath.Join(t.TempDir(), "ran")
 	tree := writeTree(t, map[string]string{
-		"a/a.go": "package a\n\nimport (\n\t_ \"-toolexec=touch " + marker + " /../../fmt\"\n\t_ \"./../fmt\"\n\t_ \"fmt/../fmt\"\n\t_ \"cmd/go\"\n\t_ \"internal/abi\"\n\t_ \"vendor/x\"\n\t_ \"FMT\"\n\t_ \"fmt\"\n)\n",
+		"a/a.go": "package a\n\nimport (\n\t_ \"-toolexec=touch " + filepath.ToSlash(marker) + " /../../fmt\"\n\t_ \"./../fmt\"\n\t_ \"fmt/../fmt\"\n\t_ \"cmd/go\"\n\t_ \"internal/abi\"\n\t_ \"vendor/x\"\n\t_ \"FMT\"\n\t_ \"fmt\"\n)\n",
 	})
 	if got := standardImports(context.Background(), goroot, []string{tree}); !slices.Equal(got, []string{"fmt", "testing", "testing/internal/testdeps"}) {
 		t.Fatalf("got %v", got)
 	}
 	// A recording go command shows exactly what the seed build passes.
-	if _, err := exec.LookPath("sh"); err != nil {
-		t.Skip("no shell to record the command line")
+	if _, err := exec.LookPath("sh"); err != nil || runtime.GOOS == "windows" {
+		t.Skip("the seed is not built here")
 	}
 	record := filepath.Join(t.TempDir(), "args")
 	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + record + "\n"
