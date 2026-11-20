@@ -9,7 +9,7 @@ A review can run the repository's own tests and linters before it calls any mode
 - If a review runs with no saved answer, it asks in the terminal: Allow this time, Deny, or Always allow for this repository. Without a terminal it runs no checks and says so.
 - `trestle review --checks` runs them for one review, and `--no-checks` skips them, whatever the saved answer says. `trestle local-git model-review --repository-checks` is the same consent for the direct command; it cannot be combined with `--investigation-policy`.
 
-The answer is kept in `checks.json` in the setup folder, a protected file like the rest of the setup.
+The answer is kept in `checks.json` in the setup folder, a protected file like the rest of the setup, with the repository's root commits it was given for. A different repository in the same folder, or one that uses the same setup folder, is asked again.
 
 ## What runs
 
@@ -17,14 +17,25 @@ The checks are detected from the files of the head commit:
 
 | Stack | Check | Results read from |
 | --- | --- | --- |
-| Go (each `go.mod`) | `go test -json` and `go vet`, for the packages of the changed Go files and of the files that depend on them, or the whole module when `go.mod`, `go.sum` or `go.work` changes | `go test -json` events; `go vet`'s exit status |
+| Go (each `go.mod`) | `go test -json` and `go vet`, for the packages of the changed Go files and of the files that depend on them, or the whole module when `go.mod`, `go.sum` or `go.work` changes; base runs only the packages it has. A module with `vendor/modules.txt` builds from its vendor folder | `go test -json` events; `go vet`'s exit status |
 | Node (`package.json` with a `test` script) | `node --test` with a TAP reporter when the script is a plain `node --test` call; otherwise the `test` script through npm, pnpm or yarn | TAP results; otherwise the exit status |
 | Python (files named `test_*.py` or `*_test.py`) | `python -m pytest` when the repository configures pytest, otherwise `python -m unittest discover -v -b`, each for the whole suite | the JUnit report the harness asks pytest to write; unittest's verbose result lines |
-| Rust (`Cargo.toml`) | `cargo test --offline` | the test result lines |
+| Rust (`Cargo.toml`) | `cargo test --offline` | the test result lines, each test named by the test binary cargo ran it in |
 
-The files that depend on the change come from the [repository index](repository-index.md) that the review already builds. When it is unavailable, the checks cover the changed files only, and the review says so. Only stacks with a changed file run. Each check runs twice on the base commit and twice on the head commit, each time on a fresh copy of the tree read from the repository's Git objects, never your working tree. A test that passes on base and fails on head is a regression. A test whose two runs on one side disagree is flaky and is dropped. Results come only from the exit status and the runner output that Open Trestle asked for, never from a file the tests write about themselves. When output reports one test twice, the failure counts, and a run that exits with a failure although every reported test passed is a failure of the check itself. A test that passed on base, and whose package, class or file reports nothing at all on head, is a regression marked "did not run on head", unless the change deletes or renames a test file. A module the repository itself provides is never a missing dependency: when a change renames it, the tests that import it fail.
+The files that depend on the change come from the [repository index](repository-index.md) that the review already builds. When it is unavailable, the checks cover the changed files only; when it does not cover the whole change (a build cut by its time bound, a closure cut by its limits), they cover only some of the dependents. The review says which. Only stacks with a changed file run, and a change that no check applies to says so. Each check runs twice on the base commit and twice on the head commit, each time on a fresh copy of the tree read from the repository's Git objects, never your working tree.
 
-Both models receive the outcomes as the `check_runs` object: each check's name, whether it ran, the regressions, new failing tests and flaky tests dropped, and whether the dependents were included. Test names and reasons come from the repository, so they are treated as untrusted data, kept short, and secret-scanned like other content before any remote request. The walkthrough has one "what ran" line, for example `ran 3 of 4 checks in the sandbox: 1 regression, 0 flaky dropped, 1 could not run (npm test: missing dependency: ...)`.
+How the outcomes are read:
+
+- A test that passes on base and fails on head is a regression. So is a package, module or file that fails as a whole on head (a build failure, a module that cannot be imported) while tests in it passed on base, and a run that passes its time, output or scratch limit, or exits with a failure and no results, on head after base ran within them.
+- A test that passed on base and has no result on head, with nothing on head failing in its package, class or file, stopped running. Such tests are listed apart: a rename or removal does the same, so they are not regressions. Tests of a test file the change deletes are left out, for Go packages, Python modules and Rust integration tests.
+- Tests that failed on base and pass on head are counted as fixed, and tests that fail on both as still failing.
+- A test whose two runs on one side disagree is flaky and is dropped.
+- When output reports one test twice, the failure counts, and a run that exits with a failure although every reported test passed is a failure of the check itself.
+- A missing dependency is read only from the runner's own records (a Go build that failed, a pytest collection error, a test module or file that could not be imported) or from a run that produced no results, never from what tests print. A module the repository itself provides is never a missing dependency: when a change renames it, the tests that import it fail.
+
+Results come only from the exit status and the runner output that Open Trestle asked for, never from a file the tests write about themselves. That output still comes from the code under test, and for some runners, such as pytest's JUnit report or anything the test process prints, from the test process itself. A regression is therefore strong evidence that the change broke something, but a pass is not proof: it is only as trustworthy as the head code that reported it.
+
+Both models receive the outcomes as the `check_runs` object: each check's name, whether it ran or why not (naming the base or head side where that matters), the regressions, new failing tests, tests that stopped running, the fixed and still-failing counts, flaky tests dropped, and how many of the dependents were included. Test names and reasons come from the repository, so they are treated as untrusted data, kept short, shown with the home folder as `~`, and secret-scanned like other content before any remote request. The walkthrough has one "what ran" line, for example `ran 3 of 4 checks in the sandbox: 1 regression, 2 tests stopped running, 0 flaky dropped, 1 could not run (npm test: missing dependency: jest on base)`.
 
 ## What the sandbox allows
 
@@ -51,10 +62,12 @@ A check that could not run is a gap in coverage, never a pass and never a findin
 
 - The sandbox is not available. On Linux, unprivileged user namespaces can be turned off (`kernel.unprivileged_userns_clone=0` or `user.max_user_namespaces=0`), or restricted by AppArmor (`kernel.apparmor_restrict_unprivileged_userns=1`, the default from Ubuntu 24.04), and a container may not allow them. Open Trestle never runs a check without the sandbox.
 - The toolchain is not installed, or the sandbox cannot see it.
-- Missing dependency. Checks run offline and never install packages: a Go module missing from the module cache, a Python package that is not installed, a Node package whose dependencies are not installed (`node_modules` is not in the commit), or a Rust crate with dependencies (the crate registry is not shown to the sandbox) cannot run.
+- Missing dependency. Checks run offline and never install packages: a Go module missing from the module cache, a Python package that is not installed, a Node package the tests import that is not installed (`node_modules` is not in the commit), or a Rust crate with dependencies (the crate registry is not shown to the sandbox) cannot run. A Node package's declared dependencies alone do not stop its tests: they run, and only a package a run fails to find counts.
 - On Windows, the program needs the `NUL` device and the device grants nothing to sandboxed (AppContainer) processes. Granting that access needs an administrator, which Open Trestle does not ask for. The Go command opens `NUL` for every tool it starts, so Go checks cannot run on such a system.
-- The run passed its time, output or scratch limit, or the review's time for checks ran out.
-- The runner exited with an error and reported no results.
+- The run passed its time, output or scratch limit on base, or the review's time for checks ran out. The same on head after a clean base is a regression, not a gap.
+- The runner exited with an error and reported no results on base, or reported more than 50,000 results.
+
+Reasons that belong to one side end with "on base" or "on head".
 
 ## Not verified
 
