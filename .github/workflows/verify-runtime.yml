@@ -360,6 +360,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
+      - name: Set up Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version-file: .node-version
       # The tests need a temporary folder whose ancestors no other account
       # can change. A new folder below the profile inherits only the
       # runner account, SYSTEM and Administrators.
