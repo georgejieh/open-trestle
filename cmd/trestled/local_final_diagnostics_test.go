@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -379,20 +380,24 @@ func TestLocalFinalProjectorNewPlanRejectsExistingLegacySet(t *testing.T) {
 	}
 	store, _ := artifact.NewMemoryStore(artifact.ProtectionProcessPrivate, 10)
 	destination := diagnostics.NewMemoryStore()
-	legacy, err := diagnostics.NewSet(scope, digestForTest(), "0123456789012345678901234567890123456789", digestForTest(), nil)
+	check, err := diagnostics.NewDeterministicCheck("3f01f93e51003eb3a0deca04719a3957d6e367c97c33bdfea105174d95698092", strings.Repeat("8", 64), strings.Repeat("7", 64), diagnostics.CheckPassed, 1, 2, 1, 2, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := destination.PutDiagnosticSet(ctx, legacy); err != nil {
+	verified, err := diagnostics.NewSetWithDeterministicChecks(scope, digestForTest(), "0123456789012345678901234567890123456789", digestForTest(), digestForTest(), 0, 0, 0, 1, 1, 0, nil, []diagnostics.DeterministicCheck{check}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := destination.PutDiagnosticSet(ctx, verified); err != nil {
 		t.Fatal(err)
 	}
 	projector, _ := NewLocalFinalDiagnosticProjector(store, destination, digestForTest())
 	if err := projector.Project(ctx, terminal); !errors.Is(err, diagnostics.ErrSetConflict) {
-		t.Fatalf("legacy record on new plan: %v", err)
+		t.Fatalf("verified record on new plan: %v", err)
 	}
 	stored, err := destination.GetDiagnosticSet(ctx, scope)
-	if err != nil || stored.Identity() != legacy.Identity() {
-		t.Fatalf("legacy record overwritten: %v", err)
+	if err != nil || stored.Identity() != verified.Identity() {
+		t.Fatalf("verified record overwritten: %v", err)
 	}
 }
 

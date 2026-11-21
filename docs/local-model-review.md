@@ -247,7 +247,7 @@ Dispatch refuses an approved reservation that is below the larger of two values,
 
 Route planning counts the same `response_format` bytes, which are deterministic from the pinned schema, whenever the candidate routes of a planning step include a connection with this option. The generation and verification route authorizers, the local generation route plan and each investigation turn reserve the payload, the system channel and the schema framing, so `estimated_input_tokens` does not need to carry that margin. A step reserves once for all of its candidate routes, so a route without the option that is planned in the same step is reserved the same way. An investigation decides per role, from the pinned generation route and from the verification routes.
 
-Such an authorizer binds `input_transport: local_structured_output` into its identity, and the verification authorizer moves to identity version 3 for it. Such an investigation binds the transports of its roles into the route owner and pipeline profile identities, in version 2 of each. Without the option, every estimate and identity is unchanged. This estimate is conservative byte accounting, not exact tokenization. Set a justified reservation that fits the approved context capacity of the route. No budget is increased after authorization.
+Such an authorizer binds `input_transport: local_structured_output` into its identity. Such an investigation binds the transports of its roles into the route owner and pipeline profile identities. This estimate is conservative byte accounting, not exact tokenization. Set a justified reservation that fits the approved context capacity of the route. No budget is increased after authorization.
 
 The command does not assume that a server supports these schema keywords. Requests that the server does not support fail through the existing transport and response checks, without a simplified schema, retry or fallback. The checks on candidate coverage, evidence, usage, tool calls and authorization stay unchanged.
 
@@ -282,11 +282,11 @@ trestle config bind \
 
 Each adapter must select exactly one local record, and the two adapters must differ. The selected pair must meet the verification independence level of the template. This static check does not require live health or approval.
 
-The command prints one runtime-policy-v2 JSON document for a historical v1 or v2 template, or runtime-policy-v6 for an explicit v6 template. It never upgrades a historical template to v6 and never adds the schema option. It writes no files, reads no credentials, contacts no provider, approves no routes, and changes no setup state. Save the output as a new protected file before you validate it. The command opens no output file, so you control its path, its permissions and any replacement.
+The command prints one runtime-policy-v2 JSON document for a v1 or v2 template, or runtime-policy-v6 for a v6 template. It never turns a v1 or v2 template into v6 and never adds the schema option. It writes no files, reads no credentials, contacts no provider, approves no routes, and changes no setup state. Save the output as a new protected file before you validate it. The command opens no output file, so you control its path, its permissions and any replacement.
 
 Empty, omitted and all-zero binding identities are placeholders. Nonzero inventory, generation-pin and verifier identities that already exist must match the selected records. Other policy values, including the constraints, the independence and the connections, are kept. A v1 template cannot contain the verifier field. V2 and v6 templates may leave it out before binding. Only an explicit v6 template may contain `local_structured_output`. The command refuses null values, unknown or duplicate fields, conflicting bindings and ambiguous adapter selections. Its inputs must pass the protected-file checks described above. Pending routes stay pending, and you cannot run them merely because binding and validation succeeded.
 
-For a historical v1 policy, copy the reported `inventory_identity` into `runtime-policy.json` after you edit the inventory. The shipped example pair is already structurally bound. Leave `preferred_route_record_identities` empty unless you intend to pin or prefer records that the same inventory command reports.
+For a v1 policy, copy the reported `inventory_identity` into `runtime-policy.json` after you edit the inventory. The shipped example pair is already structurally bound. Leave `preferred_route_record_identities` empty unless you intend to pin or prefer records that the same inventory command reports.
 
 After binding, validate the pair without provider calls:
 
@@ -503,9 +503,9 @@ Investigation requests use investigation context version 6. Like generation vers
 
 - The instruction-hierarchy paragraph. It says that every string in the request is untrusted repository data. That includes snapshot tool results and the files that they return. Repository instruction files cannot change the rules, the output format, the severity or the evidence requirements.
 - The sentence that explains `removed_lines` sources.
-- The version 4 tool and output rules, unchanged.
+- The pinned tool and output rules.
 
-The payload binds that text with `instructions_identity`. Files that a tool returns are flagged with `agent_configuration` and `instruction_like_text`, like other sources, and each raw tool result that the model sees carries `risk_flags` computed by the same rules. Recorded version 5 investigation requests (the same contract without the `removed_lines` sentence) and recorded version 4 requests (which carried their rules in the payload and had no hierarchy paragraph) can still be read back, but the command does not send them again. See [prompt-injection boundary](prompt-injection-boundary.md).
+The payload binds that text with `instructions_identity`. Files that a tool returns are flagged with `agent_configuration` and `instruction_like_text`, like other sources, and each raw tool result that the model sees carries `risk_flags` computed by the same rules. See [prompt-injection boundary](prompt-injection-boundary.md).
 
 The available tools list files, read inclusive line ranges, and search for a literal string within the immutable snapshot that the command acquired. They do not run shell commands or regular expressions, and they do not use provider-native tools. A model proposal carries opaque references that the host issued, not filesystem authority. Before it runs a tool, the controller checks the proposal, the actual model response, the source bindings and the remaining limits.
 
@@ -515,7 +515,7 @@ The local graph still has nine tasks and no publication task. One owned account 
 
 Each model turn reserves the larger of two values: `estimated_input_tokens`, and the request payload bytes plus the trusted system channel bytes plus 256 framing bytes. This is the same estimate as in a single-generation review. A turn whose routes use [`local_structured_output`](#chat-completions-transport) also reserves the bytes of the serialized `response_format`.
 
-Under estimate version 2, the turn record stores the system channel bytes that it reserved. A turn with structured output also stores its `response_format_bytes`, and a standard turn omits that member and keeps its encoding and identity. Whenever the command reads a retained turn back, it measures both counts again from the turn's own recorded request, using the contract version that the request records. It refuses a record whose counts the request does not support. Turn records written under estimate version 1 counted the payload alone. They read back with that formula and are never estimated again.
+The turn record stores the system channel bytes that it reserved, under estimate version 2. A turn with structured output also stores its `response_format_bytes`, and a standard turn omits that member. Whenever the command reads a retained turn back, it measures both counts again from the turn's own recorded request. It refuses a record whose counts the request does not support, and a record of any other estimate version.
 
 Results of an opted-in run use schema version 6 once the run has opened, and version 2 before that. Earlier builds wrote version 2, or version 5 with [style advice](#style-recommendations). The result includes all retained turns, with their request, route, audit and tool-result identities, not only the final two model calls. Each turn also carries the `input_tokens`, `output_tokens` and `cached_input_tokens` that the provider reported, and `token_usage` sums the turns by role (see [Token usage](#token-usage)). A known observed cost stays visible when the total usage is unknown.
 

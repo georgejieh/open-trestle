@@ -14,7 +14,7 @@ The handler also loads the changed Go files from the base and head snapshots. Fr
 
 ## Deterministic check
 
-Analysis-result version 3 records one `static_debug_output` check. The check reuses the existing Go AST and type-aware scanner to find `fmt.Println("debug")` calls that overlap changed Go ranges. The result binds rule version 1, the change identity, the counts of applicable and checked file ranges, the match count, the state, and its own content identity.
+Each analysis result records one `static_debug_output` check. The check reuses the existing Go AST and type-aware scanner to find `fmt.Println("debug")` calls that overlap changed Go ranges. The result binds rule version 1, the change identity, the counts of applicable and checked file ranges, the match count, the state, and its own content identity.
 
 The check has four states:
 
@@ -43,7 +43,7 @@ If the number of required coverage records exceeds the limit, one `evidence_limi
 
 The protected `deterministic_evidence` artifact binds the change artifact, the change result, the repository, the head revision, the head snapshot, the manifest, the slice proofs and the coverage accounting. Its origin is `deterministic_tool`. Its expiry does not exceed that of any source artifact it used.
 
-The published schemas are `schemas/artifact/deterministic-evidence-result-v2.schema.json` through `schemas/artifact/deterministic-evidence-result-v7.schema.json`, and `schemas/artifact/semantic-impact-profile-v1.schema.json` and `-v2.schema.json`. Results of versions 4 to 7 embed a profile of version 1, which also held reference candidates, or of version 2, which the handler writes now. Version 3 adds the deterministic check, and version 4 adds its observations. Version 2 remains readable without check data, and version 1 remains published for contract history.
+The published schemas are `schemas/artifact/deterministic-evidence-result-v4.schema.json` through `schemas/artifact/deterministic-evidence-result-v7.schema.json`, and `schemas/artifact/semantic-impact-profile-v2.schema.json`. Every result carries the check and its observations and embeds a version 2 profile.
 
 ### Deletion-only files across versions
 

@@ -310,17 +310,8 @@ func TestDeterministicEvidenceV7SchemaDescribesRemovedLines(t *testing.T) {
 	trimmed := schemaWithout(t, v7)
 	delete(trimmed["properties"].(map[string]any), "removed_lines")
 	trimmed["required"] = v6["required"]
-	// v7 also accepts the semantic impact profile v2 beside the v1 profile v6 binds.
-	alternatives, _ := trimmed["properties"].(map[string]any)["semantic_impact"].(map[string]any)["oneOf"].([]any)
-	if !reflect.DeepEqual(alternatives, []any{
-		map[string]any{"$ref": "urn:open-trestle:schema:artifact:semantic-impact-profile:v1"},
-		map[string]any{"$ref": "urn:open-trestle:schema:artifact:semantic-impact-profile:v2"},
-	}) {
-		t.Fatalf("v7 semantic impact alternatives = %v", alternatives)
-	}
-	trimmed["properties"].(map[string]any)["semantic_impact"] = schemaWithout(t, v6)["properties"].(map[string]any)["semantic_impact"]
 	if !reflect.DeepEqual(trimmed, schemaWithout(t, v6)) {
-		t.Fatal("v7 changes more than the version, removed_lines, the semantic profile versions and the gap reasons of v6")
+		t.Fatal("v7 changes more than the version, removed_lines and the gap reasons of v6")
 	}
 	if want := append(gapReasons(v6), "removed_lines_limit"); !reflect.DeepEqual(gapReasons(v7), want) {
 		t.Fatalf("v7 gap reasons=%v want %v", gapReasons(v7), want)

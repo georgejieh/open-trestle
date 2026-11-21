@@ -26,14 +26,11 @@ var ErrInvestigationContext = errors.New("invalid investigation context claims")
 
 const investigationSchemaIdentity = "77367fd94611f87d36e4490729096db927b8d27b9d687a4b6ab515db70e2bbc4"
 
-// investigationInstructionsIdentity pins the recorded version 4 text.
+// investigationInstructionsIdentity pins the investigation rules text.
 const investigationInstructionsIdentity = "990e881d4038ea3c222c4c0aed5b6dad7dbff547faa5f30ff067b3ac18072c8c"
 
-// investigationInstructionsV5Identity pins the recorded version 5 text.
-const investigationInstructionsV5Identity = "f5c77f4a3d7c06310e10a4b64280d1b8a3376515352376b253af2d862a911f08"
-
-// investigationInstructionsV6Identity pins the executable version 6 text.
-const investigationInstructionsV6Identity = "dd2f63c1863cb4398a73fa7d516fc35c9c60668e7036284092efb5e698a818fc"
+// investigationContractIdentity pins the investigation contract text.
+const investigationContractIdentity = "dd2f63c1863cb4398a73fa7d516fc35c9c60668e7036284092efb5e698a818fc"
 
 func InvestigationOutputSchema() []byte { return reviewschema.InvestigationOutputSchema() }
 
@@ -480,10 +477,9 @@ func NewInvestigationGenerationContext(binding InvestigationContextBinding, sele
 }
 
 func encodeInvestigationContext(value InvestigationGenerationContext, results []any) ([]byte, error) {
-	schema, instructions := InvestigationOutputSchema(), investigationInstructionsV6
-	// The recorded version 4 and 5 texts keep their own pins; version 6 is
-	// pinned too, so no contract can drift unnoticed.
-	if investigationContextDigest(schema) != investigationSchemaIdentity || investigationContextDigest([]byte(InvestigationInstructions())) != investigationInstructionsIdentity || investigationContextDigest([]byte(investigationInstructionsV5)) != investigationInstructionsV5Identity || investigationContextDigest([]byte(instructions)) != investigationInstructionsV6Identity {
+	schema, instructions := InvestigationOutputSchema(), investigationContract
+	// The rules and the contract are pinned, so neither can drift unnoticed.
+	if investigationContextDigest(schema) != investigationSchemaIdentity || investigationContextDigest([]byte(InvestigationInstructions())) != investigationInstructionsIdentity || investigationContextDigest([]byte(instructions)) != investigationContractIdentity {
 		return nil, ErrInvestigationContext
 	}
 	legacy, err := encodeContextPacket(value.selected)

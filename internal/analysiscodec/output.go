@@ -349,38 +349,14 @@ func (w resultWire) MarshalJSON() ([]byte, error) {
 		}
 		return json.Marshal(versionSeven{w.Contract, w.SchemaVersion, w.Identity, w.ChangeArtifactIdentity, w.ChangeIdentity, w.RepositoryIdentity, w.HeadRevisionIdentity, w.HeadSnapshotArtifactIdentity, w.HeadSnapshotIdentity, w.HeadManifestIdentity, w.ChangedEntries, w.ChangedRanges, w.EvidenceItems, w.CoverageGaps, w.Items, w.RemovedLines, w.Gaps, w.Checks, w.Observations, w.SemanticImpact})
 	}
-	if observationVersion(w.SchemaVersion) {
-		if w.Observations == nil {
-			w.Observations = []observationWire{}
-		}
-		return json.Marshal(current(w))
+	if w.Observations == nil {
+		w.Observations = []observationWire{}
 	}
-	type legacy struct {
-		Contract                     string                   `json:"contract"`
-		SchemaVersion                int                      `json:"schema_version"`
-		Identity                     string                   `json:"identity"`
-		ChangeArtifactIdentity       string                   `json:"change_artifact_identity"`
-		ChangeIdentity               string                   `json:"change_identity"`
-		RepositoryIdentity           string                   `json:"repository_identity"`
-		HeadRevisionIdentity         string                   `json:"head_revision_identity"`
-		HeadSnapshotArtifactIdentity string                   `json:"head_snapshot_artifact_identity"`
-		HeadSnapshotIdentity         string                   `json:"head_snapshot_identity"`
-		HeadManifestIdentity         string                   `json:"head_manifest_identity"`
-		ChangedEntries               int                      `json:"changed_entries"`
-		ChangedRanges                int                      `json:"changed_ranges"`
-		EvidenceItems                int                      `json:"evidence_items"`
-		CoverageGaps                 int                      `json:"coverage_gaps"`
-		Items                        []itemWire               `json:"items"`
-		Gaps                         []gapWire                `json:"gaps"`
-		Checks                       []deterministicCheckWire `json:"checks,omitempty"`
-		SemanticImpact               json.RawMessage          `json:"semantic_impact"`
-	}
-	return json.Marshal(legacy{w.Contract, w.SchemaVersion, w.Identity, w.ChangeArtifactIdentity, w.ChangeIdentity, w.RepositoryIdentity, w.HeadRevisionIdentity, w.HeadSnapshotArtifactIdentity, w.HeadSnapshotIdentity, w.HeadManifestIdentity, w.ChangedEntries, w.ChangedRanges, w.EvidenceItems, w.CoverageGaps, w.Items, w.Gaps, w.Checks, w.SemanticImpact})
+	return json.Marshal(current(w))
 }
 
-// observationVersion reports whether a result version records the exact
-// static-check observations array (version 4 and later).
-func observationVersion(version int) bool { return version >= 4 && version <= 7 }
+// supportedVersion reports whether a result version is one this build writes.
+func supportedVersion(version int) bool { return version >= 4 && version <= 7 }
 
 func NewResult(changeArtifact artifact.Artifact, change changecodec.Result, headArtifact artifact.Artifact, head sourceoutput.Snapshot, items []Item, gaps []Gap, checks []DeterministicCheck, observations []Observation, semanticProfile semanticimpact.Profile) (Result, error) {
 	return NewResultWithRemovedLines(changeArtifact, change, headArtifact, head, items, nil, gaps, checks, observations, semanticProfile)
@@ -433,8 +409,7 @@ func (r Result) validate(requireArtifact bool, change changecodec.Result) error 
 	if change.Identity() != r.changeIdentity || change.ArtifactIdentity() != r.changeArtifactIdentity || change.Repository().Identity() != r.repositoryIdentity || change.HeadRevision().Identity() != r.headRevisionIdentity || change.HeadSnapshotArtifactIdentity() != r.headSnapshotArtifactIdentity || change.HeadSnapshotIdentity() != r.headSnapshotIdentity || change.HeadManifestIdentity() != r.headManifestIdentity || r.changedEntries != len(change.Entries()) || len(r.items) > MaxEvidenceItems || len(r.removed) > MaxEvidenceItems || len(r.gaps) > MaxEvidenceItems || len(r.observations) > MaxEvidenceItems || r.semanticProfile.BaseSnapshotIdentity() != change.BaseSnapshotIdentity() || r.semanticProfile.HeadSnapshotIdentity() != change.HeadSnapshotIdentity() || r.semanticProfile.ChangeModelIdentity() != change.Identity() || requireArtifact && (!validDigest(r.artifactIdentity) || !validDigest(r.scopeIdentity)) {
 		return ErrInvalidResult
 	}
-	validChecks := r.schemaVersion == 2 && len(r.checks) == 0 && len(r.observations) == 0 || r.schemaVersion == 3 && len(r.checks) == 1 && len(r.observations) == 0 || observationVersion(r.schemaVersion) && len(r.checks) == 1
-	if !validChecks {
+	if !supportedVersion(r.schemaVersion) || len(r.checks) != 1 {
 		return ErrInvalidResult
 	}
 	for _, check := range r.checks {
@@ -442,7 +417,7 @@ func (r Result) validate(requireArtifact bool, change changecodec.Result) error 
 			return ErrInvalidResult
 		}
 	}
-	if observationVersion(r.schemaVersion) && uint32(len(r.observations)) != r.checks[0].MatchCount() {
+	if uint32(len(r.observations)) != r.checks[0].MatchCount() {
 		return ErrInvalidResult
 	}
 	entryByIdentity := make(map[string]changecodec.Entry, r.changedEntries)
@@ -694,16 +669,13 @@ func validGap(gap Gap, entries map[string]changecodec.Entry, schemaVersion, chan
 		if len(entry.Ranges()) != 0 {
 			return false
 		}
-		// A size limit is a size limit whatever the entry kind: from version 4
-		// a removed or added entry past the change model's size bound is a
+		// A removed or added entry past the change model's size bound is a
 		// resource_limit gap, and an added file of unsupported content (for
-		// example binary) is an unsupported_content gap. Recorded added entries
-		// keep empty_added_file.
-		sizeLimited := schemaVersion >= 4 && (entry.Kind() == "removed" || entry.Kind() == "added") && gap.reason == "resource_limit" && entry.Reason() == "resource_limit"
-		unsupportedAdded := schemaVersion >= 4 && entry.Kind() == "added" && gap.reason == "unsupported_content" && entry.Reason() == "unsupported_content"
-		// From version 4 empty_added_file means an added file with zero bytes;
-		// versions 1 to 3 keep the label they were published with.
-		emptyAdded := entry.Kind() == "added" && gap.reason == "empty_added_file" && (schemaVersion < 4 || entry.Reason() == "added_file")
+		// example binary) is an unsupported_content gap. empty_added_file
+		// means an added file with zero bytes.
+		sizeLimited := (entry.Kind() == "removed" || entry.Kind() == "added") && gap.reason == "resource_limit" && entry.Reason() == "resource_limit"
+		unsupportedAdded := entry.Kind() == "added" && gap.reason == "unsupported_content" && entry.Reason() == "unsupported_content"
+		emptyAdded := entry.Kind() == "added" && gap.reason == "empty_added_file" && entry.Reason() == "added_file"
 		return sizeLimited || unsupportedAdded || emptyAdded || entry.Kind() == "removed" && gap.reason == "removed_file" || entry.Kind() == "modified" && gap.reason == entry.Reason() && (gap.reason == "unsupported_content" || gap.reason == "resource_limit")
 	}
 	if gap.reason != "slice_resource_limit" && gap.reason != "resource_limit" {
@@ -784,8 +756,7 @@ func ParseResultArtifactWithChange(value, changeArtifact artifact.Artifact, chan
 		return Result{}, ErrInvalidResult
 	}
 	canonical, _ := json.Marshal(wire)
-	validVersion := wire.SchemaVersion == 2 && len(wire.Checks) == 0 && len(wire.Observations) == 0 || wire.SchemaVersion == 3 && len(wire.Checks) == 1 && len(wire.Observations) == 0 || observationVersion(wire.SchemaVersion) && len(wire.Checks) == 1
-	if !bytes.Equal(canonical, payload) || wire.Contract != "open-trestle/deterministic-evidence-result" || !validVersion || wire.EvidenceItems != len(wire.Items) || wire.CoverageGaps != len(wire.Gaps) {
+	if !bytes.Equal(canonical, payload) || wire.Contract != "open-trestle/deterministic-evidence-result" || !supportedVersion(wire.SchemaVersion) || len(wire.Checks) != 1 || wire.EvidenceItems != len(wire.Items) || wire.CoverageGaps != len(wire.Gaps) {
 		return Result{}, ErrInvalidResult
 	}
 	semanticProfile, err := semanticimpact.DecodeProfile(wire.SemanticImpact)

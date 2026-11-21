@@ -333,7 +333,7 @@ func ParseVerificationResultArtifact(
 	if err != nil {
 		return VerificationResult{}, ErrInvalidVerificationResult
 	}
-	verificationContext, err := review.ReconstructRecordedVerificationRequestContext(
+	verificationContext, err := review.NewVerificationRequestContext(
 		generationContextArtifact.Payload(), generation.ContextIdentity(), value.Scope().Identity(), input.MemoryScopeIdentity(), input.MemoryIdentity(),
 		input.Snapshot(), input.EvidenceItems(), generation.Candidates(),
 	)

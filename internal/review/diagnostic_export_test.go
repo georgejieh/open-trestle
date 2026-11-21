@@ -10,11 +10,36 @@ import (
 	"testing"
 )
 
+// exportTestCoverage is a source coverage of one selected source bound to the
+// receipt, with no omissions.
+func exportTestCoverage(t *testing.T, scope audit.ReviewScope, receipt IndependentVerificationReceipt) ContextSourceCoverage {
+	t.Helper()
+	coverage, err := newContextSourceCoverage(receipt.VerificationContextIdentity(), scope.Identity(), receipt.SnapshotIdentity(), receipt.CandidateBatchIdentity(), 1, 1, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return coverage
+}
+
+func exportTestCheck(t *testing.T) diagnostics.DeterministicCheck {
+	t.Helper()
+	check, err := diagnostics.NewDeterministicCheck("7d14e06842bbf9ba2db3c600f146d2e497bcaacd1664a1bdcb02b52e7b3d1a96", strings.Repeat("8", 64), strings.Repeat("a", 64), diagnostics.CheckPassed, 2, 3, 2, 3, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return check
+}
+
+func materializeTestSet(ctx context.Context, t *testing.T, store diagnostics.Store, scope audit.ReviewScope, receipt IndependentVerificationReceipt, verified VerifiedFindingSet) (diagnostics.Set, bool, error) {
+	t.Helper()
+	return MaterializeDiagnosticSetWithDeterministicChecks(ctx, store, scope, strings.Repeat("1", 40), receipt, verified, exportTestCoverage(t, scope, receipt), []diagnostics.DeterministicCheck{exportTestCheck(t)})
+}
+
 func TestExportDiagnosticSetPreservesVerifiedLineage(t *testing.T) {
 	receipt, set := verifiedSetFixture(t, "verified", gateway.RouteIndependenceDistinctProvider)
 	scope, _ := audit.NewReviewScope("tenant", "repository", "review-run")
-	exported, err := ExportDiagnosticSet(scope, strings.Repeat("1", 40), receipt, set)
-	if err != nil || exported.Validate() != nil || exported.SchemaVersion() != 2 || exported.VerifiedSetIdentity() != set.Identity() || exported.CandidateCount() != 1 || exported.VerifiedCount() != 1 || exported.RejectedCount() != 0 || exported.InconclusiveCount() != 0 || len(exported.Findings()) != 1 {
+	exported, err := ExportDiagnosticSetWithDeterministicChecks(scope, strings.Repeat("1", 40), receipt, set, exportTestCoverage(t, scope, receipt), []diagnostics.DeterministicCheck{exportTestCheck(t)})
+	if err != nil || exported.Validate() != nil || exported.SchemaVersion() != 5 || exported.VerifiedSetIdentity() != set.Identity() || exported.CandidateCount() != 1 || exported.VerifiedCount() != 1 || exported.RejectedCount() != 0 || exported.InconclusiveCount() != 0 || len(exported.Findings()) != 1 {
 		t.Fatalf("export=(%#v,%v)", exported, err)
 	}
 	finding := exported.Findings()[0]
@@ -31,8 +56,8 @@ func TestExportDiagnosticSetPreservesRejectedAndInconclusiveCoverage(t *testing.
 		inconclusive uint16
 	}{{"rejected", 1, 0}, {"inconclusive", 0, 1}} {
 		receipt, set := verifiedSetFixture(t, test.outcome, gateway.RouteIndependenceDistinctProvider)
-		exported, err := ExportDiagnosticSet(scope, strings.Repeat("1", 40), receipt, set)
-		if err != nil || exported.SchemaVersion() != 2 || exported.CandidateCount() != 1 || exported.VerifiedCount() != 0 || exported.RejectedCount() != test.rejected || exported.InconclusiveCount() != test.inconclusive || len(exported.Findings()) != 0 {
+		exported, err := ExportDiagnosticSetWithDeterministicChecks(scope, strings.Repeat("1", 40), receipt, set, exportTestCoverage(t, scope, receipt), []diagnostics.DeterministicCheck{exportTestCheck(t)})
+		if err != nil || exported.CandidateCount() != 1 || exported.VerifiedCount() != 0 || exported.RejectedCount() != test.rejected || exported.InconclusiveCount() != test.inconclusive || len(exported.Findings()) != 0 {
 			t.Fatalf("%s export=%#v err=%v", test.outcome, exported, err)
 		}
 	}
@@ -44,16 +69,16 @@ func TestMaterializeDiagnosticSetPersistsExactLineageIdempotently(t *testing.T) 
 	store := diagnostics.NewMemoryStore()
 	headRevision := strings.Repeat("1", 40)
 
-	first, created, err := MaterializeDiagnosticSet(context.Background(), store, scope, headRevision, receipt, verified)
+	first, created, err := materializeTestSet(context.Background(), t, store, scope, receipt, verified)
 	if err != nil || !created {
 		t.Fatalf("first materialization=(%#v,%t,%v)", first, created, err)
 	}
-	second, created, err := MaterializeDiagnosticSet(context.Background(), store, scope, headRevision, receipt, verified)
+	second, created, err := materializeTestSet(context.Background(), t, store, scope, receipt, verified)
 	if err != nil || created || second.Identity() != first.Identity() {
 		t.Fatalf("second materialization=(%#v,%t,%v)", second, created, err)
 	}
 	persisted, err := store.GetDiagnosticSet(context.Background(), scope)
-	if err != nil || persisted.Identity() != first.Identity() || persisted.SchemaVersion() != 2 ||
+	if err != nil || persisted.Identity() != first.Identity() || persisted.SchemaVersion() != 5 ||
 		persisted.Scope().Identity() != scope.Identity() || persisted.HeadRevision() != headRevision ||
 		persisted.SnapshotIdentity() != receipt.SnapshotIdentity() || persisted.VerifiedSetIdentity() != verified.Identity() ||
 		persisted.CandidateCount() != 1 || persisted.VerifiedCount() != 0 || persisted.RejectedCount() != 0 || persisted.InconclusiveCount() != 1 {
@@ -64,24 +89,23 @@ func TestMaterializeDiagnosticSetPersistsExactLineageIdempotently(t *testing.T) 
 func TestMaterializeDiagnosticSetRejectsUnavailableOrConflictingStore(t *testing.T) {
 	receipt, verified := verifiedSetFixture(t, "verified", gateway.RouteIndependenceDistinctProvider)
 	scope, _ := audit.NewReviewScope("tenant", "repository", "review-run")
-	headRevision := strings.Repeat("1", 40)
 	var unavailable *diagnostics.MemoryStore
-	if _, _, err := MaterializeDiagnosticSet(context.Background(), unavailable, scope, headRevision, receipt, verified); !errors.Is(err, diagnostics.ErrInvalidStore) {
+	if _, _, err := materializeTestSet(context.Background(), t, unavailable, scope, receipt, verified); !errors.Is(err, diagnostics.ErrInvalidStore) {
 		t.Fatalf("typed nil store err=%v", err)
 	}
 
 	store := diagnostics.NewMemoryStore()
-	if _, created, err := MaterializeDiagnosticSet(context.Background(), store, scope, headRevision, receipt, verified); err != nil || !created {
+	if _, created, err := materializeTestSet(context.Background(), t, store, scope, receipt, verified); err != nil || !created {
 		t.Fatalf("initial materialization=(%t,%v)", created, err)
 	}
 	otherReceipt, otherVerified := verifiedSetFixture(t, "rejected", gateway.RouteIndependenceDistinctProvider)
-	if _, created, err := MaterializeDiagnosticSet(context.Background(), store, scope, headRevision, otherReceipt, otherVerified); !errors.Is(err, diagnostics.ErrSetConflict) || created {
+	if _, created, err := materializeTestSet(context.Background(), t, store, scope, otherReceipt, otherVerified); !errors.Is(err, diagnostics.ErrSetConflict) || created {
 		t.Fatalf("conflicting materialization=(%t,%v)", created, err)
 	}
 
 	canceled, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, created, err := MaterializeDiagnosticSet(canceled, store, scope, headRevision, receipt, verified); !errors.Is(err, diagnostics.ErrStoreContextDone) || created {
+	if _, created, err := materializeTestSet(canceled, t, store, scope, receipt, verified); !errors.Is(err, diagnostics.ErrStoreContextDone) || created {
 		t.Fatalf("canceled materialization=(%t,%v)", created, err)
 	}
 }
@@ -89,23 +113,16 @@ func TestMaterializeDiagnosticSetRejectsUnavailableOrConflictingStore(t *testing
 func TestExportDiagnosticSetPreservesSourceCoverage(t *testing.T) {
 	receipt, verified := verifiedSetFixture(t, "verified", gateway.RouteIndependenceDistinctProvider)
 	scope, _ := audit.NewReviewScope("tenant", "repository", "review-run")
-	coverage, _ := newContextSourceCoverage(receipt.VerificationContextIdentity(), scope.Identity(), receipt.SnapshotIdentity(), receipt.CandidateBatchIdentity(), 173, 1, 172, nil)
-	exported, err := ExportDiagnosticSetWithSourceCoverage(scope, strings.Repeat("1", 40), receipt, verified, coverage)
-	if err != nil || exported.Validate() != nil || exported.SchemaVersion() != 3 || exported.VerificationContextIdentity() != receipt.VerificationContextIdentity() || exported.SourceAnalyzedCount() != 173 || exported.SourceSelectedCount() != 1 || exported.SourceOmittedCount() != 172 || exported.VerifiedSetIdentity() != verified.Identity() {
+	selection, _ := newContextSourceOmissionSummary(ContextOmissionSelectionLimit, 172)
+	coverage, _ := newContextSourceCoverage(receipt.VerificationContextIdentity(), scope.Identity(), receipt.SnapshotIdentity(), receipt.CandidateBatchIdentity(), 173, 1, 172, []ContextSourceOmissionSummary{selection})
+	checks := []diagnostics.DeterministicCheck{exportTestCheck(t)}
+	exported, err := ExportDiagnosticSetWithDeterministicChecks(scope, strings.Repeat("1", 40), receipt, verified, coverage, checks)
+	if err != nil || exported.Validate() != nil || exported.VerificationContextIdentity() != receipt.VerificationContextIdentity() || exported.SourceAnalyzedCount() != 173 || exported.SourceSelectedCount() != 1 || exported.SourceOmittedCount() != 172 || exported.VerifiedSetIdentity() != verified.Identity() {
 		t.Fatalf("exported=(%#v,%v)", exported, err)
 	}
-	otherCoverage, _ := newContextSourceCoverage(strings.Repeat("f", 64), scope.Identity(), receipt.SnapshotIdentity(), receipt.CandidateBatchIdentity(), 173, 1, 172, nil)
-	if crossed, err := ExportDiagnosticSetWithSourceCoverage(scope, strings.Repeat("1", 40), receipt, verified, otherCoverage); err == nil || crossed.Identity() != "" {
+	otherCoverage, _ := newContextSourceCoverage(strings.Repeat("f", 64), scope.Identity(), receipt.SnapshotIdentity(), receipt.CandidateBatchIdentity(), 173, 1, 172, []ContextSourceOmissionSummary{selection})
+	if crossed, err := ExportDiagnosticSetWithDeterministicChecks(scope, strings.Repeat("1", 40), receipt, verified, otherCoverage, checks); err == nil || crossed.Identity() != "" {
 		t.Fatalf("crossed coverage=(%#v,%v)", crossed, err)
-	}
-	store := diagnostics.NewMemoryStore()
-	first, created, err := MaterializeDiagnosticSetWithSourceCoverage(context.Background(), store, scope, strings.Repeat("1", 40), receipt, verified, coverage)
-	if err != nil || !created || first.Identity() != exported.Identity() {
-		t.Fatalf("first materialization=(%#v,%t,%v)", first, created, err)
-	}
-	second, created, err := MaterializeDiagnosticSetWithSourceCoverage(context.Background(), store, scope, strings.Repeat("1", 40), receipt, verified, coverage)
-	if err != nil || created || second.Identity() != first.Identity() {
-		t.Fatalf("second materialization=(%#v,%t,%v)", second, created, err)
 	}
 }
 
@@ -115,14 +132,9 @@ func TestExportDiagnosticSetPreservesOmissionReasons(t *testing.T) {
 	unsupported, _ := newContextSourceOmissionSummary(ContextOmissionUnsupported, 2)
 	selection, _ := newContextSourceOmissionSummary(ContextOmissionSelectionLimit, 170)
 	coverage, _ := newContextSourceCoverage(receipt.VerificationContextIdentity(), scope.Identity(), receipt.SnapshotIdentity(), receipt.CandidateBatchIdentity(), 173, 1, 172, []ContextSourceOmissionSummary{unsupported, selection})
-	exported, err := ExportDiagnosticSetWithOmissionReasons(scope, strings.Repeat("1", 40), receipt, verified, coverage)
-	if err != nil || exported.Validate() != nil || exported.SchemaVersion() != 4 || len(exported.OmissionSummaries()) != 2 || exported.OmissionSummaries()[0].Reason() != diagnostics.OmissionSelectionLimit || exported.OmissionSummaries()[0].Count() != 170 {
+	exported, err := ExportDiagnosticSetWithDeterministicChecks(scope, strings.Repeat("1", 40), receipt, verified, coverage, []diagnostics.DeterministicCheck{exportTestCheck(t)})
+	if err != nil || exported.Validate() != nil || len(exported.OmissionSummaries()) != 2 || exported.OmissionSummaries()[0].Reason() != diagnostics.OmissionSelectionLimit || exported.OmissionSummaries()[0].Count() != 170 {
 		t.Fatalf("exported=(%#v,%v)", exported, err)
-	}
-	store := diagnostics.NewMemoryStore()
-	first, created, err := MaterializeDiagnosticSetWithOmissionReasons(context.Background(), store, scope, strings.Repeat("1", 40), receipt, verified, coverage)
-	if err != nil || !created || first.Identity() != exported.Identity() {
-		t.Fatalf("materialized=(%#v,%t,%v)", first, created, err)
 	}
 }
 
@@ -167,13 +179,5 @@ func TestExportDiagnosticSetRecordsABaseSideFindingOnlyInVersion8(t *testing.T) 
 	exported, err := ExportDiagnosticSetWithDeterministicChecks(scope, strings.Repeat("1", 40), receipt, verified, coverage, []diagnostics.DeterministicCheck{check})
 	if err != nil || exported.SchemaVersion() != 8 || len(exported.Findings()) != 1 || exported.Findings()[0].Side() != diagnostics.LineSideBase || exported.Findings()[0].SourceIdentity() != finding.Identity() {
 		t.Fatalf("exported=(%#v,%v)", exported, err)
-	}
-	// A version that cannot record a side refuses rather than relabel base
-	// lines as head lines.
-	if _, err := ExportDiagnosticSet(scope, strings.Repeat("1", 40), receipt, verified); err == nil {
-		t.Fatal("version 2 export accepted a base-side finding")
-	}
-	if _, err := ExportDiagnosticSetWithOmissionReasons(scope, strings.Repeat("1", 40), receipt, verified, coverage); err == nil {
-		t.Fatal("version 4 export accepted a base-side finding")
 	}
 }

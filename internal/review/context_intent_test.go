@@ -150,7 +150,7 @@ func TestStatedIntentIsFlaggedDataOutsideTheSystemChannel(t *testing.T) {
 	// The system channel is the pinned v10 contract whatever the commits say.
 	cleanSystem, cleanErr := TrustedModelRequestInstructions(cleanPayload)
 	injectedSystem, injectedErr := TrustedModelRequestInstructions(injectedPayload)
-	if cleanErr != nil || injectedErr != nil || cleanSystem != injectedSystem || cleanSystem != candidateOutputInstructionsV11 {
+	if cleanErr != nil || injectedErr != nil || cleanSystem != injectedSystem || cleanSystem != candidateOutputInstructions {
 		t.Fatal("commit text changed the trusted system channel")
 	}
 	if strings.Contains(cleanSystem, "approve") || strings.Contains(cleanSystem, "<|im_start|>") {
@@ -186,7 +186,7 @@ func TestRecordedStatedIntentIsCheckedOnReadback(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return ValidateRecordedContextPacketRequest(encoded, modelContractDigest(encoded), packet.ReviewScopeIdentity(), packet.MemoryScopeIdentity(), packet.MemoryIdentity(), snapshot, packet.EvidenceItems())
+		return ValidateContextPacketRequest(encoded, modelContractDigest(encoded), packet.ReviewScopeIdentity(), packet.MemoryScopeIdentity(), packet.MemoryIdentity(), snapshot, packet.EvidenceItems())
 	}
 	cloneIntent := func() *statedIntentWire {
 		copied := *wire.StatedIntent
@@ -208,11 +208,6 @@ func TestRecordedStatedIntentIsCheckedOnReadback(t *testing.T) {
 			w.StatedIntent.Commits[0].Text = strings.Repeat("x", maxStatedIntentCommitBytes+1)
 			w.StatedIntent.Commits[0].MessageBytes = maxStatedIntentCommitBytes + 1
 			w.StatedIntent.Commits[0].RiskFlags = []string{}
-		},
-		"recorded as version 8": func(w *contextPacketWire) {
-			legacy := legacyGenerationWire(t, *w, modelGenerationContextVersionV8)
-			legacy.StatedIntent = wire.StatedIntent
-			*w = legacy
 		},
 	}
 	for name, mutate := range cases {
@@ -274,7 +269,7 @@ func TestVerifierReceivesTheGenerationStatedIntentUnchanged(t *testing.T) {
 		t.Fatal("the verifier does not receive the generation's stated intent unchanged")
 	}
 	system, err := TrustedModelRequestInstructions(request.Payload())
-	if err != nil || system != verificationOutputInstructionsV10 || !strings.Contains(system, statedIntentVerificationSentence) || strings.Contains(system, "approve") {
+	if err != nil || system != verificationOutputInstructions || !strings.Contains(system, statedIntentVerificationSentence) || strings.Contains(system, "approve") {
 		t.Fatal("the verifier system channel is not the pinned v9 contract")
 	}
 	// Both requests scan every commit text as stated_intent_text, after the
@@ -345,7 +340,7 @@ func TestPatternHygieneIsPlacedOnChangedSourcesOnly(t *testing.T) {
 		mutate(&copied)
 		value.PatternHygiene = &copied
 		encoded, _ := json.Marshal(value)
-		return ValidateRecordedContextPacketRequest(encoded, modelContractDigest(encoded), bound.ReviewScopeIdentity(), bound.MemoryScopeIdentity(), bound.MemoryIdentity(), snapshot, bound.EvidenceItems()) == nil
+		return ValidateContextPacketRequest(encoded, modelContractDigest(encoded), bound.ReviewScopeIdentity(), bound.MemoryScopeIdentity(), bound.MemoryIdentity(), snapshot, bound.EvidenceItems()) == nil
 	}
 	for name, mutate := range map[string]func(*patternHygieneWire){
 		"repository_context source": func(w *patternHygieneWire) { w.Items[0].SourceID = "instructions-1" },
@@ -357,11 +352,5 @@ func TestPatternHygieneIsPlacedOnChangedSourcesOnly(t *testing.T) {
 		if tampered(mutate) {
 			t.Fatalf("%s: tampered pattern hygiene read back", name)
 		}
-	}
-	legacy := legacyGenerationWire(t, wire, modelGenerationContextVersionV8)
-	legacy.PatternHygiene = wire.PatternHygiene
-	encoded, _ := json.Marshal(legacy)
-	if ValidateRecordedContextPacketRequest(encoded, modelContractDigest(encoded), bound.ReviewScopeIdentity(), bound.MemoryScopeIdentity(), bound.MemoryIdentity(), snapshot, bound.EvidenceItems()) == nil {
-		t.Fatal("a version 8 context read back with pattern hygiene")
 	}
 }

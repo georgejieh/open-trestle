@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/internal/gateway"
 	"github.com/georgejieh/open-trestle/internal/provider"
 )
@@ -280,21 +279,6 @@ func TestVerifiedFindingSidesReadBack(t *testing.T) {
 	base.side = LineSideBase
 	if deriveVerifiedFindingFingerprint(base) == finding.fingerprint {
 		t.Fatal("base and head locations share a fingerprint")
-	}
-}
-
-// A diagnostic set version without sides refuses a base-side finding rather
-// than export its base lines as head lines.
-func TestHeadOnlyConsumersRefuseABaseSideFinding(t *testing.T) {
-	receipt, verified := verifiedSetFixture(t, "verified", gateway.RouteIndependenceDistinctProvider)
-	base := relabelBaseSide(t, verified)
-	scope, _ := audit.NewReviewScope("tenant", "repository", "review-run")
-	if _, err := ExportDiagnosticSet(scope, strings.Repeat("1", 40), receipt, verified); err != nil {
-		t.Fatalf("head fixture does not export: %v", err)
-	}
-	// Version 2 cannot record a side; only version 8 carries a base-side finding.
-	if _, err := ExportDiagnosticSet(scope, strings.Repeat("1", 40), receipt, base); err == nil {
-		t.Fatal("version 2 diagnostic export accepted a base-side finding")
 	}
 }
 

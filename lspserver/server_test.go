@@ -25,7 +25,9 @@ func lspDiagnosticSet(t *testing.T) diagnostics.Set {
 	t.Helper()
 	scope, _ := audit.NewReviewScope("tenant-a", "repo-a", "run-a")
 	finding, _ := diagnostics.NewFinding(strings.Repeat("a", 64), strings.Repeat("b", 64), "Nil access", "The value may be nil.", diagnostics.SeverityError, "internal/example.go", 3, 4, []string{"evidence-1"})
-	set, _ := diagnostics.NewSetWithSourceCoverage(scope, strings.Repeat("d", 64), strings.Repeat("1", 40), strings.Repeat("e", 64), strings.Repeat("f", 64), 1, 0, 0, 2, 1, 1, []diagnostics.Finding{finding})
+	omission, _ := diagnostics.NewOmissionSummary(diagnostics.OmissionSelectionLimit, 1)
+	check, _ := diagnostics.NewDeterministicCheck("3f01f93e51003eb3a0deca04719a3957d6e367c97c33bdfea105174d95698092", strings.Repeat("8", 64), strings.Repeat("7", 64), diagnostics.CheckPassed, 1, 2, 1, 2, 0)
+	set, _ := diagnostics.NewSetWithDeterministicChecks(scope, strings.Repeat("d", 64), strings.Repeat("1", 40), strings.Repeat("e", 64), strings.Repeat("f", 64), 1, 0, 0, 2, 1, 1, []diagnostics.OmissionSummary{omission}, []diagnostics.DeterministicCheck{check}, []diagnostics.Finding{finding})
 	return set
 }
 func lspDeterministicSet(t *testing.T) diagnostics.Set {

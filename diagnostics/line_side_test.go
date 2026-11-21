@@ -77,13 +77,6 @@ func TestBaseSideFindingUsesVersion8(t *testing.T) {
 			t.Fatalf("%s read back", name)
 		}
 	}
-	// Versions that cannot record a side refuse a base finding outright.
-	if _, err := NewSetWithCoverage(set.Scope(), set.SnapshotIdentity(), set.HeadRevision(), strings.Repeat("e", 64), 1, 0, 0, []Finding{base}); err == nil {
-		t.Fatal("version 2 accepted a base-side finding")
-	}
-	if _, err := NewSetWithOmissionReasons(set.Scope(), set.SnapshotIdentity(), set.HeadRevision(), strings.Repeat("e", 64), strings.Repeat("f", 64), 1, 0, 0, 1, 1, 0, nil, []Finding{base}); err == nil {
-		t.Fatal("version 4 accepted a base-side finding")
-	}
 }
 
 func TestFinalSetCarriesVersion8Verification(t *testing.T) {

@@ -59,20 +59,14 @@ func indexManifestSpec(changed, caller ContextSource) ContextManifestSpec {
 	}
 }
 
-func TestRelatedTestAndRepositoryMapStagesBelongToVersionTenAndNine(t *testing.T) {
-	for _, stage := range []ContextStage{ContextStageRelatedTest, ContextStageRepositoryMap} {
-		token := stage.String()
-		if validContextStageToken(token, true, false) || !validContextStageToken(token, true, true) {
-			t.Fatalf("%s is not limited to the index contract versions", token)
+func TestContextStageTokens(t *testing.T) {
+	for _, stage := range []ContextStage{ContextStageChangedHunk, ContextStageEnclosingSymbol, ContextStageDirectReference, ContextStageRelatedTest, ContextStageRepositoryMap, ContextStageRemovedLines} {
+		if !validContextStageToken(stage.String()) {
+			t.Fatalf("%s is not a valid stage token", stage)
 		}
 	}
-	for _, stage := range []ContextStage{ContextStageEnclosingSymbol, ContextStageDirectReference} {
-		if !validContextStageToken(stage.String(), true, false) {
-			t.Fatalf("%s was readable before the index contract versions and is not now", stage)
-		}
-	}
-	if !validContextStageToken("changed_hunk", false, false) || validContextStageToken("unknown", true, true) {
-		t.Fatal("the stage set outside the index stages changed")
+	if validContextStageToken("unknown") {
+		t.Fatal("an unknown stage token is valid")
 	}
 }
 
@@ -119,11 +113,6 @@ func TestContextManifestIsRecordedValidatedAndSummarised(t *testing.T) {
 	}
 	if strings.Join(summary.Checks, ",") != "lint,unit_tests" {
 		t.Fatalf("checks = %v", summary.Checks)
-	}
-	// A context before version 10 has no manifest.
-	plain, err := ContextManifestOf(mustMarshal(t, legacyGenerationWire(t, mustDecodeGeneration(t, payload), modelGenerationContextVersionV9)))
-	if err != nil || plain.Present {
-		t.Fatalf("version 9 summary = %+v, %v", plain, err)
 	}
 	// Only index sources are index context: the changed hunk is change evidence.
 	ranges, err := ContextIndexSourceRanges(payload)
@@ -178,38 +167,6 @@ func mustDecodeGeneration(t *testing.T, payload []byte) contextPacketWire {
 	return wire
 }
 
-// A recorded version 9 context cannot carry what version 10 added.
-func TestRecordedVersionNineContextRefusesVersionTenFields(t *testing.T) {
-	limits, _ := NewContextLimits(1<<20, 5)
-	packet, snapshot, changed, caller := indexPacketFixture(t, limits)
-	bound, err := packet.WithContextManifest(indexManifestSpec(changed, caller))
-	if err != nil {
-		t.Fatal(err)
-	}
-	request, _ := bound.ProviderRequest()
-	current := mustDecodeGeneration(t, request.Payload())
-	readable := func(wire contextPacketWire) bool {
-		encoded := mustMarshal(t, wire)
-		return ValidateRecordedContextPacketRequest(encoded, modelContractDigest(encoded), bound.ReviewScopeIdentity(), bound.MemoryScopeIdentity(), bound.MemoryIdentity(), snapshot, bound.EvidenceItems()) == nil
-	}
-	if !readable(current) {
-		t.Fatal("the current context does not read back")
-	}
-	if !readable(legacyGenerationWire(t, current, modelGenerationContextVersionV9)) {
-		t.Fatal("the same sources do not read back as a version 9 context")
-	}
-	for name, mutate := range map[string]func(*contextPacketWire){
-		"a context manifest": func(w *contextPacketWire) { w.ContextManifest = current.ContextManifest },
-		"repository checks":  func(w *contextPacketWire) { w.RepositoryChecks = []string{"lint"} },
-	} {
-		wire := legacyGenerationWire(t, current, modelGenerationContextVersionV9)
-		mutate(&wire)
-		if readable(wire) {
-			t.Fatalf("version 9 context with %s read back", name)
-		}
-	}
-}
-
 // The verifier sees the index sources and the source limit of version 10, and
 // never the manifest or the repository checks, which are finder accounting.
 func TestVerifierReceivesIndexSourcesWithoutTheManifest(t *testing.T) {
@@ -247,11 +204,11 @@ func TestVerifierReceivesIndexSourcesWithoutTheManifest(t *testing.T) {
 		t.Fatalf("verifier stages = %v", stages)
 	}
 	system, err := TrustedModelRequestInstructions(request.Payload())
-	if err != nil || system != verificationOutputInstructionsV10 || !strings.Contains(system, indexContextVerificationSentence) {
+	if err != nil || system != verificationOutputInstructions || !strings.Contains(system, indexContextVerificationSentence) {
 		t.Fatal("the verifier system channel does not explain the index sources")
 	}
 	generationSystem, err := TrustedModelRequestInstructions(generationRequest.Payload())
-	if err != nil || generationSystem != candidateOutputInstructionsV11 || !strings.Contains(generationSystem, indexContextGenerationSentence) || !strings.Contains(generationSystem, repositoryChecksGenerationSentence) {
+	if err != nil || generationSystem != candidateOutputInstructions || !strings.Contains(generationSystem, indexContextGenerationSentence) || !strings.Contains(generationSystem, repositoryChecksGenerationSentence) {
 		t.Fatal("the generation system channel does not explain the index sources and repository checks")
 	}
 }

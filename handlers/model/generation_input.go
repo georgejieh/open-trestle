@@ -177,7 +177,7 @@ func (i GenerationInput) Validate() error {
 		!validDigest(i.contextIdentity) || !validDigest(i.memoryScopeIdentity) || !validDigest(i.memoryIdentity) || i.snapshot.Validate() != nil ||
 		i.authorization.Validate() != nil || i.authorization.ReviewScopeIdentity() != i.reviewScopeIdentity ||
 		len(i.evidenceItems) > 2048 || len(i.snapshot.Ranges()) == 0 && len(i.baseEvidence) == 0 ||
-		i.outputSchemaIdentity != review.ModelCandidateBatchSchemaIdentity && i.outputSchemaIdentity != review.ModelCandidateBatchV1SchemaIdentity {
+		i.outputSchemaIdentity != review.ModelCandidateBatchSchemaIdentity {
 		return ErrInvalidGenerationInput
 	}
 	sanitized := validDigest(i.sanitizedRequestArtifactIdentity) && validDigest(i.sanitizedEgressReceiptArtifactIdentity) && validDigest(i.sanitizedEgressReceiptIdentity)
@@ -302,7 +302,7 @@ func ParseGenerationInput(encoded []byte) (GenerationInput, error) {
 	canonical, err := json.Marshal(wire)
 	if err != nil || !bytes.Equal(canonical, encoded) || wire.Contract != "open-trestle/model-generation-input" ||
 		(wire.SchemaVersion != 1 && wire.SchemaVersion != 3 && wire.SchemaVersion != 4) ||
-		wire.OutputSchemaIdentity != review.ModelCandidateBatchSchemaIdentity && wire.OutputSchemaIdentity != review.ModelCandidateBatchV1SchemaIdentity {
+		wire.OutputSchemaIdentity != review.ModelCandidateBatchSchemaIdentity {
 		return GenerationInput{}, ErrInvalidGenerationInput
 	}
 	ranges := make([]evidence.SourceRange, len(wire.SnapshotRanges))
