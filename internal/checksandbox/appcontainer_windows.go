@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 	"unsafe"
@@ -92,6 +93,8 @@ func newAppContainer() (*appContainer, error) {
 		// Windows gives the package full control of its folder; it gets the
 		// scratch's rights there instead (see scratchAccess).
 		err = changeAccess(folder, access(copied, windows.SET_ACCESS, scratchAccess), access(logon, windows.GRANT_ACCESS, scratchAccess))
+		runtime.KeepAlive(copied)
+		runtime.KeepAlive(logon)
 	}
 	if err != nil {
 		deleteProfile(name16)

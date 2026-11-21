@@ -1,6 +1,7 @@
 package checksandbox
 
 import (
+	"runtime"
 	"slices"
 	"unsafe"
 
@@ -25,7 +26,9 @@ func grant(path string, mask windows.ACCESS_MASK, sids ...*windows.SID) error {
 	for index, sid := range sids {
 		entries[index] = access(sid, windows.GRANT_ACCESS, mask)
 	}
-	return changeAccess(path, entries...)
+	err := changeAccess(path, entries...)
+	runtime.KeepAlive(sids)
+	return err
 }
 
 // revoke removes path's explicit entries for sids; Windows removes the
@@ -35,10 +38,14 @@ func revoke(path string, sids ...*windows.SID) error {
 	for index, sid := range sids {
 		entries[index] = access(sid, windows.REVOKE_ACCESS, 0)
 	}
-	return changeAccess(path, entries...)
+	err := changeAccess(path, entries...)
+	runtime.KeepAlive(sids)
+	return err
 }
 
-// access is an inheritable change of sid's access.
+// access is an inheritable change of sid's access. The entry holds sid as
+// a uintptr, which the garbage collector does not see: the caller keeps sid
+// alive until the entry has been used.
 func access(sid *windows.SID, mode windows.ACCESS_MODE, mask windows.ACCESS_MASK) windows.EXPLICIT_ACCESS {
 	return windows.EXPLICIT_ACCESS{
 		AccessPermissions: mask,
@@ -109,7 +116,12 @@ func ensureReadable(path string, capability, logon *windows.SID) error {
 	if err := recordGrant(path); err != nil {
 		return err
 	}
-	return changeAccess(path, entries...)
+	err = changeAccess(path, entries...)
+	// The earlier sessions' SIDs are inside descriptor.
+	runtime.KeepAlive(descriptor)
+	runtime.KeepAlive(capability)
+	runtime.KeepAlive(logon)
+	return err
 }
 
 // grantsRead reports whether dacl has an allow entry for sid that grants

@@ -1,9 +1,13 @@
 package checksandbox
 
 import (
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -28,12 +32,33 @@ func platformProbe(mode string, args []string) int {
 		// Only the count: the values can be secrets.
 		fmt.Printf("%d values readable\n", readable)
 		return probeEscaped
+	case "registry-value":
+		return readValue(args[0])
 	case "lock-scratch":
 		return lockFolder(os.Getenv("TMPDIR"))
 	case "lock-profile":
 		return lockFolder(ownProfileFolder(args[0]))
 	}
 	return 2
+}
+
+// readValue reads the probe value the test planted under path in HKCU. Only
+// a denied access counts as blocked; any other failure means the probe did
+// not test what it should.
+func readValue(path string) int {
+	key, err := registry.OpenKey(registry.CURRENT_USER, path, registry.QUERY_VALUE)
+	if err == nil {
+		defer key.Close()
+		_, _, err = key.GetStringValue(probeValueName)
+	}
+	switch {
+	case err == nil:
+		return probeEscaped
+	case errors.Is(err, windows.ERROR_ACCESS_DENIED):
+		return probeBlocked
+	}
+	fmt.Fprintln(os.Stderr, err)
+	return 1
 }
 
 // readableValues counts the values the process can read in the key at path
@@ -80,6 +105,7 @@ func lockFolder(base string) int {
 		AccessPermissions: windows.GENERIC_ALL, AccessMode: windows.DENY_ACCESS,
 		Trustee: windows.TRUSTEE{TrusteeForm: windows.TRUSTEE_IS_SID, TrusteeType: windows.TRUSTEE_IS_WELL_KNOWN_GROUP, TrusteeValue: windows.TrusteeValueFromSID(everyone)},
 	}}, nil)
+	runtime.KeepAlive(everyone)
 	if err != nil {
 		return 1
 	}
@@ -149,11 +175,39 @@ func requireDiskBounded(t *testing.T, spec Spec) {
 	}
 }
 
+// probeValueName names the harmless value the registry test plants.
+const probeValueName = "probe"
+
 // TestEscapeReadUserRegistry checks that the sandbox reads no value of the
 // user's registry hive, such as the variables setx saves in
-// HKCU\Environment, which can hold keys.
+// HKCU\Environment, which can hold keys: first a value planted for the
+// test in a subkey of Environment, which grants every AppContainer reading,
+// then any value two levels down. A subkey sets no environment variable.
 func TestEscapeReadUserRegistry(t *testing.T) {
-	requireBlocked(t, runProbe(t, probeSpec(t, "registry")))
+	random := make([]byte, 8)
+	if _, err := rand.Read(random); err != nil {
+		t.Fatal(err)
+	}
+	path := `Environment\OpenTrestle.Probe.` + hex.EncodeToString(random)
+	key, _, err := registry.CreateKey(registry.CURRENT_USER, path, registry.SET_VALUE|registry.QUERY_VALUE)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer registry.DeleteKey(registry.CURRENT_USER, path)
+	err = key.SetStringValue(probeValueName, "harmless")
+	if err == nil {
+		_, _, err = key.GetStringValue(probeValueName)
+	}
+	key.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Run("planted value", func(t *testing.T) {
+		requireBlocked(t, runProbe(t, probeSpec(t, "registry-value", path)))
+	})
+	t.Run("whole hive", func(t *testing.T) {
+		requireBlocked(t, runProbe(t, probeSpec(t, "registry")))
+	})
 }
 
 // environmentLeaks has nothing to scan on Windows: no process can read
