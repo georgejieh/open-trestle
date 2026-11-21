@@ -378,7 +378,7 @@ func initializeSetupBootstrap(ctx context.Context, dir string, values map[string
 	if _, _, _, _, err := parseLocalModelReview(reviewArgs); err != nil {
 		return err
 	}
-	plan, err := setupcore.NewCurrentPlan(setupcore.ProfileLocalSingleNode, value("tenant"), value("repository"), value("recovery-owner"), clock.Now())
+	plan, err := setupcore.NewPlan(setupcore.ProfileLocalSingleNode, value("tenant"), value("repository"), value("recovery-owner"), clock.Now())
 	if err != nil {
 		return err
 	}

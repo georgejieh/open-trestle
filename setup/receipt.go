@@ -193,7 +193,7 @@ func deterministicCheck(key CheckKey) bool {
 }
 func validCheckKey(key CheckKey) bool {
 	switch key {
-	case CheckProfileSelected, CheckScopeValid, CheckEffectPostureLocked, CheckRecoveryOwnerNamed, CheckLocalAdministratorValidated, CheckStateStoragePostureValidated, CheckBackupValidated, CheckObserverCredentialPostureValidated, CheckLocalInferenceValidated, CheckRemoteProviderAuthorized, CheckIntegrationPermissionsValidated, CheckWebhookValidated, CheckPolicyValidated, CheckDryRunValidated:
+	case CheckProfileSelected, CheckScopeValid, CheckEffectPostureLocked, CheckRecoveryOwnerNamed, CheckLocalAdministratorValidated, CheckStateStoragePostureValidated, CheckBackupValidated, CheckObserverCredentialPostureValidated, CheckLocalInferenceValidated, CheckPolicyValidated, CheckDryRunValidated:
 		return true
 	}
 	return false
@@ -206,12 +206,6 @@ func recoveryForKey(key CheckKey) RecoveryAction {
 		return RecoveryConfigureIdentity
 	case CheckObserverCredentialPostureValidated:
 		return RecoveryConfigureObserver
-	case CheckRemoteProviderAuthorized:
-		return RecoveryApproveProvider
-	case CheckIntegrationPermissionsValidated:
-		return RecoveryCorrectPermissions
-	case CheckWebhookValidated:
-		return RecoveryVerifyWebhook
 	case CheckDryRunValidated:
 		return RecoveryRunDryRun
 	case CheckPolicyValidated:

@@ -110,30 +110,8 @@ func NewRunner(state *StateFile, checkers []Checker, clock RunnerClock) (*Runner
 
 // Run executes and persists one exact setup check.
 func (r *Runner) Run(ctx context.Context, key CheckKey) (Plan, CheckReceipt, error) {
-	return r.run(ctx, key, "")
-}
-
-// RunExpected executes only when the protected plan still has the caller-confirmed identity.
-func (r *Runner) RunExpected(ctx context.Context, key CheckKey, expectedPlanIdentity string) (Plan, CheckReceipt, error) {
-	return r.run(ctx, key, expectedPlanIdentity)
-}
-func (r *Runner) run(ctx context.Context, key CheckKey, expectedPlanIdentity string) (Plan, CheckReceipt, error) {
-	if r == nil || ctx == nil || ctx.Err() != nil || expectedPlanIdentity != "" && !nonzeroSetupDigest(expectedPlanIdentity) {
+	if r == nil || ctx == nil || ctx.Err() != nil {
 		return Plan{}, CheckReceipt{}, ErrInvalidCheckerRuntime
-	}
-	// Refuse historical effect authority before even considering a durable
-	// pending receipt. Expected-plan approval retains its existing priority.
-	if key == CheckIntegrationPermissionsValidated || key == CheckWebhookValidated {
-		head, err := r.state.Current(ctx)
-		if err != nil {
-			return Plan{}, CheckReceipt{}, err
-		}
-		if expectedPlanIdentity != "" && head.Identity() != expectedPlanIdentity {
-			return Plan{}, CheckReceipt{}, ErrStateConflict
-		}
-		if !currentIntegrationOperationAuthorized(head, key) {
-			return Plan{}, CheckReceipt{}, ErrCheckNotAuthorized
-		}
 	}
 	pending, foundPending, pendingErr := r.state.PendingReceipt(ctx)
 	if pendingErr != nil {
@@ -144,12 +122,6 @@ func (r *Runner) run(ctx context.Context, key CheckKey, expectedPlanIdentity str
 		plan, currentErr := r.state.Current(ctx)
 		if currentErr != nil {
 			return Plan{}, CheckReceipt{}, currentErr
-		}
-		if expectedPlanIdentity != "" && plan.Identity() != expectedPlanIdentity {
-			return Plan{}, CheckReceipt{}, ErrStateConflict
-		}
-		if !currentIntegrationOperationAuthorized(plan, key) {
-			return Plan{}, CheckReceipt{}, ErrCheckNotAuthorized
 		}
 		approved, approvedFound := plan.checkerCatalog.Resolve(pending.Key())
 		if pending.Key() != key || !found || !approvedFound || checker.Key() != key || checker.CheckerIdentity() != approved || pending.CheckerIdentity() != approved {
@@ -164,12 +136,6 @@ func (r *Runner) run(ctx context.Context, key CheckKey, expectedPlanIdentity str
 	plan, err := r.state.Current(ctx)
 	if err != nil {
 		return Plan{}, CheckReceipt{}, err
-	}
-	if expectedPlanIdentity != "" && plan.Identity() != expectedPlanIdentity {
-		return Plan{}, CheckReceipt{}, ErrStateConflict
-	}
-	if !currentIntegrationOperationAuthorized(plan, key) {
-		return Plan{}, CheckReceipt{}, ErrCheckNotAuthorized
 	}
 	checker, found := r.runtime.resolve(key)
 	if !found {
@@ -206,20 +172,6 @@ func (r *Runner) run(ctx context.Context, key CheckKey, expectedPlanIdentity str
 	}
 	return next, receipt, nil
 }
-func passedRequirementReceiptIdentity(plan Plan, key CheckKey) string {
-	index, found := planRequirementIndex(plan, key)
-	if !found || plan.requirements[index].state != CheckPassed || !nonzeroSetupDigest(plan.requirements[index].receiptIdentity) {
-		return ""
-	}
-	for i := len(plan.receipts) - 1; i >= 0; i-- {
-		receipt := plan.receipts[i]
-		if receipt.key == key && receipt.identity == plan.requirements[index].receiptIdentity && receipt.state == CheckPassed {
-			return receipt.identity
-		}
-	}
-	return ""
-}
-
 func nilSetupInterface(value any) bool {
 	if value == nil {
 		return true

@@ -87,7 +87,7 @@ func writeSnapshotReceipt(t *testing.T, path string, plan setup.Plan) (setup.Pla
 		if err != nil {
 			t.Fatal(err)
 		}
-		next, receipt, err := runner.RunExpected(context.Background(), key, plan.Identity())
+		next, receipt, err := runner.Run(context.Background(), key)
 		if err != nil || checker.calls != 1 {
 			t.Fatalf("runner receipt=%v calls=%d", err, checker.calls)
 		}

@@ -166,7 +166,7 @@ func TestLocalInferenceCheckerUsesExactV2Pair(t *testing.T) {
 				t.Fatal(err)
 			}
 			inventory, policy := parseSetupRuntimeDocuments(t, invDoc, polDoc)
-			plan, err := NewCurrentPlan(ProfileLocalSingleNode, "tenant-a", "repo-a", "owner", setupTime(1))
+			plan, err := NewPlan(ProfileLocalSingleNode, "tenant-a", "repo-a", "owner", setupTime(1))
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -37,15 +37,6 @@ const (
 	ProfileLocalSingleNode Profile = "local_single_node"
 )
 
-// ParseProfile parses one closed deployment profile name.
-func ParseProfile(value string) (Profile, error) {
-	profile := Profile(value)
-	if _, _, ok := profileDefaults(profile); !ok {
-		return "", ErrInvalidPlan
-	}
-	return profile, nil
-}
-
 // MetadataBackend is a closed setup metadata posture.
 type MetadataBackend string
 
@@ -78,24 +69,21 @@ const (
 type InferencePosture string
 
 const (
-	InferenceLocalOnly      InferencePosture = "local_only"
-	InferenceApprovedRemote InferencePosture = "approved_remote"
+	InferenceLocalOnly InferencePosture = "local_only"
 )
 
 // EgressPosture is a closed setup network boundary.
 type EgressPosture string
 
 const (
-	EgressDenied      EgressPosture = "denied"
-	EgressAllowlisted EgressPosture = "allowlisted"
+	EgressDenied EgressPosture = "denied"
 )
 
 // IntegrationPosture is a closed setup integration boundary.
 type IntegrationPosture string
 
 const (
-	IntegrationLocal             IntegrationPosture = "local"
-	IntegrationLeastPrivilegeSCM IntegrationPosture = "least_privilege_scm"
+	IntegrationLocal IntegrationPosture = "local"
 )
 
 // Status is the replay-derived setup readiness state.
@@ -136,9 +124,6 @@ const (
 	RecoveryProvideBackup       RecoveryAction = "provide_backup"
 	RecoveryConfigureObserver   RecoveryAction = "configure_observer_authority"
 	RecoveryConfigureIdentity   RecoveryAction = "configure_identity"
-	RecoveryApproveProvider     RecoveryAction = "approve_provider"
-	RecoveryCorrectPermissions  RecoveryAction = "correct_permissions"
-	RecoveryVerifyWebhook       RecoveryAction = "verify_webhook"
 	RecoveryRunDryRun           RecoveryAction = "run_dry_run"
 	RecoveryCorrectPolicy       RecoveryAction = "correct_policy"
 )
@@ -156,9 +141,6 @@ const (
 	CheckBackupValidated                    CheckKey = "backup_validated"
 	CheckObserverCredentialPostureValidated CheckKey = "observer_credential_posture_validated"
 	CheckLocalInferenceValidated            CheckKey = "local_inference_validated"
-	CheckRemoteProviderAuthorized           CheckKey = "remote_provider_authorized"
-	CheckIntegrationPermissionsValidated    CheckKey = "integration_permissions_validated"
-	CheckWebhookValidated                   CheckKey = "webhook_validated"
 	CheckPolicyValidated                    CheckKey = "policy_validated"
 	CheckDryRunValidated                    CheckKey = "dry_run_validated"
 )
@@ -327,14 +309,10 @@ func replayPlan(source Plan) (Plan, bool) {
 // resetDependentRequirements removes current authority, not historical receipts.
 // These checks consume prerequisite evidence and must run again after replacement.
 func resetDependentRequirements(requirements []Requirement, prerequisite CheckKey) {
-	var dependents []CheckKey
-	switch prerequisite {
-	case CheckPolicyValidated:
-		dependents = []CheckKey{CheckLocalInferenceValidated, CheckDryRunValidated}
-	case CheckIntegrationPermissionsValidated:
-		dependents = []CheckKey{CheckWebhookValidated}
+	if prerequisite != CheckPolicyValidated {
+		return
 	}
-	for _, key := range dependents {
+	for _, key := range []CheckKey{CheckLocalInferenceValidated, CheckDryRunValidated} {
 		for i, requirement := range requirements {
 			if requirement.key == key {
 				requirements[i] = Requirement{key: key, source: requirement.source, state: CheckPending}

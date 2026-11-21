@@ -154,7 +154,7 @@ func TestNamedLocalTemplatesBindWithoutGrantingReadiness(t *testing.T) {
 					t.Fatalf("connection=%#v", connection)
 				}
 			}
-			plan, err := NewCurrentPlan(ProfileLocalSingleNode, "tenant-a", "repo-a", "owner", setupTime(1))
+			plan, err := NewPlan(ProfileLocalSingleNode, "tenant-a", "repo-a", "owner", setupTime(1))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -394,7 +394,7 @@ func TestNamedLocalTemplatesRunActualSetupInferencePair(t *testing.T) {
 			}))
 			defer server.Close()
 			inventory, policy := namedLocalConfiguration(t, runtime.name, server.URL+"/v1", true)
-			plan, err := NewCurrentPlan(ProfileLocalSingleNode, "tenant-a", "repo-a", "owner", setupTime(1))
+			plan, err := NewPlan(ProfileLocalSingleNode, "tenant-a", "repo-a", "owner", setupTime(1))
 			if err != nil {
 				t.Fatal(err)
 			}

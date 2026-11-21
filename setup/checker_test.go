@@ -134,23 +134,3 @@ func TestNewRunnerRejectsTypedNilBeforeSortingOrOtherCheckerCalls(t *testing.T) 
 		t.Fatalf("nil state=%#v %v", runner, err)
 	}
 }
-
-func TestRunnerExpectedPlanFencesCheckerExecution(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "plan.json")
-	state, _ := OpenStateFile(path)
-	defer state.Close()
-	plan, _ := NewPlan(ProfileLocalSingleNode, "tenant-a", "repo-a", "owner", setupTime(0))
-	_ = state.Initialize(context.Background(), plan)
-	key := pendingRequirement(t, plan)
-	catalog, _ := BuiltInCheckerCatalog(plan.Profile())
-	identity, _ := catalog.Resolve(key)
-	checker := &testChecker{key: key, identity: identity, result: NewPassedCheckResult(setupDigest("expected"))}
-	runner, _ := NewRunner(state, []Checker{checker}, testRunnerClock{setupTime(1)})
-	if _, _, err := runner.RunExpected(context.Background(), key, setupDigest("stale-plan")); !errors.Is(err, ErrStateConflict) || checker.calls != 0 {
-		t.Fatalf("stale=%v calls=%d", err, checker.calls)
-	}
-	next, _, err := runner.RunExpected(context.Background(), key, plan.Identity())
-	if err != nil || next.Revision() != 2 || checker.calls != 1 {
-		t.Fatalf("expected=%v revision=%d calls=%d", err, next.Revision(), checker.calls)
-	}
-}

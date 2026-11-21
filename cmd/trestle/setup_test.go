@@ -30,7 +30,7 @@ func stringMustRead(t *testing.T, path string) string {
 // initializeSetupStateCLI writes a new protected local plan at state.
 func initializeSetupStateCLI(t *testing.T, state string) setupcore.Plan {
 	t.Helper()
-	plan, err := setupcore.NewCurrentPlan(setupcore.ProfileLocalSingleNode, "tenant-a", "repo-a", "owner", setupTimeCLI())
+	plan, err := setupcore.NewPlan(setupcore.ProfileLocalSingleNode, "tenant-a", "repo-a", "owner", setupTimeCLI())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestSetupInspectUsesProtectedState(t *testing.T) {
 func TestSetupInspectRejectsBroadPermissionsAndSymlink(t *testing.T) {
 	root := t.TempDir()
 	state := filepath.Join(root, "setup.json")
-	plan, _ := setupcore.NewCurrentPlan(setupcore.ProfileLocalSingleNode, "tenant-a", "repo-a", "owner", setupTimeCLI())
+	plan, _ := setupcore.NewPlan(setupcore.ProfileLocalSingleNode, "tenant-a", "repo-a", "owner", setupTimeCLI())
 	encoded, _ := setupcore.EncodePlan(plan)
 	if err := os.WriteFile(state, encoded, 0o644); err != nil {
 		t.Fatal(err)

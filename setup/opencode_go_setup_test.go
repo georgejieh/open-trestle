@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"testing"
-	"time"
 
 	"github.com/georgejieh/open-trestle/runtimeconfig"
 )
@@ -100,7 +99,7 @@ func TestSetupOpenCodeGoLocalOnlyNeverBuildsInferenceCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	checker, err := NewRuntimePolicyCheckerWithClock(inventory, policy, setupRuntimeApproval(t, plan, inventory, policy), &brokeredSetupClock{at: time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)})
+	checker, err := NewRuntimePolicyChecker(inventory, policy, setupRuntimeApproval(t, plan, inventory, policy))
 	if err != nil {
 		t.Fatal(err)
 	}
