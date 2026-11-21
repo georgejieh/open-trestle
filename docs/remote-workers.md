@@ -24,7 +24,7 @@ A runner offers available, leased and retryable failed work to the claim endpoin
 
 Before the handler starts, `NewTaskExecutionRequestWithDependencies` binds the plan, task, handler, static input identity and returned lease. It also binds the outputs of the dependencies, whether they succeeded or are terminal and optional. The worker copies the dependency outputs from the authenticated run receipt before it claims, and the claim cannot change them.
 
-Execution has a timeout. While the handler runs, the worker renews the same attempt at a configured interval. Every renewed lease keeps the plan, task, handler, worker and attempt identities. Its recovery horizon is the renewal time plus the lease duration, not an accumulation of full durations on every heartbeat. Repeating a renewal that was already applied returns the current lease without adding a journal event. Existing leases are not shortened, so when you upgrade from earlier renewal behavior, drain or cancel any overextended legacy leases. The newest lease is used for completion.
+Execution has a timeout. While the handler runs, the worker renews the same attempt at a configured interval. Every renewed lease keeps the plan, task, handler, worker and attempt identities. Its recovery horizon is the renewal time plus the lease duration, not an accumulation of full durations on every heartbeat. Repeating a renewal that was already applied returns the current lease without adding a journal event. The newest lease is used for completion.
 
 Renewal leaves journal capacity in reserve for every remaining task transition and for the run's terminal event. If a renewal would use up that reserve, the API returns `409 lease_renewal_limit`. The worker then cancels the current handler and records a `resource_limit` completion while its existing lease is valid. Cancellation and ordinary completion keep their reserved journal capacity. A renewal failure stops the completion and leaves the durable lease to expire for another worker. A panic in an approved handler is converted to the `internal` failure class without keeping the panic text.
 
@@ -34,13 +34,13 @@ Approved handlers must stop when their context is canceled. Go cannot forcibly e
 
 The worker API has no endpoint to download or upload artifacts. A deployed handler receives the task recipe identity and the dependency outputs through `TaskExecutionRequest`. A root task reads its static input artifact. A downstream task reads the artifact identities that its declared prerequisites produced.
 
-This keeps source and model data away from the worker API.
+This keeps source and model data away from the worker API. See [Review run runtime](runtime.md#artifacts).
 
 ## Notification and polling bounds
 
 `Runner.Run` performs one task at a time. A control implementation can also implement `NotificationControl`. In that mode, an idle runner long-polls for a content-free `TaskNotificationLease`, rereads the plan and receipt, and acquires the normal task lease before it runs anything. It acknowledges the notification only after that check. If a worker crashes before it acknowledges, the notice is delivered again.
 
-Notifications bind the tenant, repository, run, plan, task-state transition event, task, handler, next attempt and availability time. They contain no source, model output, credentials or task lease. Delivery tokens go only to the authenticated worker, and only their digests are stored. Each notice has at most ten deliveries. Journal reconciliation creates notices idempotently. It detects newly available retry work and expired task leases even if a wake-up was lost.
+Notifications are content-free, carry a delivery token that only the authenticated worker sees, and are delivered at most ten times. See [task notifications](runtime.md#task-notifications).
 
 These timing ranges apply:
 

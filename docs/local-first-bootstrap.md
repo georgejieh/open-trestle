@@ -1,6 +1,6 @@
 # Local-first bootstrap
 
-`trestle setup bootstrap` prepares and checks a review of one repository that uses models running on your own machine. `trestle init` runs the commands on this page for you and is the usual way to set up such a review; see [getting started](getting-started.md). Use `trestle setup bootstrap` directly when you need the daemon scope or want to script the setup. Install the Linux amd64 binaries first, with the [distribution instructions](operations.md).
+`trestle setup bootstrap` prepares and checks a review of one repository that uses models running on your own machine. `trestle init` runs the commands on this page for you and is the usual way to set up such a review; see [getting started](getting-started.md). Use `trestle setup bootstrap` directly when you need the daemon scope or want to script the setup. Install a trestle build that includes the secret scan helper first (see [prerequisite 1 of remote model review](remote-model-review.md#prerequisite-1-a-trestle-with-its-secret-scanner), and the [distribution instructions](operations.md) for the Linux amd64 packages).
 
 The journey is advisory and local-only, and it runs as one user. During initialization it does not install a service, start a daemon, download models, provision credentials or make a model request.
 
@@ -60,7 +60,7 @@ Replace every path, model and scope label with your own choices. The example cap
 
 Both models must declare at least 8192 tokens of context and 4096 of output, and the declared context must not exceed the context length that each server is started with. Reviews reserve input as a byte-based upper bound, so a review request needs well over 8192 tokens. The [named local runtimes](named-local-runtimes.md#context-length) declare and start 32768.
 
-Generated reviews have a review output allowance of 4096 tokens by default, and a zero monetary budget. `--max-output-tokens` raises the allowance, up to `--output-tokens`. You do not compute inventory, route, policy or setup hashes yourself.
+Generated reviews have a review output allowance of 4096 tokens by default, and a zero monetary budget. `--max-output-tokens` raises the allowance, up to `--output-tokens`. `--specialists auto|none` (default `auto`) decides whether the saved review command runs the [specialist set](local-model-review.md#specialist-review-set-opt-in) or the single general review. You do not compute inventory, route, policy or setup hashes yourself.
 
 ### Other transports and servers
 

@@ -2,8 +2,8 @@
 
 This page says what leaves your machine, when it leaves, and where it goes. It
 covers the command-line paths that a person runs: `trestle init`,
-`trestle review`, `trestle update` and `trestle keys`. A deployed daemon, the
-GitHub webhook ingress makes further requests. These are described in
+`trestle review`, `trestle update` and `trestle keys`. A deployed daemon and
+its GitHub webhook ingress make further requests. These are described in
 [operations](operations.md) and in the GitHub pages linked from the
 [docs index](README.md#operate).
 
@@ -13,7 +13,8 @@ GitHub webhook ingress makes further requests. These are described in
   provider your setup names. `trestle init` asks before it runs the first one.
 - With a model server on your machine, a review sends your source only to that
   server.
-- Before every model request, with a local server or a remote provider, Open
+- Before every model request except an investigation request (which stays on
+  your machine) and setup's synthetic local test messages, with a local server or a remote provider, Open
   Trestle scans it for secrets twice in the secret scan helper. A secret is
   masked. If the scan cannot complete, the request is refused and nothing is
   sent.
@@ -37,7 +38,7 @@ Where the source goes depends on the route that your setup saved:
 
 | Route | Where the source goes |
 | --- | --- |
-| A model server on this machine (`local`) | `127.0.0.1` only. Proxies are disabled and the connection is confined to the numeric loopback address. |
+| A model server on this machine (`local`) | Numeric loopback addresses only (`127.0.0.1` or `[::1]`). Proxies are disabled and the connection is confined to the numeric loopback address. |
 | OpenRouter with zero data retention (the default when both models have such endpoints) | OpenRouter, with zero data retention required on every request. |
 | OpenRouter without it (`--without-zdr`) | OpenRouter, with zero data retention not required by Open Trestle. The text output says so on every review: your OpenRouter account settings decide. |
 | Ollama Cloud, OpenCode Go | The provider's endpoint, over HTTPS. |
@@ -53,7 +54,7 @@ ledger holds amounts, not a key, source, prompt or reply.
 ## Secret scanning
 
 Every model request, to a model server on this machine or to a remote provider,
-passes two Betterleaks scans in the secret scan helper before it is sent. The
+except an investigation request or a synthetic setup test message, passes two Betterleaks scans in the secret scan helper before it is sent. The
 first scans the request fields and masks any finding. The masked request must
 then scan clean. A binary that pins no helper, or a missing or changed helper,
 refuses the review and sends nothing. The scanner is a pattern scanner: on the reviewed corpus it
@@ -79,19 +80,20 @@ the text output prints a line saying so. See
 | --- | --- | --- |
 | `trestle init`, OpenRouter | One GET of OpenRouter's public model list and one of its zero-data-retention endpoint list | Nothing about you or the repository; no key. |
 | `trestle init` and `trestle keys set`, OpenRouter | One GET `/api/v1/key` to check a new key | The key as a bearer credential. No source. It costs nothing. |
-| `trestle init`, if you give an evidence page | One HTTPS GET of the public page you name, after you confirm | No key, cookie, repository content or query string. Only its SHA-256 is kept. |
+| `trestle init`, if you give an evidence page | One HTTPS GET of the public page you name (up to two redirects are followed), after you confirm | No key, cookie, repository content or query string. Only its SHA-256 is kept. |
 | `trestle init`, Ollama | One GET `/api/tags` to your local Ollama, and with your agreement one fixed test message | Loopback only. |
 | The home screen and `trestle review`, packaged install | One GET `https://api.github.com/repos/georgejieh/open-trestle/releases?per_page=20`, at most once a day, cached in the state folder | No credential or identifier, and a fixed `User-Agent: open-trestle-update`. GitHub sees your address. Turn it off with `OPEN_TRESTLE_UPDATE_CHECK=off`. |
 | `trestle update` | The same release list, then the build you choose from GitHub's asset hosts | Nothing about you. |
 
-The update check runs only on the packaged install, and it says nothing when it
-cannot tell. See [updates](updates.md).
+On a development install the update check reads only a local folder and makes no
+request. It says nothing when it cannot tell. See [updates](updates.md).
 
 ## What is not done
 
-- A review runs no repository code, test or build script today. A planned feature
-  that runs generated checks will ask for consent first; see the
-  [roadmap](roadmap.md#generated-verification).
+- A review runs the repository's tests only after you consent, inside a sandbox
+  with no network and no access to your home folder or keys. See
+  [repository checks](repository-checks.md). Building the repository index makes
+  no network request either.
 - Open Trestle treats repository text, including files that look like
   instructions, as data. See the
   [prompt-injection boundary](prompt-injection-boundary.md).
