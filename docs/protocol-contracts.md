@@ -236,10 +236,7 @@ Runtime authority schemas:
 - `schemas/runtime/configuration-validation-result-v1.schema.json`
 - `schemas/runtime/route-inventory-identity-result-v1.schema.json`
 - `schemas/runtime/runtime-status-v1.schema.json`
-- `schemas/runtime/github-permission-admin-result-v1.schema.json`
-- `schemas/runtime/github-permission-admin-result-v2.schema.json`
 - `schemas/runtime/github-source-broker-v1.schema.json`
-- `schemas/runtime/github-webhook-admin-result-v1.schema.json`
 
 Spending schemas:
 

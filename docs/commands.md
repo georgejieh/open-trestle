@@ -211,8 +211,6 @@ Writes the protected configuration for a local or remote first review.
 
 | Command | Flags |
 | --- | --- |
-| `admin github permissions identity` | `--api-endpoint`, `--api-version`, `--installation-id`, `--repository-full-name`; or `--broker-config PATH` |
-| `admin github webhook identity` | `--tenant`, `--repository`, `--key-id` |
 | `admin runtime status` | `--tenant`, `--repository`, `--server`, `--timeout` |
 
 ### Static local Git commands

@@ -21,9 +21,6 @@ func runAdmin(args []string, stdout, stderr io.Writer) int {
 	if len(args) > 0 && args[0] == "runtime" {
 		return runRuntimeAdminWithExecutor(args[1:], stdout, stderr, executeRuntimeAdmin)
 	}
-	if len(args) > 0 && args[0] == "github" {
-		return runGitHubAdmin(args[1:], stdout, stderr)
-	}
 	writeAdminUsage(stderr)
 	return 2
 }
@@ -81,8 +78,5 @@ func validAdminDigest(value string) bool {
 	return err == nil && hex.EncodeToString(decoded) == value
 }
 func writeAdminUsage(writer io.Writer) {
-	fmt.Fprintln(writer, "usage: trestle admin github permissions identity --api-endpoint URL --api-version YYYY-MM-DD --installation-id ID --repository-full-name OWNER/REPOSITORY")
-	fmt.Fprintln(writer, "       trestle admin github permissions identity --broker-config PATH  (configuration-only; no token creation)")
-	fmt.Fprintln(writer, "       trestle admin github webhook identity --tenant ID --repository ID --key-id ID")
 	fmt.Fprintln(writer, "usage: trestle admin runtime status --tenant ID --repository ID [--server URL] [--timeout DURATION]")
 }

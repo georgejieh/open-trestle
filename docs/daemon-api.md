@@ -213,8 +213,6 @@ An external ingress may add a stricter limit.
 
 `trestle setup web` serves a separate setup API with its own dedicated setup bearer token. The API listens on a numeric loopback address only, and it checks the Host. It is not an endpoint that issues credentials for the daemon.
 
-The `integration_permissions_validated` check and `trestle admin github permissions identity` remain in the code, but no current profile requires them.
-
 On shutdown, the handler allows HTTP Shutdown five seconds and forces a server Close if that fails.
 
 ## Go client
