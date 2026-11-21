@@ -158,13 +158,6 @@ func (s *LocalGitObjectStore) readLocalGitRevision(ctx context.Context, revision
 	return result, nil
 }
 
-func readLocalGitRevision(ctx context.Context, reader localGitObjectReader, revision evidence.RevisionIdentity, limits localGitRevisionLimits) (LocalGitRevisionResult, error) {
-	if store, ok := reader.(*LocalGitObjectStore); ok {
-		return store.readLocalGitRevision(ctx, revision, limits)
-	}
-	return readLocalGitRevisionCapturing(ctx, reader, revision, limits, nil)
-}
-
 // readLocalGitRevisionWithInputs takes ownership of successful reader payloads.
 func readLocalGitRevisionWithInputs(ctx context.Context, reader localGitObjectReader, revision evidence.RevisionIdentity, limits localGitRevisionLimits) (LocalGitRevisionResult, localGitEvidenceInputs, error) {
 	if store, ok := reader.(*LocalGitObjectStore); ok {
