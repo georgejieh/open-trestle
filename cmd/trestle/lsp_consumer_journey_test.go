@@ -132,7 +132,7 @@ func TestRunLSPAuthenticatedStoredAndExportedDiagnosticJourney(t *testing.T) {
 			if sarifRun.Properties.DiagnosticSetID != tc.set.Identity() || sarifRun.Properties.Status != "inconclusive" || !reflect.DeepEqual(sarifRun.Results[0].Properties.EvidenceIDs, finding.EvidenceIDs()) {
 				t.Fatalf("SARIF evidence or disposition changed: %+v", sarifRun)
 			}
-			if tc.set.SchemaVersion() == 4 {
+			if tc.set.SchemaVersion() == 5 {
 				if sarifRun.Properties.SourceOmittedCount == nil || *sarifRun.Properties.SourceOmittedCount != tc.set.SourceOmittedCount() || !reflect.DeepEqual(sarifRun.Properties.Omissions, []sarifOmission{{Reason: omission.Reason().String(), Count: omission.Count()}}) || sarifRun.Results[0].Fingerprints["openTrestleVerifiedFindingId/v1"] != finding.Identity() {
 					t.Fatalf("SARIF omitted-source/finding evidence changed: %+v", sarifRun)
 				}
