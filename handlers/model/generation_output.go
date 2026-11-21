@@ -27,9 +27,6 @@ type GenerationResult struct {
 }
 
 func (r GenerationResult) Identity() string                             { return r.identity }
-func (r GenerationResult) ArtifactIdentity() string                     { return r.artifactIdentity }
-func (r GenerationResult) InputArtifactIdentity() string                { return r.inputArtifactIdentity }
-func (r GenerationResult) ContextArtifactIdentity() string              { return r.contextArtifactIdentity }
 func (r GenerationResult) ContextIdentity() string                      { return r.contextIdentity }
 func (r GenerationResult) Candidates() review.CandidateBatch            { return r.candidates }
 func (r GenerationResult) RouteExecution() gateway.RouteExecutionRecord { return r.routeExecution }

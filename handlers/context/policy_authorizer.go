@@ -31,11 +31,7 @@ type PolicyAuthorizer struct {
 	observations                          []provider.RoutePerformanceObservation
 }
 
-func NewPolicyAuthorizer(policyIdentity string, requirements provider.ModelRequirements, constraints policy.ProviderDataConstraints, budget provider.ModelCostBudget, registryRevision uint64, routes []gateway.ObservedRouteCandidate, rankingPolicy gateway.RouteRankingPolicy, performanceRevision uint64, observations []provider.RoutePerformanceObservation, ledger audit.Ledger) (*PolicyAuthorizer, error) {
-	return NewPolicyAuthorizerForTransport(review.ModelRequestTransportStandard, policyIdentity, requirements, constraints, budget, registryRevision, routes, rankingPolicy, performanceRevision, observations, ledger)
-}
-
-// NewPolicyAuthorizerForTransport is NewPolicyAuthorizer for routes whose
+// NewPolicyAuthorizerForTransport builds a PolicyAuthorizer for routes whose
 // adapters send transport's request wire. Its input estimate is
 // review.ModelRequestBudgetForTransport, and a non-standard transport is bound
 // into its identity.

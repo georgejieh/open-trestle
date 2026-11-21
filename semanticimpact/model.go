@@ -61,9 +61,7 @@ func NewFile(filePath string, content []byte) (File, error) {
 	sum := sha256.Sum256(content)
 	return File{filePath: filePath, digest: hex.EncodeToString(sum[:]), content: append([]byte(nil), content...)}, nil
 }
-func (f File) Path() string    { return f.filePath }
-func (f File) Digest() string  { return f.digest }
-func (f File) Content() []byte { return append([]byte(nil), f.content...) }
+func (f File) Digest() string { return f.digest }
 
 type ChangedPath struct{ filePath string }
 
@@ -73,7 +71,6 @@ func NewChangedPath(filePath string) (ChangedPath, error) {
 	}
 	return ChangedPath{filePath: filePath}, nil
 }
-func (c ChangedPath) Path() string { return c.filePath }
 
 type Input struct {
 	baseSnapshotIdentity, headSnapshotIdentity, changeModelIdentity, identity string
@@ -203,7 +200,6 @@ type Declaration struct {
 	startLine, endLine                                           int
 }
 
-func (d Declaration) Identity() string      { return d.identity }
 func (d Declaration) Key() string           { return d.key }
 func (d Declaration) Name() string          { return d.name }
 func (d Declaration) Kind() string          { return d.kind }
@@ -212,9 +208,6 @@ func (d Declaration) Change() Change        { return d.change }
 func (d Declaration) Exported() bool        { return d.exported }
 func (d Declaration) StartLine() int        { return d.startLine }
 func (d Declaration) EndLine() int          { return d.endLine }
-func (d Declaration) Grade() Grade          { return GradeStructural }
-func (d Declaration) SyntaxDigest() string  { return d.syntaxDigest }
-func (d Declaration) APIDigest() string     { return d.apiDigest }
 func (d Declaration) PublicAPIChange() bool { return d.publicAPIChange }
 
 type Gap struct {
@@ -222,10 +215,8 @@ type Gap struct {
 	reason                     GapReason
 }
 
-func (g Gap) Identity() string  { return g.identity }
 func (g Gap) Path() string      { return g.filePath }
 func (g Gap) Reason() GapReason { return g.reason }
-func (g Gap) Detail() string    { return g.detail }
 func NewCoverageGap(filePath string, reason GapReason) (Gap, error) {
 	detail := ""
 	switch reason {
@@ -251,7 +242,6 @@ type Profile struct {
 func (p Profile) Identity() string             { return p.identity }
 func (p Profile) AdapterIdentity() string      { return p.adapterIdentity }
 func (p Profile) GraphSchema() string          { return p.graphSchema }
-func (p Profile) InputIdentity() string        { return p.inputIdentity }
 func (p Profile) BaseSnapshotIdentity() string { return p.baseSnapshotIdentity }
 func (p Profile) HeadSnapshotIdentity() string { return p.headSnapshotIdentity }
 func (p Profile) ChangeModelIdentity() string  { return p.changeModelIdentity }

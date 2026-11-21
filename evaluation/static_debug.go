@@ -63,14 +63,8 @@ type StaticDebugCaseResult struct {
 	falsePositiveCount, falseNegativeCount          uint16
 }
 
-func (r StaticDebugCaseResult) ID() string                 { return r.id }
-func (r StaticDebugCaseResult) Status() string             { return r.status.String() }
-func (r StaticDebugCaseResult) Passed() bool               { return r.status == staticDebugCasePassed }
-func (r StaticDebugCaseResult) ExpectedCount() uint16      { return r.expectedCount }
-func (r StaticDebugCaseResult) ObservedCount() uint16      { return r.observedCount }
-func (r StaticDebugCaseResult) TruePositiveCount() uint16  { return r.truePositiveCount }
-func (r StaticDebugCaseResult) FalsePositiveCount() uint16 { return r.falsePositiveCount }
-func (r StaticDebugCaseResult) FalseNegativeCount() uint16 { return r.falseNegativeCount }
+func (r StaticDebugCaseResult) ID() string   { return r.id }
+func (r StaticDebugCaseResult) Passed() bool { return r.status == staticDebugCasePassed }
 
 // StaticDebugReport is a content-free exact-range evaluation result.
 type StaticDebugReport struct {
