@@ -51,16 +51,6 @@ func (r ContextSourceSelectionReason) String() string {
 	}
 }
 
-// ParseContextSourceSelectionReason parses one exact stable reason token.
-func ParseContextSourceSelectionReason(value string) (ContextSourceSelectionReason, error) {
-	for reason := ContextSourceSelected; reason <= ContextSourceOmittedCountLimit; reason++ {
-		if reason.String() == value {
-			return reason, nil
-		}
-	}
-	return 0, ErrInvalidContextSourceSelectionReason
-}
-
 func (r ContextSourceSelectionReason) Validate() error {
 	if r.String() == "" {
 		return ErrInvalidContextSourceSelectionReason
