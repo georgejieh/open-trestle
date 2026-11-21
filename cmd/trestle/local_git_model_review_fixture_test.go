@@ -241,8 +241,8 @@ func (m *localModelEndpoint) serve(t *testing.T, w http.ResponseWriter, r *http.
 	request, requestErr := provider.NewRequest(provider.CapabilityReviewV1, "application/json", payload)
 	// Generation uses context version 9, with or without a specialist block;
 	// verification uses version 8.
-	if json.Unmarshal(payload, &packet) != nil || requestErr != nil || packet.Task == "candidate_generation" && packet.Version != 10 || packet.Task != "candidate_generation" && packet.Version != 9 {
-		t.Error("model did not receive the actual v10 generation or v9 verification context")
+	if json.Unmarshal(payload, &packet) != nil || requestErr != nil || packet.Task == "candidate_generation" && packet.Version != 11 || packet.Task != "candidate_generation" && packet.Version != 10 {
+		t.Error("model did not receive the actual v11 generation or v10 verification context")
 		http.Error(w, "invalid context", http.StatusBadRequest)
 		return
 	}

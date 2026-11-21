@@ -181,6 +181,40 @@ func (c *reviewIndexContext) load(ctx context.Context) (review.ContextPlan, erro
 	return plan, nil
 }
 
+// dependents lists the files that depend on the change, from the indexed
+// base and head, with the check runs scope they give: all dependents, only
+// some when a build was cut or the closure was approximated, cut by a limit
+// or has gaps, or none when the review has no index or either commit is
+// not indexed.
+func (c *reviewIndexContext) dependents(ctx context.Context) ([]string, string) {
+	if c == nil {
+		return nil, review.CheckRunsChangedOnly
+	}
+	headGraph, err := c.session.index.Load(ctx, c.session.algorithm, c.head.Digest())
+	if err != nil {
+		return nil, review.CheckRunsChangedOnly
+	}
+	baseGraph, err := c.session.index.Load(ctx, c.session.algorithm, c.base.Digest())
+	if err != nil {
+		return nil, review.CheckRunsChangedOnly
+	}
+	changes, err := c.session.changes(ctx, c.head, baseGraph, headGraph)
+	if err != nil {
+		return nil, review.CheckRunsChangedOnly
+	}
+	result := repoindex.Dependents(headGraph, baseGraph, changes, repoindex.DefaultDependentsLimits())
+	paths := slices.Clone(result.TestFiles)
+	for _, file := range result.Files {
+		paths = append(paths, file.Path)
+	}
+	slices.Sort(paths)
+	scope := review.CheckRunsChangedAndDependents
+	if !result.Coverage.Complete || len(result.Gaps) > 0 || !baseGraph.Coverage().Complete || c.state != review.ContextIndexUsed {
+		scope = review.CheckRunsChangedAndPartialDependents
+	}
+	return slices.Compact(paths), scope
+}
+
 // openReviewIndexSession opens the index a review uses: the checkout's, or
 // for an objects root the one kept for that object store.
 func openReviewIndexSession(ctx context.Context, options localModelReviewOptions, base evidence.RevisionIdentity) *indexSession {

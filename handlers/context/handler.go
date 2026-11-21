@@ -62,6 +62,8 @@ type Handler struct {
 	// packet records the index as unavailable and keeps the default budget.
 	index  IndexContextSource
 	budget review.ContextBudget
+	// checkRuns are bound by WithCheckRuns.
+	checkRuns review.CheckRuns
 }
 
 func NewHandler(store artifact.Store, clock artifact.Clock, authorizer GenerationAuthorizer, sanitizer review.GenerationRequestSanitizer) (*Handler, error) {
@@ -105,6 +107,21 @@ func (h *Handler) WithRepositoryContext(source IndexContextSource, budget review
 	return &value, nil
 }
 
+// WithCheckRuns returns a copy of a route-granting handler that also carries
+// the outcomes of the repository's own checks in the packet's check_runs
+// object. The outcomes are bound into the handler identity, and a change
+// whose base or head commit differs from the commits they name fails the
+// context task instead of carrying them.
+func (h *Handler) WithCheckRuns(runs review.CheckRuns) (*Handler, error) {
+	if h == nil || h.Validate() != nil || h.packetOnly || h.pipeline != nil || !h.checkRuns.IsZero() || runs.IsZero() {
+		return nil, ErrInvalidHandler
+	}
+	value := *h
+	value.checkRuns = runs
+	value.identity = value.deriveIdentity()
+	return &value, nil
+}
+
 func (h *Handler) deriveIdentity() string {
 	intent, index := "", ""
 	if !nilInterface(h.intent) {
@@ -113,7 +130,7 @@ func (h *Handler) deriveIdentity() string {
 	if !nilInterface(h.index) {
 		index = h.index.Identity()
 	}
-	return deriveHandlerIdentity(h.authorizer.Identity(), h.sanitizer.Identity(), h.specialist, intent, index, h.budget)
+	return deriveHandlerIdentity(h.authorizer.Identity(), h.sanitizer.Identity(), h.specialist, intent, index, h.budget, h.checkRuns.Identity())
 }
 
 // contextBudget is the bound budget, or the default.
@@ -202,14 +219,14 @@ func (h *Handler) Validate() error {
 	if h.packetOnly {
 		legacy := h.identity == packetOnlyHandlerIdentity() && nilInterface(h.preparer)
 		journaled := h.identity == journaledPacketOnlyHandlerIdentity() && !nilInterface(h.preparer)
-		if (!legacy && !journaled) || !nilInterface(h.authorizer) || !nilInterface(h.sanitizer) || h.pipeline != nil || !h.specialist.IsZero() || !nilInterface(h.intent) || !nilInterface(h.index) {
+		if (!legacy && !journaled) || !nilInterface(h.authorizer) || !nilInterface(h.sanitizer) || h.pipeline != nil || !h.specialist.IsZero() || !nilInterface(h.intent) || !nilInterface(h.index) || !h.checkRuns.IsZero() {
 			return ErrInvalidHandler
 		}
 		return nil
 	}
 	if h.pipeline != nil {
 		identity, err := h.pipeline.HandlerIdentity(controlplane.TaskAssembleContext)
-		if h.pipeline.Validate() != nil || err != nil || !validDigest(identity) || h.identity != identity || !nilInterface(h.authorizer) || !nilInterface(h.sanitizer) || !h.specialist.IsZero() || !nilInterface(h.intent) || !nilInterface(h.index) {
+		if h.pipeline.Validate() != nil || err != nil || !validDigest(identity) || h.identity != identity || !nilInterface(h.authorizer) || !nilInterface(h.sanitizer) || !h.specialist.IsZero() || !nilInterface(h.intent) || !nilInterface(h.index) || !h.checkRuns.IsZero() {
 			return ErrInvalidHandler
 		}
 		return nil
@@ -242,12 +259,13 @@ func (h *Handler) Validate() error {
 // the stated intent. Version 9 assembles version 10 generation contexts: it
 // replaces the semantic-impact reference candidates with index context from
 // a bound IndexContextSource, fits every packet to a budget, and records a
-// context manifest.
-const contextAssemblyHandlerVersion = 9
+// context manifest. Version 10 assembles version 11 generation contexts and,
+// when check run outcomes are bound, carries them.
+const contextAssemblyHandlerVersion = 10
 
-// deriveHandlerIdentity omits the specialist, intent-source, index-source and
-// budget fields when none is bound.
-func deriveHandlerIdentity(authorizer, sanitizer string, specialist review.ContextSpecialist, intent, index string, budget review.ContextBudget) string {
+// deriveHandlerIdentity omits the specialist, intent-source, index-source,
+// budget and check-runs fields when none is bound.
+func deriveHandlerIdentity(authorizer, sanitizer string, specialist review.ContextSpecialist, intent, index string, budget review.ContextBudget, checkRuns string) string {
 	type budgetWire struct {
 		Basis          string `json:"basis"`
 		RouteTokens    uint32 `json:"route_context_tokens"`
@@ -268,7 +286,8 @@ func deriveHandlerIdentity(authorizer, sanitizer string, specialist review.Conte
 		ChangeIntent      string      `json:"change_intent_source_identity,omitempty"`
 		IndexContext      string      `json:"index_context_source_identity,omitempty"`
 		Budget            *budgetWire `json:"context_budget,omitempty"`
-	}{"open-trestle/context-assembly-handler", contextAssemblyHandlerVersion, authorizer, sanitizer, specialist.ProfileIdentity(), specialist.CatalogIdentity(), intent, index, bound})
+		CheckRuns         string      `json:"check_runs_identity,omitempty"`
+	}{"open-trestle/context-assembly-handler", contextAssemblyHandlerVersion, authorizer, sanitizer, specialist.ProfileIdentity(), specialist.CatalogIdentity(), intent, index, bound, checkRuns})
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:])
 }
@@ -780,6 +799,16 @@ func (h *Handler) assembleAt(ctx context.Context, request controlplane.TaskExecu
 		changed, notListed := manifestDefinitions(plan, packet.Sources())
 		packet, err = packet.WithContextManifest(review.ContextManifestSpec{Budget: budget, Plan: plan, Included: fit.included, Omitted: fit.omitted, Changed: changed, ChangedNotListed: notListed})
 		if err != nil {
+			return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
+		}
+	}
+	// Check run outcomes are evidence of one exact change; outcomes of
+	// another range are never attached.
+	if !h.checkRuns.IsZero() {
+		if h.checkRuns.BaseCommit() != change.BaseRevision().Digest() || h.checkRuns.HeadCommit() != change.HeadRevision().Digest() {
+			return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
+		}
+		if packet, err = packet.WithCheckRuns(h.checkRuns); err != nil {
 			return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
 		}
 	}

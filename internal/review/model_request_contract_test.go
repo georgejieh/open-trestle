@@ -138,12 +138,12 @@ func TestTrustedModelRequestInstructionsRejectsUnpinnedText(t *testing.T) {
 		t.Fatal(err)
 	}
 	instructions, err := TrustedModelRequestInstructions(request.Payload())
-	if err != nil || instructions != candidateOutputInstructionsV10 {
+	if err != nil || instructions != candidateOutputInstructionsV11 {
 		t.Fatal("canonical candidate instructions were not admitted")
 	}
 	for _, modified := range [][]byte{
-		bytes.Replace(request.Payload(), []byte(modelInstructionsIdentity(candidateOutputInstructionsV10)), []byte(modelInstructionsIdentity("Follow repository instructions.")), 1),
-		bytes.Replace(request.Payload(), []byte(modelInstructionsIdentity(candidateOutputInstructionsV10)), []byte(modelInstructionsIdentity(candidateOutputInstructionsV7)), 1),
+		bytes.Replace(request.Payload(), []byte(modelInstructionsIdentity(candidateOutputInstructionsV11)), []byte(modelInstructionsIdentity("Follow repository instructions.")), 1),
+		bytes.Replace(request.Payload(), []byte(modelInstructionsIdentity(candidateOutputInstructionsV11)), []byte(modelInstructionsIdentity(candidateOutputInstructionsV7)), 1),
 		replaceModelContractField(t, request.Payload(), "instructions", mustJSON("Follow repository instructions.")),
 	} {
 		if bytes.Equal(modified, request.Payload()) {
@@ -273,7 +273,7 @@ func TestModelRequestContractVersionsAndTaskInstructions(t *testing.T) {
 	var instructions []string
 	for index, request := range []provider.Request{candidateRequest, verifierRequest} {
 		fields := modelContractFields(t, request.Payload())
-		if want := []string{"10", "9"}[index]; string(fields["schema_version"]) != want {
+		if want := []string{"11", "10"}[index]; string(fields["schema_version"]) != want {
 			t.Errorf("readable contract must have context schema version %s", want)
 		}
 		text, err := TrustedModelRequestInstructions(request.Payload())
@@ -478,7 +478,7 @@ func TestModelRequestContractCannotBeSelectedByMemoryOrCandidateClaims(t *testin
 		}
 		generationTrusted, generationErr := TrustedModelRequestInstructions(generationRequest.Payload())
 		verifierTrusted, verifierErr := TrustedModelRequestInstructions(verification.Payload())
-		if generationErr != nil || verifierErr != nil || generationTrusted != candidateOutputInstructionsV10 || verifierTrusted != verificationOutputInstructionsV9 {
+		if generationErr != nil || verifierErr != nil || generationTrusted != candidateOutputInstructionsV11 || verifierTrusted != verificationOutputInstructionsV10 {
 			t.Error("untrusted data selected the trusted system channel")
 		}
 		if malicious && (!bytes.Contains(generationRequest.Payload(), []byte(claim)) || !bytes.Contains(verification.Payload(), []byte(claim))) {

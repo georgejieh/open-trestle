@@ -28,19 +28,18 @@ func contextAssemblyIdentityPreimage(t *testing.T, version int, authorizer, sani
 	return hex.EncodeToString(digest[:])
 }
 
-// The version 10 context (repository index stages, a per-packet source limit,
-// the context manifest and the repository checks) alters the packet bytes this
-// handler builds, so its identity moves to version 9, as the version 9 context
-// moved it to version 8 and the earlier context changes moved it through
-// versions 7 and 6. A plan that recorded an earlier identity is not served by
-// this handler.
-func TestContextAssemblyHandlerIdentityIsVersionNine(t *testing.T) {
+// The version 11 context (the optional check_runs object and its contract
+// sentence) alters the packet bytes this handler builds, so its identity moves
+// to version 10, as the version 10 context moved it to version 9 and the
+// earlier context changes moved it through versions 8, 7 and 6. A plan that
+// recorded an earlier identity is not served by this handler.
+func TestContextAssemblyHandlerIdentityIsVersionTen(t *testing.T) {
 	authorizer, sanitizer := strings.Repeat("5", 64), contextTestSanitizer{}.Identity()
-	current := deriveHandlerIdentity(authorizer, sanitizer, review.ContextSpecialist{}, "", "", review.ContextBudget{})
-	if current != contextAssemblyIdentityPreimage(t, 9, authorizer, sanitizer) {
-		t.Fatal("route-granting context handler identity is not the version 9 preimage")
+	current := deriveHandlerIdentity(authorizer, sanitizer, review.ContextSpecialist{}, "", "", review.ContextBudget{}, "")
+	if current != contextAssemblyIdentityPreimage(t, 10, authorizer, sanitizer) {
+		t.Fatal("route-granting context handler identity is not the version 10 preimage")
 	}
-	for _, earlier := range []int{5, 6, 7, 8} {
+	for _, earlier := range []int{5, 6, 7, 8, 9} {
 		if current == contextAssemblyIdentityPreimage(t, earlier, authorizer, sanitizer) {
 			t.Fatalf("context handler identity did not change with its packet bytes (version %d)", earlier)
 		}
@@ -49,13 +48,18 @@ func TestContextAssemblyHandlerIdentityIsVersionNine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bound := deriveHandlerIdentity(authorizer, sanitizer, specialist, "", "", review.ContextBudget{}); bound == current || bound == contextAssemblyIdentityPreimage(t, 5, authorizer, sanitizer) {
+	if bound := deriveHandlerIdentity(authorizer, sanitizer, specialist, "", "", review.ContextBudget{}, ""); bound == current || bound == contextAssemblyIdentityPreimage(t, 5, authorizer, sanitizer) {
 		t.Fatal("specialist handler identity collides with an unbound identity")
 	}
 	intent := strings.Repeat("6", 64)
-	withIntent := deriveHandlerIdentity(authorizer, sanitizer, review.ContextSpecialist{}, intent, "", review.ContextBudget{})
-	if withIntent == current || withIntent == deriveHandlerIdentity(authorizer, sanitizer, specialist, intent, "", review.ContextBudget{}) || withIntent == deriveHandlerIdentity(authorizer, sanitizer, review.ContextSpecialist{}, strings.Repeat("7", 64), "", review.ContextBudget{}) {
+	withIntent := deriveHandlerIdentity(authorizer, sanitizer, review.ContextSpecialist{}, intent, "", review.ContextBudget{}, "")
+	if withIntent == current || withIntent == deriveHandlerIdentity(authorizer, sanitizer, specialist, intent, "", review.ContextBudget{}, "") || withIntent == deriveHandlerIdentity(authorizer, sanitizer, review.ContextSpecialist{}, strings.Repeat("7", 64), "", review.ContextBudget{}, "") {
 		t.Fatal("the change intent source is not bound into the handler identity")
+	}
+	runs := strings.Repeat("8", 64)
+	withRuns := deriveHandlerIdentity(authorizer, sanitizer, review.ContextSpecialist{}, intent, "", review.ContextBudget{}, runs)
+	if withRuns == withIntent || withRuns == deriveHandlerIdentity(authorizer, sanitizer, review.ContextSpecialist{}, intent, "", review.ContextBudget{}, strings.Repeat("9", 64)) || withRuns == deriveHandlerIdentity(authorizer, sanitizer, review.ContextSpecialist{}, "", runs, review.ContextBudget{}, intent) {
+		t.Fatal("the check runs are not bound into the handler identity")
 	}
 }
 
@@ -64,7 +68,7 @@ func TestContextAssemblyHandlerIdentityIsVersionNine(t *testing.T) {
 func TestContextAssemblyHandlerIdentityBindsIndexSourceAndBudget(t *testing.T) {
 	authorizer, sanitizer := strings.Repeat("5", 64), contextTestSanitizer{}.Identity()
 	derive := func(index string, budget review.ContextBudget) string {
-		return deriveHandlerIdentity(authorizer, sanitizer, review.ContextSpecialist{}, "", index, budget)
+		return deriveHandlerIdentity(authorizer, sanitizer, review.ContextSpecialist{}, "", index, budget, "")
 	}
 	unbound := derive("", review.ContextBudget{})
 	budget := review.RouteContextBudget(64000, 4096)

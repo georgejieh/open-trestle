@@ -18,7 +18,7 @@ A `model-generation-input` binds:
 
 At execution time, the handler reads both artifacts through the scoped store and repeats these checks with `review.ValidateContextPacketRequest`. Repository source and recalled memory stay labeled as data. Only source evidence that the host issued can support a candidate.
 
-The provider adapter sends the context bytes as the user message and `review.TrustedModelRequestInstructions` as the system channel. For a version 10 context, the system channel holds the pinned host contract. When a specialist is bound, it also holds the skill text from the embedded profile catalog. The context itself carries no instruction prose. It binds the contract by `instructions_identity` and the profile by identity fields only. See the [prompt-injection boundary](prompt-injection-boundary.md).
+The provider adapter sends the context bytes as the user message and `review.TrustedModelRequestInstructions` as the system channel. For a version 11 context, the system channel holds the pinned host contract. When a specialist is bound, it also holds the skill text from the embedded profile catalog. The context itself carries no instruction prose. It binds the contract by `instructions_identity` and the profile by identity fields only. See the [prompt-injection boundary](prompt-injection-boundary.md).
 
 ## Provider execution
 
@@ -31,7 +31,7 @@ An ambiguous transport outcome stays visible as a claimed attempt. If a process 
 The handler accepts a response only when all of these hold:
 
 - it is one complete structured `review.v1` response;
-- it conforms to the candidate schema that its context requests: `model-candidate-batch-v2` for a version 10 context (and a recorded version 7, 8 or 9 context), or `model-candidate-batch-v1` for a recorded earlier context (`review.ParseContextCandidateBatch`);
+- it conforms to the candidate schema that its context requests: `model-candidate-batch-v2` for a version 11 context (and a recorded version 7 to 10 context), or `model-candidate-batch-v1` for a recorded earlier context (`review.ParseContextCandidateBatch`);
 - every cited source and evidence ID was in the context packet;
 - every claimed range is covered by the snapshot and the cited evidence;
 - there are no semantic duplicate findings; and

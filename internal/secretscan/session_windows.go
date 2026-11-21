@@ -15,66 +15,33 @@ import (
 	"syscall"
 	"unsafe"
 
+	"golang.org/x/sys/windows"
+
+	"github.com/georgejieh/open-trestle/internal/jobobject"
 	"github.com/georgejieh/open-trestle/internal/ownersonly"
 )
 
 const (
-	createSuspended                        = 0x00000004
-	createNoWindow                         = 0x08000000
-	processSetQuota                        = 0x0100
-	processSuspendResume                   = 0x0800
-	processQueryLimitedInformation         = 0x1000
-	fileReadAttributes                     = 0x0080
-	maximumLongPath                        = 32768
-	jobObjectExtendedLimitInformationClass = 9
-	jobObjectLimitKillOnJobClose           = 0x00002000
+	createSuspended                = 0x00000004
+	createNoWindow                 = 0x08000000
+	processSetQuota                = 0x0100
+	processSuspendResume           = 0x0800
+	processQueryLimitedInformation = 0x1000
+	fileReadAttributes             = 0x0080
+	maximumLongPath                = 32768
 )
 
 // kernel32 and ntdll are known DLLs, which Windows always loads from the
 // system directory.
 var (
-	kernel32                     = syscall.NewLazyDLL("kernel32.dll")
-	procCreateJobObjectW         = kernel32.NewProc("CreateJobObjectW")
-	procSetInformationJobObject  = kernel32.NewProc("SetInformationJobObject")
-	procAssignProcessToJobObject = kernel32.NewProc("AssignProcessToJobObject")
-	procTerminateJobObject       = kernel32.NewProc("TerminateJobObject")
-	procQueryFullProcessImage    = kernel32.NewProc("QueryFullProcessImageNameW")
-	ntdll                        = syscall.NewLazyDLL("ntdll.dll")
-	procNtResumeProcess          = ntdll.NewProc("NtResumeProcess")
+	kernel32                  = syscall.NewLazyDLL("kernel32.dll")
+	procQueryFullProcessImage = kernel32.NewProc("QueryFullProcessImageNameW")
+	ntdll                     = syscall.NewLazyDLL("ntdll.dll")
+	procNtResumeProcess       = ntdll.NewProc("NtResumeProcess")
 
 	errJobObject   = errors.New("secret scan helper job object could not be set up")
 	errHelperImage = errors.New("secret scan helper process does not run the verified file")
 )
-
-type jobObjectBasicLimitInformation struct {
-	PerProcessUserTimeLimit int64
-	PerJobUserTimeLimit     int64
-	LimitFlags              uint32
-	MinimumWorkingSetSize   uintptr
-	MaximumWorkingSetSize   uintptr
-	ActiveProcessLimit      uint32
-	Affinity                uintptr
-	PriorityClass           uint32
-	SchedulingClass         uint32
-}
-
-type ioCounters struct {
-	ReadOperationCount  uint64
-	WriteOperationCount uint64
-	OtherOperationCount uint64
-	ReadTransferCount   uint64
-	WriteTransferCount  uint64
-	OtherTransferCount  uint64
-}
-
-type jobObjectExtendedLimitInformation struct {
-	BasicLimitInformation jobObjectBasicLimitInformation
-	IoInfo                ioCounters
-	ProcessMemoryLimit    uintptr
-	JobMemoryLimit        uintptr
-	PeakProcessMemoryUsed uintptr
-	PeakJobMemoryUsed     uintptr
-}
 
 // openVerifiedHelper opens the helper with a share mode that allows only
 // other readers, so the file cannot be written, renamed or deleted while the
@@ -200,16 +167,11 @@ type processGroup struct {
 // attach requires that the suspended helper runs the verified file, then
 // places it in a new job object and resumes it.
 func (group *processGroup) attach(process *os.Process, verified fileIdentity) error {
-	job, _, _ := procCreateJobObjectW.Call(0, 0)
-	if job == 0 {
+	job, err := jobobject.Create(jobobject.Limits{})
+	if err != nil {
 		return errJobObject
 	}
 	group.job = syscall.Handle(job)
-	var limits jobObjectExtendedLimitInformation
-	limits.BasicLimitInformation.LimitFlags = jobObjectLimitKillOnJobClose
-	if ok, _, _ := procSetInformationJobObject.Call(job, jobObjectExtendedLimitInformationClass, uintptr(unsafe.Pointer(&limits)), unsafe.Sizeof(limits)); ok == 0 {
-		return errJobObject
-	}
 	handle, err := syscall.OpenProcess(processSetQuota|syscall.PROCESS_TERMINATE|syscall.SYNCHRONIZE|processSuspendResume|processQueryLimitedInformation, false, uint32(process.Pid))
 	if err != nil {
 		return errJobObject
@@ -218,7 +180,7 @@ func (group *processGroup) attach(process *os.Process, verified fileIdentity) er
 	if image, err := imageIdentity(handle); err != nil || image != verified {
 		return errHelperImage
 	}
-	if ok, _, _ := procAssignProcessToJobObject.Call(job, uintptr(handle)); ok == 0 {
+	if windows.AssignProcessToJobObject(job, windows.Handle(handle)) != nil {
 		return errJobObject
 	}
 	if status, _, _ := procNtResumeProcess.Call(uintptr(handle)); status != 0 {
@@ -237,7 +199,7 @@ func (group *processGroup) waitExit() {
 
 func (group *processGroup) kill(process *os.Process) {
 	if group.job != 0 {
-		_, _, _ = procTerminateJobObject.Call(uintptr(group.job), 1)
+		_ = windows.TerminateJobObject(windows.Handle(group.job), 1)
 	}
 	_ = process.Kill()
 }

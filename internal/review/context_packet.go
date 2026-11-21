@@ -567,6 +567,7 @@ type ContextPacket struct {
 	statedIntent         StatedIntent
 	patternHygiene       ContextPatternHygiene
 	manifest             ContextManifest
+	checkRuns            CheckRuns
 }
 
 // NewContextPacket assembles a deterministic provider-neutral packet after hard scope filtering.
@@ -833,7 +834,7 @@ func (p ContextPacket) validateFields() error {
 		return ErrContextSourceBudgetExceeded
 	}
 	sourceWires := contextSourceWireValues(p.sources)
-	if !validStatedIntentWire(p.statedIntent.wire()) || !validPatternHygieneWire(p.patternHygiene.wire(), sourceWires) || !validContextManifestWire(p.manifest.manifestWire(), sourceWires) || !validRepositoryChecks(p.manifest.checksWire()) {
+	if !validStatedIntentWire(p.statedIntent.wire()) || !validPatternHygieneWire(p.patternHygiene.wire(), sourceWires) || !validContextManifestWire(p.manifest.manifestWire(), sourceWires) || !validRepositoryChecks(p.manifest.checksWire()) || !validCheckRunsWire(p.checkRuns.wire()) {
 		return ErrInvalidContextSource
 	}
 	previousOmission := ContextSourceOmission{}
@@ -901,9 +902,11 @@ type contextPacketWire struct {
 	// leave earlier versions' bytes unchanged.
 	StatedIntent   *statedIntentWire   `json:"stated_intent,omitempty"`
 	PatternHygiene *patternHygieneWire `json:"pattern_hygiene,omitempty"`
-	// ContextManifest and RepositoryChecks exist only from version 10.
+	// ContextManifest and RepositoryChecks exist only from version 10,
+	// CheckRuns only from version 11.
 	ContextManifest  *contextManifestWire `json:"context_manifest,omitempty"`
 	RepositoryChecks []string             `json:"repository_checks,omitempty"`
+	CheckRuns        *checkRunsWire       `json:"check_runs,omitempty"`
 }
 
 type contextSourceCoverageWire struct {
@@ -974,7 +977,7 @@ type contextMemoryItemWire struct {
 }
 
 func encodeContextPacket(packet ContextPacket) ([]byte, error) {
-	// Every new generation context is version 10. The specialist block is present
+	// Every new generation context is version 11. The specialist block is present
 	// only when a packaged profile is bound. Instruction prose never enters the
 	// payload: the model receives it only through the trusted system channel,
 	// and the payload binds it by instructions_identity.
@@ -1003,6 +1006,7 @@ func encodeContextPacket(packet ContextPacket) ([]byte, error) {
 		Sources: contextSourceWireValues(packet.sources), SourceOmissions: contextSourceOmissionWireValues(packet.sourceOmissions), Memory: contextMemoryWireValue(packet.retrieval), AdditionalMemory: contextMemoryWireValues(packet.additionalRetrievals),
 		StatedIntent: packet.statedIntent.wire(), PatternHygiene: packet.patternHygiene.wire(),
 		ContextManifest: packet.manifest.manifestWire(), RepositoryChecks: packet.manifest.checksWire(),
+		CheckRuns: packet.checkRuns.wire(),
 	}
 	return json.Marshal(wire)
 }
@@ -1024,8 +1028,8 @@ func ValidateContextPacketRequest(
 	return nil
 }
 
-// ValidateRecordedContextPacketRequest verifies exact v2, v3, v5, v7, v8 or v9 bytes for readback.
-// A v7, v8 or v9 specialist block must re-derive exactly from the embedded profile catalog.
+// ValidateRecordedContextPacketRequest verifies exact v2, v3, v5 or v7 to v11 bytes for readback.
+// A v7 to v11 specialist block must re-derive exactly from the embedded profile catalog.
 // It does not admit a legacy context for a new model attempt.
 func ValidateRecordedContextPacketRequest(
 	payload []byte,
@@ -1088,13 +1092,15 @@ func ValidateRecordedContextPacketRequest(
 	if !validSourceHeadLines(wire.Sources) {
 		return ErrInvalidContextPacketRequest
 	}
-	// Stated intent and pattern hygiene exist only from version 9; the
-	// manifest and the repository checks only in version 10.
-	indexVersion := wire.SchemaVersion == modelGenerationContextVersion
+	// Stated intent and pattern hygiene exist only from version 9, the
+	// manifest and the repository checks only from version 10, and the check
+	// runs only in version 11.
+	indexVersion := indexGenerationVersion(wire.SchemaVersion)
 	if (wire.StatedIntent != nil || wire.PatternHygiene != nil) && !intentGenerationVersion(wire.SchemaVersion) ||
 		(wire.ContextManifest != nil || wire.RepositoryChecks != nil) && !indexVersion ||
+		wire.CheckRuns != nil && !checkRunsGenerationVersion(wire.SchemaVersion) ||
 		!validStatedIntentWire(wire.StatedIntent) || !validPatternHygieneWire(wire.PatternHygiene, wire.Sources) ||
-		!validContextManifestWire(wire.ContextManifest, wire.Sources) || !validRepositoryChecks(wire.RepositoryChecks) {
+		!validContextManifestWire(wire.ContextManifest, wire.Sources) || !validRepositoryChecks(wire.RepositoryChecks) || !validCheckRunsWire(wire.CheckRuns) {
 		return ErrInvalidContextPacketRequest
 	}
 	var sourceBytes uint32

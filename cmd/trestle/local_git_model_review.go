@@ -40,6 +40,10 @@ type localModelReviewOptions struct {
 	all bool
 	// verbose adds the internal tokens to text output (--verbose).
 	verbose bool
+	// repositoryChecks runs the repository's own checks in the sandbox
+	// before the model calls (--repository-checks); it is the caller's
+	// consent.
+	repositoryChecks bool
 }
 
 // renderOptions are the text and Markdown options the flags select.
@@ -104,16 +108,14 @@ func parseLocalModelReview(args []string) (localModelReviewOptions, evidence.Rep
 	fail := func() (localModelReviewOptions, evidence.RepositoryIdentity, evidence.RevisionIdentity, evidence.RevisionIdentity, error) {
 		return o, evidence.RepositoryIdentity{}, evidence.RevisionIdentity{}, evidence.RevisionIdentity{}, fmt.Errorf("invalid explicit model review intent")
 	}
-	// --all and --verbose are the flags without a value. They are recognized
-	// only where a flag is expected, so a flag's value is never taken for one.
-	all, verbose := false, false
+	// --all, --verbose and --repository-checks are the flags without a value.
+	// They are recognized only where a flag is expected, so a flag's value is
+	// never taken for one.
+	all, verbose, checks := false, false, false
 	pairs := make([]string, 0, len(args))
 	for index := 0; index < len(args); {
-		if args[index] == "--all" || args[index] == "--verbose" {
-			seen := &all
-			if args[index] == "--verbose" {
-				seen = &verbose
-			}
+		if args[index] == "--all" || args[index] == "--verbose" || args[index] == "--repository-checks" {
+			seen := map[string]*bool{"--all": &all, "--verbose": &verbose, "--repository-checks": &checks}[args[index]]
 			if *seen {
 				return fail()
 			}
@@ -250,7 +252,11 @@ func parseLocalModelReview(args []string) (localModelReviewOptions, evidence.Rep
 	}
 	o = localModelReviewOptions{objects: source.objectsRoot, inventory: values["--route-inventory"], policy: values["--runtime-policy"], tenant: values["--tenant"], repository: values["--repository"], format: format, investigation: values["--investigation-policy"], retainedMemory: values["--retained-memory-input"], egress: egress, objectStoreProfile: objectStoreProfile, timeout: timeout, specialist: specialist, exitPolicy: exitPolicy, specialists: specialists}
 	o.checkout, o.baseSelection, o.headSelection = values["--checkout"], values["--base"], values["--head"]
-	o.all, o.verbose = all, verbose
+	o.all, o.verbose, o.repositoryChecks = all, verbose, checks
+	// An investigation session takes no repository check outcomes.
+	if checks && o.investigation != "" {
+		return fail()
+	}
 	if checkout {
 		o.objectStoreProfile = scm.LocalGitObjectStoreProfileLooseAndPackIndexV1
 	}
@@ -356,6 +362,8 @@ type localModelReviewInputs struct {
 	// index is the repository index the review reads context from; nil for
 	// an investigation or when the objects have no usable index.
 	index *reviewIndexContext
+	// checks are the repository's check runs, or nil when none ran.
+	checks *review.CheckRuns
 	// scanner opens each member's scan helper session; nil only when tests
 	// replace the sanitizers.
 	scanner secretscan.ReviewSessionOpener
@@ -413,6 +421,12 @@ func prepareLocalModelReview(execution context.Context, options *localModelRevie
 	inputs.base, inputs.head = base, head
 	if options.investigation == "" {
 		inputs.index = prepareReviewIndex(execution, openReviewIndexSession(execution, *options, base), base, head, stderr)
+	}
+	if options.repositoryChecks && options.objects != "" {
+		inputs.checks = runRepositoryChecks(execution, options.objects, base, head, inputs.index, stderr)
+		if execution.Err() != nil {
+			return inputs, "canceled"
+		}
 	}
 	if options.retainedMemory != "" {
 		scope, scopeErr := memory.NewScope(options.tenant, options.repository, "local-reviewer", memory.RefVisibilityExact, head.Identity(), []string{"."})
@@ -516,7 +530,7 @@ func runLocalModelReviewMember(ctx, execution context.Context, options localMode
 		}
 		return scan.Close()
 	}
-	sessionOptions := localreview.SessionOptions{TenantID: options.tenant, RepositoryID: options.repository, Repository: inputs.repository, ObjectsRoot: objects, ObjectStoreProfile: options.objectStoreProfile, Inventory: inputs.inventory, Policy: inputs.policy, Egress: options.egress, Credentials: credentials, Clock: localReviewClock{}, Timeout: options.timeout, RetainedMemoryInput: inputs.retainedInput, Scanner: scan, GenerationSanitizer: localReviewGenerationSanitizer, VerificationSanitizer: localReviewVerificationSanitizer}
+	sessionOptions := localreview.SessionOptions{TenantID: options.tenant, RepositoryID: options.repository, Repository: inputs.repository, ObjectsRoot: objects, ObjectStoreProfile: options.objectStoreProfile, Inventory: inputs.inventory, Policy: inputs.policy, Egress: options.egress, Credentials: credentials, Clock: localReviewClock{}, Timeout: options.timeout, RetainedMemoryInput: inputs.retainedInput, CheckRuns: inputs.checks, Scanner: scan, GenerationSanitizer: localReviewGenerationSanitizer, VerificationSanitizer: localReviewVerificationSanitizer}
 	if options.egress == localreview.EgressPolicyApproved {
 		sessionOptions.ModelHTTPClient, sessionOptions.ModelHTTPClientIdentity = localReviewModelHTTPClient, localReviewModelHTTPClientIdentity
 	}
@@ -639,6 +653,7 @@ func writeLocalModelResultWithOptions(format string, policy localreview.ExitPoli
 	return result.ExitCodeFor(policy)
 }
 func writeLocalGitModelReviewUsage(stderr io.Writer) {
-	fmt.Fprintln(stderr, "usage: trestle local-git model-review --objects-root PATH --repository-authority AUTHORITY --repository-namespace SEGMENT[/SEGMENT...] --repository-name NAME --revision-algorithm sha1|sha256 --base-revision-digest HEX --head-revision-digest HEX --tenant ID --repository ID --route-inventory PATH --runtime-policy PATH --egress local-only|policy-approved --timeout DURATION [--object-store loose-only|loose-and-pack-index-v1] [--format json|text|sarif|markdown] [--all] [--verbose] [--exit-code-policy default|findings|strict|always-zero] [--investigation-policy PATH | --retained-memory-input PATH] [--profile PROFILE_ID | --specialists auto|none|ID[,ID...] [--max-specialists N]]")
+	fmt.Fprintln(stderr, "usage: trestle local-git model-review --objects-root PATH --repository-authority AUTHORITY --repository-namespace SEGMENT[/SEGMENT...] --repository-name NAME --revision-algorithm sha1|sha256 --base-revision-digest HEX --head-revision-digest HEX --tenant ID --repository ID --route-inventory PATH --runtime-policy PATH --egress local-only|policy-approved --timeout DURATION [--object-store loose-only|loose-and-pack-index-v1] [--format json|text|sarif|markdown] [--all] [--verbose] [--repository-checks] [--exit-code-policy default|findings|strict|always-zero] [--investigation-policy PATH | --retained-memory-input PATH] [--profile PROFILE_ID | --specialists auto|none|ID[,ID...] [--max-specialists N]]")
 	fmt.Fprintln(stderr, "       checkout source alternative: --checkout PATH --base FULL_REF_OR_COMMIT --head FULL_REF_OR_COMMIT (replaces --objects-root and revision flags)")
+	fmt.Fprintln(stderr, "       --repository-checks runs the repository's own tests for the change in a sandbox first and gives the outcomes to the models; see docs/repository-checks.md")
 }

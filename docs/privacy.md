@@ -27,7 +27,9 @@ GitHub webhook ingress makes further requests. These are described in
 A review sends the model four things: the review instructions, the changed code
 of the two commits you compare, context from the repository around the change,
 and the commit messages of the compared range as the stated intent. The context
-includes instruction files. A review sends no API key and no environment
+includes instruction files. When the review ran the repository's own checks
+([repository checks](repository-checks.md)), it also sends their outcomes:
+check names, reasons and the names of failing tests. A review sends no API key and no environment
 variable value. Open Trestle reads commits from the repository's stored objects
 and does not read uncommitted changes.
 

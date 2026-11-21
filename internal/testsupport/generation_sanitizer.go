@@ -3,6 +3,7 @@ package testsupport
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"strings"
 
 	"github.com/georgejieh/open-trestle/internal/provider"
@@ -57,6 +58,15 @@ func cleanSanitizedRequest(raw provider.Request, scopeIdentity string, expected 
 				Text string `json:"text"`
 			} `json:"commits"`
 		} `json:"stated_intent"`
+		CheckRuns *struct {
+			Runs []struct {
+				Name           string   `json:"name"`
+				Reason         string   `json:"reason"`
+				Regressions    []string `json:"regressions"`
+				NewFailures    []string `json:"new_failures"`
+				StoppedRunning []string `json:"stopped_running"`
+			} `json:"runs"`
+		} `json:"check_runs"`
 		Candidates []struct {
 			Title string `json:"title"`
 			Claim string `json:"claim"`
@@ -94,6 +104,17 @@ func cleanSanitizedRequest(raw provider.Request, scopeIdentity string, expected 
 		for _, commit := range wire.StatedIntent.Commits {
 			if commit.Text != "" {
 				appendField(review.FieldRoleStatedIntentText, commit.Text)
+			}
+		}
+	}
+	if wire.CheckRuns != nil {
+		for _, run := range wire.CheckRuns.Runs {
+			appendField(review.FieldRoleCheckRunText, run.Name)
+			if run.Reason != "" {
+				appendField(review.FieldRoleCheckRunText, run.Reason)
+			}
+			for _, id := range slices.Concat(run.Regressions, run.NewFailures, run.StoppedRunning) {
+				appendField(review.FieldRoleCheckRunText, id)
 			}
 		}
 	}

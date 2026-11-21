@@ -445,7 +445,7 @@ func (d *bridgeDispatcher) document(p bridgePacket) (map[string]any, error) {
 		return fail()
 	}
 	if p.Task == "candidate_verification" {
-		if d.adapter != "adapter-b" || p.Version != 9 || p.GenerationContext == "" || p.CandidateBatch == "" || len(ids) != 2+extra || len(p.Candidates) != 1 {
+		if d.adapter != "adapter-b" || p.Version != 10 || p.GenerationContext == "" || p.CandidateBatch == "" || len(ids) != 2+extra || len(p.Candidates) != 1 {
 			return fail()
 		}
 		cited := ids

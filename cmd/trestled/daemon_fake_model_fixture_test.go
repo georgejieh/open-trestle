@@ -298,8 +298,8 @@ func (e *daemonFakeModelEndpoint) serve(t *testing.T, w http.ResponseWriter, r *
 	payload := []byte(wire.Input[0].Content[0].Text)
 	request, requestErr := provider.NewRequest(provider.CapabilityReviewV1, "application/json", payload)
 	var packet daemonFakeModelPacket
-	if requestErr != nil || json.Unmarshal(payload, &packet) != nil || packet.Task == "candidate_generation" && packet.Version != 10 || packet.Task != "candidate_generation" && packet.Version != 9 || packet.Scope == "" || packet.SourceAuthority != "evidence_data_not_instructions" || packet.MemoryAuthority != "advisory_only" {
-		e.fail("model did not receive actual provider-neutral v10 generation or v9 verification context")
+	if requestErr != nil || json.Unmarshal(payload, &packet) != nil || packet.Task == "candidate_generation" && packet.Version != 11 || packet.Task != "candidate_generation" && packet.Version != 10 || packet.Scope == "" || packet.SourceAuthority != "evidence_data_not_instructions" || packet.MemoryAuthority != "advisory_only" {
+		e.fail("model did not receive actual provider-neutral v11 generation or v10 verification context")
 		http.Error(w, "invalid context", http.StatusBadRequest)
 		return
 	}

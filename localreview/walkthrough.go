@@ -138,6 +138,9 @@ type WalkthroughVerified struct {
 	// the repository index proposed and what the packet included or left
 	// out. It is absent in walkthroughs recorded before it existed.
 	Context *WalkthroughContext `json:"context,omitempty"`
+	// CheckRuns is absent when the run's generation context carried no check
+	// run outcomes.
+	CheckRuns *WalkthroughCheckRuns `json:"check_runs,omitempty"`
 	// Verifier is the independent verifier's account; absent when the run
 	// recorded no verified set.
 	Verifier *WalkthroughVerifier `json:"verifier,omitempty"`
@@ -230,11 +233,12 @@ type walkthroughInputs struct {
 	receipts     []string // sanitized egress receipt artifact identities
 	verifier     *WalkthroughVerifier
 	receiptError bool
-	// intent, hygiene and manifest are read from the recorded generation
-	// context.
-	intent   review.StatedIntentSummary
-	hygiene  review.PatternHygieneSummary
-	manifest review.ContextManifestSummary
+	// intent, hygiene, manifest and checkRuns are read from the recorded
+	// generation context.
+	intent    review.StatedIntentSummary
+	hygiene   review.PatternHygieneSummary
+	manifest  review.ContextManifestSummary
+	checkRuns review.CheckRuns
 }
 
 // statedIntentWalkthrough lists a recorded stated intent's subjects.
@@ -256,13 +260,19 @@ func statedIntentWalkthrough(summary review.StatedIntentSummary) *WalkthroughSta
 	return value
 }
 
-// displaySubject replaces control and format characters, which could move a
-// terminal cursor or hide text, and cuts the subject at 120 characters.
+// displaySubject is displayText for a commit subject: at most 120
+// characters.
 func displaySubject(subject string) string {
+	return displayText(subject, maxWalkthroughIntentSubjectRun)
+}
+
+// displayText replaces control and format characters, which could move a
+// terminal cursor or hide text, and cuts the text at limit characters.
+func displayText(value string, limit int) string {
 	var builder strings.Builder
 	runes := 0
-	for _, character := range subject {
-		if runes == maxWalkthroughIntentSubjectRun {
+	for _, character := range value {
+		if runes == limit {
 			builder.WriteString("…")
 			break
 		}
@@ -329,6 +339,7 @@ func buildWalkthrough(in walkthroughInputs, readReceipt func(string) (review.Sca
 		w.MissingVerification, w.MissingVerificationNotListed, w.MissingVerificationIncomplete = missingVerification(profile, in.manifest)
 	}
 	w.Verified.PatternHygiene = patternHygieneWalkthrough(in.hygiene)
+	w.Verified.CheckRuns = checkRunsWalkthrough(in.checkRuns)
 	w.StatedIntent = statedIntentWalkthrough(in.intent)
 	return w
 }
@@ -566,6 +577,7 @@ func (w *Walkthrough) clone() *Walkthrough {
 		value.StatedIntent = &intent
 	}
 	value.Verified.Context = w.Verified.Context.clone()
+	value.Verified.CheckRuns = w.Verified.CheckRuns.clone()
 	return &value
 }
 
@@ -582,7 +594,7 @@ func (w *Walkthrough) validate() error {
 	default:
 		return errInvalidWalkthrough
 	}
-	if w.Verified.StyleDetection.State != "ran" && w.Verified.StyleDetection.State != "unavailable" || w.Verified.SemanticImpact.State != "ran" && w.Verified.SemanticImpact.State != "unavailable" || !w.Verified.Context.valid() {
+	if w.Verified.StyleDetection.State != "ran" && w.Verified.StyleDetection.State != "unavailable" || w.Verified.SemanticImpact.State != "ran" && w.Verified.SemanticImpact.State != "unavailable" || !w.Verified.Context.valid() || !w.Verified.CheckRuns.valid() {
 		return errInvalidWalkthrough
 	}
 	text := func(value string, limit int) bool {

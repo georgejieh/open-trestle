@@ -81,6 +81,16 @@ jobs:
         run: |
           umask 022
           GOWORK=off GOTOOLCHAIN=go1.26.11 go test -p=1 -timeout=30m ./...
+      # Ubuntu's AppArmor restricts unprivileged user namespaces by default,
+      # so the escape tests above skip. Lifting the restriction for this step
+      # makes them run for real; a skip then fails the job.
+      - name: Run check sandbox escape tests
+        run: |
+          set -o pipefail
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          GOWORK=off GOTOOLCHAIN=go1.26.11 go test -count=1 -v -run='Escape|Sandbox' ./internal/checksandbox/ | tee "$RUNNER_TEMP/escape-tests"
+          ! grep -- '--- SKIP' "$RUNNER_TEMP/escape-tests"
+          GOWORK=off GOTOOLCHAIN=go1.26.11 go test -count=1 -v -run='Toolchains|EndToEnd' ./internal/checksandbox/ ./internal/repochecks/
       - name: Verify static-debug evaluation evidence
         run: |
           GOWORK=off GOTOOLCHAIN=go1.26.11 go run ./cmd/trestle evaluate static-debug > "$RUNNER_TEMP/open-trestle-static-debug-evaluation.json"
@@ -350,6 +360,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
+      - name: Set up Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version-file: .node-version
       # The tests need a temporary folder whose ancestors no other account
       # can change. A new folder below the profile inherits only the
       # runner account, SYSTEM and Administrators.
@@ -378,6 +392,15 @@ jobs:
           ./internal/secretscan/
           ./internal/scm/
           ./localreview/
+          ./internal/jobobject/
+          ./internal/repochecks/
+      - name: Run check sandbox escape tests
+        run: |
+          go test -count=1 -v -run='Escape|Sandbox' ./internal/checksandbox/ | Tee-Object -FilePath "$env:RUNNER_TEMP\escape-tests.txt"
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          # Go cannot run in the Windows sandbox, so its toolchain subtest skips.
+          if (Select-String -Path "$env:RUNNER_TEMP\escape-tests.txt" -Pattern '--- SKIP' -SimpleMatch | Where-Object { $_.Line -notmatch 'TestToolchainsRunInSandbox/go' }) { Write-Error 'an escape test skipped'; exit 1 }
+          go test -count=1 -v -run='Toolchains' ./internal/checksandbox/
       - name: Build, vet and test the secret-scanner Windows packages
         working-directory: workers/secret-scanner
         run: |

@@ -73,6 +73,7 @@ The setup folder holds:
 | `review-intent.json` | The saved review command. |
 | `runs/setup/plan.json` and its `.lock`, `.receipts` and `.next` companions | The setup plan and its check receipts. |
 | `last-review.json` | The time, status, finding count and two commits of the last review, for the home screen. |
+| `checks.json` | Whether reviews may run the [repository checks](repository-checks.md), and when that was answered. |
 | `NEXT-STEPS.txt` | The commands to run next. It never holds a key. |
 | `index/` | The [repository index](repository-index.md): private segment and snapshot files and, on Linux, compiled grammar modules. |
 

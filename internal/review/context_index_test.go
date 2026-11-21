@@ -193,7 +193,7 @@ func TestRecordedVersionNineContextRefusesVersionTenFields(t *testing.T) {
 		return ValidateRecordedContextPacketRequest(encoded, modelContractDigest(encoded), bound.ReviewScopeIdentity(), bound.MemoryScopeIdentity(), bound.MemoryIdentity(), snapshot, bound.EvidenceItems()) == nil
 	}
 	if !readable(current) {
-		t.Fatal("the version 10 context does not read back")
+		t.Fatal("the current context does not read back")
 	}
 	if !readable(legacyGenerationWire(t, current, modelGenerationContextVersionV9)) {
 		t.Fatal("the same sources do not read back as a version 9 context")
@@ -232,7 +232,7 @@ func TestVerifierReceivesIndexSourcesWithoutTheManifest(t *testing.T) {
 	}
 	request, _ := verification.ProviderRequest()
 	fields := modelContractFields(t, request.Payload())
-	if string(fields["schema_version"]) != "9" || fields["context_manifest"] != nil || fields["repository_checks"] != nil {
+	if string(fields["schema_version"]) != "10" || fields["context_manifest"] != nil || fields["repository_checks"] != nil {
 		t.Fatalf("verifier fields: version=%s manifest=%s checks=%s limits=%s", fields["schema_version"], fields["context_manifest"], fields["repository_checks"], fields["limits"])
 	}
 	var wire verificationContextWire
@@ -247,11 +247,11 @@ func TestVerifierReceivesIndexSourcesWithoutTheManifest(t *testing.T) {
 		t.Fatalf("verifier stages = %v", stages)
 	}
 	system, err := TrustedModelRequestInstructions(request.Payload())
-	if err != nil || system != verificationOutputInstructionsV9 || !strings.Contains(system, indexContextVerificationSentence) {
+	if err != nil || system != verificationOutputInstructionsV10 || !strings.Contains(system, indexContextVerificationSentence) {
 		t.Fatal("the verifier system channel does not explain the index sources")
 	}
 	generationSystem, err := TrustedModelRequestInstructions(generationRequest.Payload())
-	if err != nil || generationSystem != candidateOutputInstructionsV10 || !strings.Contains(generationSystem, indexContextGenerationSentence) || !strings.Contains(generationSystem, repositoryChecksGenerationSentence) {
+	if err != nil || generationSystem != candidateOutputInstructionsV11 || !strings.Contains(generationSystem, indexContextGenerationSentence) || !strings.Contains(generationSystem, repositoryChecksGenerationSentence) {
 		t.Fatal("the generation system channel does not explain the index sources and repository checks")
 	}
 }

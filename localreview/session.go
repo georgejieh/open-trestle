@@ -84,6 +84,12 @@ type SessionOptions struct {
 	// IndexContext optionally supplies context from a repository index. A
 	// session without one records the index as unavailable.
 	IndexContext contexthandler.IndexContextSource
+	// CheckRuns are the outcomes of the repository's own checks for the
+	// reviewed change; the finder and the verifier receive them as the
+	// context's check_runs object. Nil means the checks did not run. An
+	// investigation session refuses them: its pipeline has its own context
+	// contract.
+	CheckRuns *review.CheckRuns
 }
 type Session struct {
 	mu                               sync.Mutex
@@ -141,6 +147,14 @@ func newSession(o SessionOptions, investigationPolicy *review.InvestigationPolic
 	}
 	if !specialist.IsZero() && (investigationPolicy != nil || specialist.Validate() != nil) {
 		return nil, ErrInvalidSession
+	}
+	if o.CheckRuns != nil {
+		// The value is immutable; the caller's pointer is not Session authority.
+		runs := *o.CheckRuns
+		if investigationPolicy != nil || runs.IsZero() {
+			return nil, ErrInvalidSession
+		}
+		o.CheckRuns = &runs
 	}
 	if _, err := audit.NewReviewScope(o.TenantID, o.RepositoryID, "session-validation"); err != nil {
 		return nil, ErrInvalidSession
@@ -341,6 +355,13 @@ func newSession(o SessionOptions, investigationPolicy *review.InvestigationPolic
 		assembly, err = assembly.WithRepositoryContext(o.IndexContext, routeContextBudget(o.Inventory, o.Policy))
 		if err != nil {
 			return nil, ErrInvalidSession
+		}
+		// They also see the repository's own check outcomes, bound to the
+		// exact base and head the checks ran on.
+		if o.CheckRuns != nil {
+			if assembly, err = assembly.WithCheckRuns(*o.CheckRuns); err != nil {
+				return nil, ErrInvalidSession
+			}
 		}
 		generation, err := modelhandler.NewGenerationHandler(store, dispatchers, ledger, o.Clock, sanitizer.ExpectedBinaryDigests())
 		if err != nil {

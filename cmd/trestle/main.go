@@ -10,11 +10,14 @@ import (
 	"syscall"
 
 	"github.com/georgejieh/open-trestle/internal/buildinfo"
+	"github.com/georgejieh/open-trestle/internal/checksandbox"
 	"github.com/georgejieh/open-trestle/internal/config"
 	"github.com/georgejieh/open-trestle/internal/review"
 )
 
 func main() {
+	// A check sandbox on Linux re-executes this program as its first process.
+	checksandbox.RunChildIfRequested()
 	if len(os.Args) == 1 {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		code := runHome(ctx, os.Stdin, os.Stdout, os.Stderr)
@@ -136,6 +139,9 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 	}
 	if len(args) >= 1 && args[0] == "index" {
 		return runIndex(ctx, args[1:], stdout, stderr)
+	}
+	if len(args) >= 1 && args[0] == "checks" {
+		return runChecks(ctx, args[1:], stdout, stderr)
 	}
 	if len(args) >= 1 && args[0] == "profile" {
 		return runProfile(ctx, args[1:], stdout, stderr)
@@ -266,6 +272,7 @@ func writeUsage(w io.Writer) {
 	writeUsageGroup(w, "Setup and keys")
 	fmt.Fprintln(w, "usage: trestle init [--no-input] [answer flags]   (start here: guided setup and first review; see docs/getting-started.md)")
 	writeKeysUsage(w)
+	writeChecksUsage(w)
 
 	writeUsageGroup(w, "Integrations")
 	writeLocalGitModelReviewUsage(w)

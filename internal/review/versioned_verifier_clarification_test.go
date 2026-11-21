@@ -27,7 +27,7 @@ func TestVersionedVerifierClarificationFixedContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	generationFields := modelContractFields(t, request.Payload())
-	if generationFields["instructions"] != nil || string(generationFields["instructions_identity"]) != `"`+modelInstructionsIdentity(candidateOutputInstructionsV10)+`"` || string(generationFields["schema_version"]) != "10" {
+	if generationFields["instructions"] != nil || string(generationFields["instructions_identity"]) != `"`+modelInstructionsIdentity(candidateOutputInstructionsV11)+`"` || string(generationFields["schema_version"]) != "11" {
 		t.Error("ordinary generation must use v7 bound to the pinned v7 candidate instructions by identity")
 	}
 	if candidateOutputInstructions != pinnedV3CandidateInstructions {
@@ -61,10 +61,10 @@ func TestVersionedVerifierClarificationFixedContract(t *testing.T) {
 				t.Fatal("packet and durable constructors disagree")
 			}
 			fields := modelContractFields(t, sent.Payload())
-			if fields["instructions"] != nil || string(fields["instructions_identity"]) != `"`+modelInstructionsIdentity(verificationOutputInstructionsV9)+`"` || string(fields["schema_version"]) != "9" {
+			if fields["instructions"] != nil || string(fields["instructions_identity"]) != `"`+modelInstructionsIdentity(verificationOutputInstructionsV10)+`"` || string(fields["schema_version"]) != "10" {
 				t.Error("verifier must use the v6 contract bound by identity")
 			}
-			if trusted, err := TrustedModelRequestInstructions(sent.Payload()); err != nil || trusted != verificationOutputInstructionsV9 || !strings.HasPrefix(trusted, instructionHierarchy) {
+			if trusted, err := TrustedModelRequestInstructions(sent.Payload()); err != nil || trusted != verificationOutputInstructionsV10 || !strings.HasPrefix(trusted, instructionHierarchy) {
 				t.Error("verifier system channel is not the pinned v6 contract")
 			}
 			if !strings.Contains(verificationOutputInstructionsV6, pinnedEmptyCandidateSentence) || !strings.Contains(verificationOutputInstructionsV7, pinnedEmptyCandidateSentence) {

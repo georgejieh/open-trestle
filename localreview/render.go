@@ -111,6 +111,7 @@ func walkthroughVerifiedTexts(w *Walkthrough, code func(string) string, set *set
 		lines = append(lines, "semantic impact: unavailable (no analysis was recorded)")
 	}
 	lines = append(lines, contextText(verified.Context)...)
+	lines = append(lines, checkRunsText(verified.CheckRuns, code)...)
 	if verifier := verified.Verifier; verifier != nil {
 		of := ""
 		if set != nil {
