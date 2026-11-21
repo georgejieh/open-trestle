@@ -13,7 +13,7 @@ There are two ways to run Open Trestle on a GitHub pull request. They differ in 
 
 Neither path has run against GitHub. The Actions example has never run on a hosted runner. Open Trestle ships no GitHub App of its own: on the daemon path you register an App on your own account and run the daemon yourself. There is also no packaged `action.yml` (see the [roadmap](roadmap.md#next-release)).
 
-Use the Actions path to try Open Trestle on a repository you control, with no server. Use the daemon path when you need durable runs. On the daemon path, setup accepts the App installation only with `metadata`, `contents` and `pull_requests` read permissions. For the daemon path, see [webhook ingress](webhook-ingress.md), [source acquisition](github-source-acquisition.md) and [integration permissions](github-integration-permissions.md).
+Use the Actions path to try Open Trestle on a repository you control, with no server. Use the daemon path when you need durable runs. For the daemon path, see [webhook ingress](webhook-ingress.md) and [source acquisition](github-source-acquisition.md).
 
 ## Which changes are reviewed
 

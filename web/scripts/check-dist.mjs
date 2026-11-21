@@ -48,12 +48,9 @@ export async function checkDistribution(
   const styles = names.filter((name) => name.endsWith(".css"));
   if (
     entries.some((entry) => !entry.isFile()) ||
-    names.length !== 3 ||
-    scripts.length !== 2 ||
-    scripts.filter((name) => /^index-[A-Za-z0-9_-]+\.js$/.test(name)).length !==
-      1 ||
-    scripts.filter((name) => /^SetupApp-[A-Za-z0-9_-]+\.js$/.test(name))
-      .length !== 1 ||
+    names.length !== 2 ||
+    scripts.length !== 1 ||
+    !/^index-[A-Za-z0-9_-]+\.js$/.test(scripts[0]) ||
     styles.length !== 1 ||
     !/^index-[A-Za-z0-9_-]+\.css$/.test(styles[0])
   )

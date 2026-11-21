@@ -26,7 +26,7 @@ func webhookHandlerFixture(t *testing.T) (*HTTPHandler, *webhook.MemoryStore, []
 	policy, _ := webhook.NewAdmissionPolicy([]webhook.VerifierAuthority{{Scope: scope, Source: webhook.SourceGitHub, VerifierIdentity: verifier.Identity()}})
 	store := webhook.NewMemoryStore()
 	inbox, _ := webhook.NewInbox(store, policy)
-	handler, err := NewHTTPHandler(scope, verifier, inbox, fixedWebhookClock{at: time.UnixMilli(1000)}, 8)
+	handler, err := NewHTTPHandlerWithNotifier(scope, verifier, inbox, nil, fixedWebhookClock{at: time.UnixMilli(1000)}, 8)
 	if err != nil {
 		t.Fatal(err)
 	}

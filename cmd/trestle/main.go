@@ -63,15 +63,6 @@ func main() {
 	if len(os.Args) >= 2 && os.Args[1] == "acp" {
 		os.Exit(runACP(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
 	}
-	if len(os.Args) >= 3 && os.Args[1] == "setup" && os.Args[2] == "web" {
-		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-		code := runSetupWeb(ctx, os.Args[3:], os.Getenv, os.Stdout, os.Stderr)
-		stop()
-		os.Exit(code)
-	}
-	if len(os.Args) >= 3 && os.Args[1] == "setup" && os.Args[2] == "tui" {
-		os.Exit(runSetupTUI(os.Args[3:], os.Stdin, os.Stdout, os.Stderr))
-	}
 	if len(os.Args) >= 2 && os.Args[1] == "init" {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		code := runInit(ctx, os.Args[2:], os.Stdin, os.Stdout, os.Stderr)

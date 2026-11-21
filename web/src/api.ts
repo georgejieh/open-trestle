@@ -122,21 +122,10 @@ function publicMessage(code: string): string {
     case "unauthenticated":
     case "unauthorized":
       return "The access token was not accepted. Check it and connect again.";
-    case "stale_plan":
-      return "The setup plan changed. Inspect it again before running this check.";
-    case "state_unavailable":
-      return "Protected setup state is unavailable. Check the local state path and permissions.";
-    case "state_invalid":
-    case "state_conflict":
-      return "Protected setup state could not be verified. Inspect its plan and receipt ledger.";
-    case "check_unavailable":
-      return "This setup check is not available with the supplied configuration.";
-    case "check_failed":
-      return "The setup check failed without changing verified state.";
     case "invalid_request":
     case "unsupported_media_type":
     case "request_too_large":
-      return "The setup request was rejected before any check ran.";
+      return "The daemon rejected the request.";
     case "forbidden":
       return "This token cannot read the requested tenant or repository.";
     case "not_found":

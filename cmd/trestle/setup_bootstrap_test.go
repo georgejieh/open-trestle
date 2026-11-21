@@ -22,7 +22,7 @@ import (
 func bootstrapInvoke(t *testing.T, args []string, want int) setupBootstrapResult {
 	t.Helper()
 	var out, err bytes.Buffer
-	code := runSetupWithClock(append([]string{"bootstrap"}, args...), &out, &err, fixedSetupClock{setupTimeCLI()})
+	code := runSetup(append([]string{"bootstrap"}, args...), &out, &err)
 	var result setupBootstrapResult
 	if code != want || err.Len() != 0 || json.Unmarshal(out.Bytes(), &result) != nil {
 		t.Fatalf("bootstrap code=%d want=%d out=%s err=%s", code, want, out.String(), err.String())

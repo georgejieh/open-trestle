@@ -67,41 +67,6 @@ func TestRunRendererPreservesHeadingAndBridgeBrandingAcrossWidthsAndModes(t *tes
 	}
 }
 
-func TestSetupRendererPreservesHeadingAndBridgeBrandingAcrossWidthsAndModes(t *testing.T) {
-	for _, width := range []int{60, 100, 240} {
-		for _, plain := range []bool{true, false} {
-			name := fmt.Sprintf("width_%d_plain_%t", width, plain)
-			t.Run(name, func(t *testing.T) {
-				interface_, output, state := setupInterfaceFixture(t, "")
-				defer state.Close()
-				interface_.options.Width = width
-				interface_.options.Plain = plain
-				interface_.options.Once = true
-				if err := interface_.Run(context.Background()); err != nil {
-					t.Fatal(err)
-				}
-				rendered := output.String()
-				assertBridgeControlEnvelope(t, rendered, plain)
-				assertBridgeAfterHeading(t, rendered, "OPEN TRESTLE SETUP")
-				assertBridgeLinesFitWidth(t, width)
-				assertLegacyEqualsRuleRemoved(t, rendered, width)
-				for _, want := range []string{
-					"OPEN TRESTLE SETUP\n",
-					"Readiness  incomplete",
-					"local single node",
-					"state storage posture validated",
-					"Receipt history",
-					"Commands: j next  k previous  x run selected",
-				} {
-					if !strings.Contains(rendered, want) {
-						t.Fatalf("missing %q in:\n%s", want, rendered)
-					}
-				}
-			})
-		}
-	}
-}
-
 func assertBridgeControlEnvelope(t *testing.T, rendered string, plain bool) {
 	t.Helper()
 	if plain {

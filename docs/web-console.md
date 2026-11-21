@@ -96,39 +96,6 @@ Each verified finding and each deterministic observation has a closed `Inspect e
 
 Long values are shortened on screen, while assistive text and the copy controls keep the complete value.  After a successful clipboard write, the console announces `Copied`. If the clipboard is unavailable or rejects the write, it announces `Copy failed`, without exposing a browser error or the value. Only the newest copy attempt updates the feedback, and the feedback for a previous value disappears if the identity is refreshed. The disclosure does not fetch or render source, evidence or model payloads.
 
-## Guided setup surface
-
-`trestle setup web --state PATH` serves the same self-contained assets on a numeric loopback listener, and it opens the setup mode at `/console/setup`. Unlike the daemon console, this local surface has a narrow API that writes receipts. It uses a dedicated `OPEN_TRESTLE_SETUP_TOKEN`, which must differ from the operator and observer tokens. The server accepts only its numeric loopback Host authority.
-
-The setup client calls only these routes:
-
-- `GET /api/v1/setup`
-- `POST /api/v1/setup/init`
-- `POST /api/v1/setup/check`
-
-### Available checks
-
-The guided checker covers the following:
-
-- Local-administrator approval.
-- Validation of a protected backup snapshot.
-- Storage and observer credentials.
-- Runtime policy.
-- Explicit local inference.
-- The dry run that publishes nothing.
-
-Creating and restoring a snapshot remain explicit CLI operations. Local inference stays disabled until the policy receipt exists. Its confirmation makes at most two calls to fixed, independently routed numeric-loopback addresses and requires both to pass within one 90-second bound. It does no retry, fallback, publication or dynamic validation.
-
-The backup result covers setup state only. It does not claim that the media is independent, or that disaster recovery works.
-
-Checks that this page does not list stay pending.
-
-### Confirmation and validation
-
-Initialization and every check each need their own inline confirmation. A check request binds the plan identity on display and `run REQUIREMENT_KEY`. The service revalidates the protected state before it opens a writer, and the setup runner fences out stale transitions. The browser saves no setup token, path, approval identity or progress value, and it omits cookies and other ambient credentials. Before displaying a response, the browser validates it against the closed setup profiles, the posture relationships, the ordered requirements, the checker authorities, the receipt history, the derived readiness and the binding to the latest receipt.
-
-The guided path can create a plan and run the checks listed under [Available checks](#available-checks). Requirements without a built-in implementation stay pending, with an explanation. The dry run stays local. It has no publisher, source writer, process runner, credential resolver or network client.
-
 ## Browser boundary
 
 The embedded handler supports only `GET` and `HEAD`. It rejects query strings and noncanonical paths, and it serves only the root document, the favicon and the hashed build assets.
@@ -151,7 +118,7 @@ go test ./web ./cmd/trestled
 
 CI snapshots the checked-out `web/dist` directory before rebuilding, and then compares the generated output with that snapshot recursively. 
 
-`npm run visual --prefix web` starts a temporary loopback fixture server and launches the installed Chromium binary. It captures desktop and narrow-screen screenshots of the review and setup screens, checks for browser console errors and horizontal overflow, and then shuts everything down. It does not contact a daemon or any external service.
+`npm run visual --prefix web` starts a temporary loopback fixture server and launches the installed Chromium binary. It captures desktop and narrow-screen screenshots of the review screens, checks for browser console errors and horizontal overflow, and then shuts everything down. It does not contact a daemon or any external service.
 
 The packaged system driver runs `web/scripts/daemon-visual-check.mjs` against the real daemon, both before shutdown and after a restart. Each phase receipt records the run, the diagnostic set, the identity and state of the deterministic check, the observation identities, the viewport, the PNG image dimensions and digest, the counts of console errors and egress, overflow, keyboard focus, reduced motion and the floor on tap-target size. The Python driver validates the receipt contract and the metrics, parses the PNG signatures, chunks, CRCs, IHDR dimensions and the IDAT and IEND structure, and rehashes every receipt and screenshot from disk. Fixture screenshots do not substitute for these phases.
 
@@ -159,13 +126,13 @@ The packaged system driver runs `web/scripts/daemon-visual-check.mjs` against th
 
 The distribution check enforces these size limits:
 
-- Each JavaScript chunk: 256 KiB.
+- The JavaScript bundle: 256 KiB.
 - All JavaScript together: 320 KiB.
 - All JavaScript together, gzipped at level 9: 90 KiB.
 - CSS: 32 KiB.
 
-The setup application is a separate lazy-loaded chunk, so the review console does not pay for its interaction cost. The check permits only `public/favicon.svg`, `public/not-found.css` and `public/not-found.html` as public inputs.
+The check permits only `public/favicon.svg`, `public/not-found.css` and `public/not-found.html` as public inputs.
 
-The complete distribution contains only `index.html`, `favicon.svg`, `not-found.css`, `not-found.html` and an `assets` directory. That directory holds one hashed `index-*.js`, one hashed `SetupApp-*.js` and one hashed `index-*.css`. Hash suffixes use ASCII letters, digits, underscores and hyphens. Both trees reject extra files, nested or empty directories, source maps and symlinks. The embedded handler also rejects asset names outside these hashed patterns, and files that are not regular files.
+The complete distribution contains only `index.html`, `favicon.svg`, `not-found.css`, `not-found.html` and an `assets` directory. That directory holds one hashed `index-*.js` and one hashed `index-*.css`. Hash suffixes use ASCII letters, digits, underscores and hyphens. Both trees reject extra files, nested or empty directories, source maps and symlinks. The embedded handler also rejects asset names outside these hashed patterns, and files that are not regular files.
 
 The web build has no runtime dependency on a CDN, font, icon, analytics or telemetry service. The package lock pins every JavaScript dependency and its integrity digest.

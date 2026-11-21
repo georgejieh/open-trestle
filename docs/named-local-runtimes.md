@@ -108,11 +108,11 @@ trestle config bind \
 
 Save stdout as a new protected `runtime-policy.json`. Binding creates identities and makes no model calls. Run `trestle config validate` with the same inventory and the bound policy.
 
-Then follow [Setup planning](setup.md#runtime-policy-approval-and-dry-run) to initialize the local plan, record the returned identities and the recovery-owner approval, and run `setup check policy`. Only with your explicit consent to a probe, run `setup check inference`. That caller builds the shared local catalog from these connections.
+The optional local inference check builds the shared local catalog from these connections. `trestle init` asks before it runs the check, and `trestle setup bootstrap check` runs it only with `--allow-local-probe`.
 
 The probe sends a tiny synthetic source function through the candidate and verification request builders. It does not send repository or private source. It allows at most two requests, 256 output tokens per request, reported input up to each request's own byte-based reservation, one 90-second deadline and no fallback. Nothing starts a server, downloads a model or discovers a credential.
 
-These files also feed the local model-review and opt-in full-review runtime paths. See [Local model review](local-model-review.md) for source selection and [Setup planning](setup.md) for durable setup.
+These files also feed the local model-review and opt-in full-review runtime paths. See [Local model review](local-model-review.md) for source selection and [Setup plan](setup.md) for the setup plan.
 
 ## Offline fixtures and limits
 

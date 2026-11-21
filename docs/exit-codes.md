@@ -3,7 +3,7 @@
 This page lists the exit codes of each `trestle` command, so that scripts and CI
 steps can react to them. The codes stay the same for a given command. Most
 commands use `0` for success, `1` for a failure and `2` for wrong usage. Reviews
-and setup checks add `3` for work that is not finished and `4` for a refusal.
+and setup bootstrap commands add `3` for work that is not finished and `4` for a refusal.
 Read the output as well, because a code alone does not say which refusal or
 failure it was. For a failed review, see [failure details](failure-details.md).
 
@@ -85,7 +85,6 @@ The first review inside `trestle init` uses these codes, not the table for
 | Command | Codes |
 | --- | --- |
 | `trestle setup bootstrap init`, `check`, `inspect`, `prepare-review` | `0` ready; `3` checks pending; `4` refused; `1` failure; `2` usage. |
-| `trestle setup check KIND` | `0` the check passed; `3` it ran and did not pass; `1` failure; `2` usage. |
 | Other `setup`, `config`, `admin`, `runs` and static `local-git` commands | `0` success; `1` failure; `2` usage. |
 
 ## Fixtures and evaluation

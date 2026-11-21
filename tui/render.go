@@ -30,13 +30,13 @@ func (i *Interface) render(view interfaceView) error {
 	}
 	for _, task := range view.receipt.Tasks() {
 		if reason := task.FailureReason(); reason != 0 {
-			writeSetupWrapped(&builder, "Reason      ", task.Key()+": "+reason.String()+" ("+failureReasonText(reason)+")", width)
+			writeWrapped(&builder, "Reason      ", task.Key()+": "+reason.String()+" ("+failureReasonText(reason)+")", width)
 			if _, _, action, provider := routehint.ProviderRefusalWords(reason.String()); provider {
-				writeSetupWrapped(&builder, "Hint        ", action, width)
+				writeWrapped(&builder, "Hint        ", action, width)
 			}
 		}
 		if s, counted := task.ContextShortfall(); counted {
-			writeSetupWrapped(&builder, "Hint        ", routehint.ContextShortfall(s.RequiredTokens, s.EstimatedInputTokens, s.MaxOutputTokens, s.DeclaredContextTokens), width)
+			writeWrapped(&builder, "Hint        ", routehint.ContextShortfall(s.RequiredTokens, s.EstimatedInputTokens, s.MaxOutputTokens, s.DeclaredContextTokens), width)
 		}
 	}
 	builder.WriteString("\nTasks\n")
@@ -77,10 +77,10 @@ func writeFinalDiagnostics(builder *strings.Builder, set diagnostics.Set, width 
 		if refusal.Reason == diagnostics.ContextRefusalRouteContextInsufficient {
 			text = routehint.RouteContextInsufficient
 		}
-		writeSetupWrapped(builder, "Context refusal: ", string(refusal.Reason)+" ("+text+")", width)
+		writeWrapped(builder, "Context refusal: ", string(refusal.Reason)+" ("+text+")", width)
 	}
 	if set.EvidenceExpired() {
-		writeSetupWrapped(builder, "", diagnostics.EvidenceExpiredText, width)
+		writeWrapped(builder, "", diagnostics.EvidenceExpiredText, width)
 	}
 	builder.WriteString("A terminal outcome does not approve the change or prove correctness.\n")
 	if set.AnalysisResultIdentity() == "" {
@@ -201,4 +201,36 @@ func failureReasonText(reason controlplane.TaskFailureReason) string {
 		return text
 	}
 	return "unknown reason"
+}
+
+// writeWrapped writes prefix and text, wrapping at spaces to width and
+// indenting continuation lines under the text.
+func writeWrapped(builder *strings.Builder, prefix, text string, width int) {
+	text = safeTerminalText(text)
+	continuation := strings.Repeat(" ", utf8.RuneCountInString(prefix))
+	for {
+		available := width - utf8.RuneCountInString(prefix)
+		characters := []rune(text)
+		if len(characters) <= available {
+			builder.WriteString(prefix)
+			builder.WriteString(text)
+			builder.WriteByte('\n')
+			return
+		}
+		cut := available
+		for index := available; index > 0; index-- {
+			if characters[index-1] == ' ' {
+				cut = index - 1
+				break
+			}
+		}
+		if cut == 0 {
+			cut = available
+		}
+		builder.WriteString(prefix)
+		builder.WriteString(strings.TrimSpace(string(characters[:cut])))
+		builder.WriteByte('\n')
+		text = strings.TrimSpace(string(characters[cut:]))
+		prefix = continuation
+	}
 }

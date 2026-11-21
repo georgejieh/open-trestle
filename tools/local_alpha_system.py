@@ -1956,10 +1956,17 @@ def main() -> int:
         # synthetic repository, so it makes the chosen objects directory private,
         # as an operator would for an owned private checkout.
         objects.chmod(0o700)
-        setup_path = setup_dir / "plan.json"
-        setup = execute([str(trestle), "setup", "init", "--profile", "local_single_node", "--tenant", "tenant-a", "--repository", "repository-a", "--recovery-owner", "platform-owner", "--state", str(setup_path)])
-        write_artifact(artifacts / "setup-init.json", setup.stdout)
-        setup_root = json.loads(setup.stdout)["plan_identity"]
+        # The bootstrap writes an unready local_single_node plan. Its init runs
+        # no setup check; the model endpoint is a free loopback port, so its
+        # local-model check finds no server and nothing receives a request.
+        model_endpoint = f"http://127.0.0.1:{free_port()}/v1"
+        setup = execute([str(trestle), "setup", "bootstrap", "init", "--directory", str(setup_dir), "--tenant", "tenant-a", "--repository", "repository-a", "--recovery-owner", "platform-owner", "--checkout", str(repository), "--base", base, "--head", head, "--repository-authority", "local.test", "--repository-namespace", "team", "--repository-name", "repository", "--generation-endpoint", model_endpoint, "--generation-model", "generation-model", "--verification-endpoint", model_endpoint, "--verification-model", "verification-model", "--transport", "openai_chat_completions", "--context-tokens", "8192", "--output-tokens", "4096", "--declare-local-capabilities"], accepted=(3,))
+        write_artifact(artifacts / "setup-bootstrap-init.json", setup.stdout)
+        bootstrap_result = json.loads(setup.stdout)
+        if bootstrap_result["status"] != "pending" or bootstrap_result["ready"] is not False:
+            raise RuntimeError("bootstrap init must leave the setup pending")
+        setup_root = bootstrap_result["plan_identity"]
+        setup_path = setup_dir / "runs" / "setup" / "plan.json"
         inspect = execute([str(trestle), "setup", "inspect", "--state", str(setup_path), "--expected-root-identity", setup_root])
         write_artifact(artifacts / "setup-plan.json", inspect.stdout)
         inspected_setup = json.loads(inspect.stdout)

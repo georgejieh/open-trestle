@@ -29,7 +29,7 @@ Primary references:
 
 ## Webhook secret
 
-The runtime secret `OPEN_TRESTLE_GITHUB_WEBHOOK_SECRET` must be a canonical, 64-character, lowercase hexadecimal encoding of 32 bytes from a cryptographically secure random generator. Validation rejects malformed values, values with low diversity and repeated values. `trestle admin github webhook identity` derives the runtime verifier identity from the tenant, repository, key ID and the fixed handler contract. The `trestle setup check webhook` conformance check still exists, but no current profile requires it.
+The runtime secret `OPEN_TRESTLE_GITHUB_WEBHOOK_SECRET` must be a canonical, 64-character, lowercase hexadecimal encoding of 32 bytes from a cryptographically secure random generator. Validation rejects malformed values, values with low diversity and repeated values.
 
 ## Verified deliveries
 

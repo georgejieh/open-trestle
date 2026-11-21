@@ -10,7 +10,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/georgejieh/open-trestle/internal/gateway"
 	"github.com/georgejieh/open-trestle/internal/provider"
@@ -72,36 +71,19 @@ type RuntimePolicyChecker struct {
 	approval                                         RuntimePolicyApproval
 	inventoryPath, policyPath, configurationIdentity string
 	fromFiles                                        bool
-	clock                                            RunnerClock
 }
 
 // NewRuntimePolicyChecker binds already decoded immutable runtime configuration and its explicit approval.
 func NewRuntimePolicyChecker(inventory runtimeconfig.RouteInventory, policy runtimeconfig.RuntimePolicy, approval RuntimePolicyApproval) (*RuntimePolicyChecker, error) {
-	return NewRuntimePolicyCheckerWithClock(inventory, policy, approval, setupRuntimePolicyClock{})
-}
-
-// NewRuntimePolicyCheckerWithClock uses a host-owned clock for expiring brokered declarations.
-func NewRuntimePolicyCheckerWithClock(inventory runtimeconfig.RouteInventory, policy runtimeconfig.RuntimePolicy, approval RuntimePolicyApproval, clock RunnerClock) (*RuntimePolicyChecker, error) {
-	if nilSetupInterface(clock) {
-		return nil, ErrInvalidCheckerRuntime
-	}
 	if inventory.Validate() != nil || policy.Validate() != nil || policy.ValidateAgainstInventory(inventory) != nil || policy.InventoryIdentity() != inventory.Identity() || !validRuntimePolicyApproval(approval) || approval.inventoryIdentity != inventory.Identity() || approval.runtimePolicyIdentity != policy.Identity() || approval.reviewPolicyIdentity != policy.ReviewPolicyIdentity() {
 		return nil, ErrInvalidCheckerRuntime
 	}
 	identity := checkerConfigIdentity(CheckPolicyValidated, inventory.Identity()+"\x00"+policy.Identity()+"\x00"+approval.Identity())
-	return &RuntimePolicyChecker{inventory: inventory, policy: policy, approval: approval, configurationIdentity: identity, clock: clock}, nil
+	return &RuntimePolicyChecker{inventory: inventory, policy: policy, approval: approval, configurationIdentity: identity}, nil
 }
 
 // NewRuntimePolicyFileChecker binds two exact protected configuration paths and an explicit expected authority. Files are read only while the check runs.
 func NewRuntimePolicyFileChecker(inventoryPath, policyPath string, approval RuntimePolicyApproval) (*RuntimePolicyChecker, error) {
-	return NewRuntimePolicyFileCheckerWithClock(inventoryPath, policyPath, approval, setupRuntimePolicyClock{})
-}
-
-// NewRuntimePolicyFileCheckerWithClock checks protected files with one host-owned authority clock.
-func NewRuntimePolicyFileCheckerWithClock(inventoryPath, policyPath string, approval RuntimePolicyApproval, clock RunnerClock) (*RuntimePolicyChecker, error) {
-	if nilSetupInterface(clock) {
-		return nil, ErrInvalidCheckerRuntime
-	}
 	inventoryAbsolute, err := filepath.Abs(inventoryPath)
 	if err != nil || inventoryPath == "" || !validRuntimePolicyApproval(approval) {
 		return nil, ErrInvalidCheckerRuntime
@@ -111,25 +93,7 @@ func NewRuntimePolicyFileCheckerWithClock(inventoryPath, policyPath string, appr
 		return nil, ErrInvalidCheckerRuntime
 	}
 	identity := checkerConfigIdentity(CheckPolicyValidated, inventoryAbsolute+"\x00"+policyAbsolute+"\x00"+approval.Identity())
-	return &RuntimePolicyChecker{approval: approval, inventoryPath: inventoryAbsolute, policyPath: policyAbsolute, configurationIdentity: identity, fromFiles: true, clock: clock}, nil
-}
-func (c *RuntimePolicyChecker) immutableConfigurationValid() bool {
-	if c == nil || nilSetupInterface(c.clock) || !validRuntimePolicyApproval(c.approval) {
-		return false
-	}
-	expected := ""
-	if c.fromFiles {
-		if c.inventoryPath == "" || c.policyPath == "" || c.inventoryPath == c.policyPath {
-			return false
-		}
-		expected = checkerConfigIdentity(CheckPolicyValidated, c.inventoryPath+"\x00"+c.policyPath+"\x00"+c.approval.Identity())
-	} else {
-		if c.inventory.Validate() != nil || c.policy.Validate() != nil || c.policy.ValidateAgainstInventory(c.inventory) != nil {
-			return false
-		}
-		expected = checkerConfigIdentity(CheckPolicyValidated, c.inventory.Identity()+"\x00"+c.policy.Identity()+"\x00"+c.approval.Identity())
-	}
-	return c.configurationIdentity == expected
+	return &RuntimePolicyChecker{approval: approval, inventoryPath: inventoryAbsolute, policyPath: policyAbsolute, configurationIdentity: identity, fromFiles: true}, nil
 }
 func validRuntimePolicyApproval(a RuntimePolicyApproval) bool {
 	return nonzeroSetupDigest(a.identity) && a.identity == runtimePolicyApprovalIdentity(a) && nonzeroSetupDigest(a.rootIdentity) && validSetupScope(a.tenantID, a.repositoryID) && nonzeroSetupDigest(a.inventoryIdentity) && nonzeroSetupDigest(a.runtimePolicyIdentity) && nonzeroSetupDigest(a.reviewPolicyIdentity) && validSetupLabel(a.approvedBy)
@@ -233,18 +197,10 @@ func setupRouteConnectionAuthorities(inventory runtimeconfig.RouteInventory, pol
 	return authorities, len(authorities) == len(connections)
 }
 
-type setupRuntimePolicyClock struct{}
-
-func (setupRuntimePolicyClock) Now() time.Time { return time.Now().UTC() }
-
 func (c *RuntimePolicyChecker) matchesSetup(plan Plan, inventory runtimeconfig.RouteInventory, policy runtimeconfig.RuntimePolicy) bool {
-	if c == nil || nilSetupInterface(c.clock) {
+	if c == nil {
 		return false
 	}
-	return runtimePolicyMatchesSetupAt(plan, inventory, policy, c.clock.Now())
-}
-
-func runtimePolicyMatchesSetupAt(plan Plan, inventory runtimeconfig.RouteInventory, policy runtimeconfig.RuntimePolicy, now time.Time) bool {
 	posture := plan.Posture()
 	if inventory.Validate() != nil || policy.Validate() != nil || policy.ValidateAgainstInventory(inventory) != nil || policy.InventoryIdentity() != inventory.Identity() || policy.Constraints().ContentLoggingAllowed() != posture.ContentLoggingAllowed() || policy.Budget().MaxCostMicroUSD() > posture.MaxModelRequestCostMicroUSD() || posture.PublicationEnabled() || posture.DynamicValidationEnabled() || posture.ProviderFallbackEnabled() || !policy.Publication().BlocksOnInconclusive() || policy.Publication().MinimumIndependence() < policy.Independence().Level() {
 		return false
@@ -278,33 +234,12 @@ func runtimePolicyMatchesSetupAt(plan Plan, inventory runtimeconfig.RouteInvento
 			return false
 		}
 	}
-	if posture.Inference() == InferenceLocalOnly {
-		if len(zones) != 1 || !zones[provider.ProviderZoneLocal] {
-			return false
-		}
-	} else if posture.Inference() == InferenceApprovedRemote {
-		remote := false
-		for zone := range zones {
-			remote = remote || zone != provider.ProviderZoneLocal
-		}
-		if !remote {
-			return false
-		}
-	} else {
+	if posture.Inference() != InferenceLocalOnly || len(zones) != 1 || !zones[provider.ProviderZoneLocal] {
 		return false
 	}
 	if policy.VerificationRouteRecordIdentity() != "" {
-		if posture.Inference() == InferenceApprovedRemote {
-			return setupBrokeredRoutePairMatches(plan, inventory, policy, now)
-		}
-		if posture.Inference() != InferenceLocalOnly {
-			return false
-		}
 		_, err := runtimecatalog.ResolveLocalGenerationRoutePair(policy, inventory)
 		return err == nil
-	}
-	if zones[provider.ProviderZoneBrokeredRemote] {
-		return false
 	}
 	if _, pinned := policy.Ranking().PinnedRoute(); pinned {
 		return false
@@ -327,19 +262,15 @@ func routeReadyForPolicy(observed gateway.ObservedRouteCandidate, policy runtime
 	estimate, err := provider.EstimateMaximumRouteCost(candidate.RoutePricing(), policy.Budget())
 	return err == nil && estimate.MaximumCostMicroUSD() <= policy.Budget().MaxCostMicroUSD()
 }
-func endpointMatchesZone(raw string, zone provider.ProviderZone) bool {
-	locality, err := provider.ClassifyServiceEndpoint(raw)
-	if err != nil {
+
+// setupConnectionEndpointMatchesZone accepts only a plain local connection
+// whose endpoint is a loopback address.
+func setupConnectionEndpointMatchesZone(connection runtimeconfig.ProviderConnection, zone provider.ProviderZone) bool {
+	if zone != provider.ProviderZoneLocal || connection.RequestProfile() != "" {
 		return false
 	}
-	switch zone {
-	case provider.ProviderZoneLocal:
-		return locality == provider.ServiceEndpointLoopback
-	case provider.ProviderZonePrivateRemote:
-		return locality == provider.ServiceEndpointRemote
-	default:
-		return false
-	}
+	locality, err := provider.ClassifyServiceEndpoint(connection.Endpoint())
+	return err == nil && locality == provider.ServiceEndpointLoopback
 }
 func hasIndependentRoutePair(routes []provider.RouteReference, level gateway.RouteIndependenceLevel) bool {
 	for i := 0; i < len(routes); i++ {

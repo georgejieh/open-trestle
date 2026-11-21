@@ -33,19 +33,9 @@
       "enum": [
         "local_administrator_validated",
         "state_storage_posture_validated",
-        "postgres_storage_validated",
-        "envelope_storage_validated",
         "backup_validated",
         "observer_credential_posture_validated",
-        "secret_backend_validated",
         "local_inference_validated",
-        "remote_provider_authorized",
-        "integration_permissions_validated",
-        "webhook_validated",
-        "shared_rate_limit_validated",
-        "replica_reconciliation_validated",
-        "signed_bundle_validated",
-        "no_egress_validated",
         "policy_validated",
         "dry_run_validated"
       ]
@@ -70,11 +60,6 @@
         "provide_backup",
         "configure_observer_authority",
         "configure_identity",
-        "approve_provider",
-        "correct_permissions",
-        "verify_webhook",
-        "import_signed_bundle",
-        "restore_no_egress",
         "run_dry_run",
         "correct_policy"
       ]
@@ -131,11 +116,6 @@
               "provide_backup",
               "configure_observer_authority",
               "configure_identity",
-              "approve_provider",
-              "correct_permissions",
-              "verify_webhook",
-              "import_signed_bundle",
-              "restore_no_egress",
               "run_dry_run",
               "correct_policy"
             ]
@@ -174,58 +154,6 @@
         "properties": {
           "key": {
             "const": "state_storage_posture_validated"
-          },
-          "state": {
-            "enum": [
-              "blocked",
-              "unavailable"
-            ]
-          }
-        },
-        "required": [
-          "key",
-          "state"
-        ]
-      },
-      "then": {
-        "properties": {
-          "recovery_action": {
-            "const": "configure_dependency"
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "key": {
-            "const": "postgres_storage_validated"
-          },
-          "state": {
-            "enum": [
-              "blocked",
-              "unavailable"
-            ]
-          }
-        },
-        "required": [
-          "key",
-          "state"
-        ]
-      },
-      "then": {
-        "properties": {
-          "recovery_action": {
-            "const": "configure_dependency"
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "key": {
-            "const": "envelope_storage_validated"
           },
           "state": {
             "enum": [
@@ -303,32 +231,6 @@
       "if": {
         "properties": {
           "key": {
-            "const": "secret_backend_validated"
-          },
-          "state": {
-            "enum": [
-              "blocked",
-              "unavailable"
-            ]
-          }
-        },
-        "required": [
-          "key",
-          "state"
-        ]
-      },
-      "then": {
-        "properties": {
-          "recovery_action": {
-            "const": "configure_dependency"
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "key": {
             "const": "local_inference_validated"
           },
           "state": {
@@ -347,188 +249,6 @@
         "properties": {
           "recovery_action": {
             "const": "configure_dependency"
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "key": {
-            "const": "remote_provider_authorized"
-          },
-          "state": {
-            "enum": [
-              "blocked",
-              "unavailable"
-            ]
-          }
-        },
-        "required": [
-          "key",
-          "state"
-        ]
-      },
-      "then": {
-        "properties": {
-          "recovery_action": {
-            "const": "approve_provider"
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "key": {
-            "const": "integration_permissions_validated"
-          },
-          "state": {
-            "enum": [
-              "blocked",
-              "unavailable"
-            ]
-          }
-        },
-        "required": [
-          "key",
-          "state"
-        ]
-      },
-      "then": {
-        "properties": {
-          "recovery_action": {
-            "const": "correct_permissions"
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "key": {
-            "const": "webhook_validated"
-          },
-          "state": {
-            "enum": [
-              "blocked",
-              "unavailable"
-            ]
-          }
-        },
-        "required": [
-          "key",
-          "state"
-        ]
-      },
-      "then": {
-        "properties": {
-          "recovery_action": {
-            "const": "verify_webhook"
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "key": {
-            "const": "shared_rate_limit_validated"
-          },
-          "state": {
-            "enum": [
-              "blocked",
-              "unavailable"
-            ]
-          }
-        },
-        "required": [
-          "key",
-          "state"
-        ]
-      },
-      "then": {
-        "properties": {
-          "recovery_action": {
-            "const": "configure_dependency"
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "key": {
-            "const": "replica_reconciliation_validated"
-          },
-          "state": {
-            "enum": [
-              "blocked",
-              "unavailable"
-            ]
-          }
-        },
-        "required": [
-          "key",
-          "state"
-        ]
-      },
-      "then": {
-        "properties": {
-          "recovery_action": {
-            "const": "configure_dependency"
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "key": {
-            "const": "signed_bundle_validated"
-          },
-          "state": {
-            "enum": [
-              "blocked",
-              "unavailable"
-            ]
-          }
-        },
-        "required": [
-          "key",
-          "state"
-        ]
-      },
-      "then": {
-        "properties": {
-          "recovery_action": {
-            "const": "import_signed_bundle"
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "key": {
-            "const": "no_egress_validated"
-          },
-          "state": {
-            "enum": [
-              "blocked",
-              "unavailable"
-            ]
-          }
-        },
-        "required": [
-          "key",
-          "state"
-        ]
-      },
-      "then": {
-        "properties": {
-          "recovery_action": {
-            "const": "restore_no_egress"
           }
         }
       }

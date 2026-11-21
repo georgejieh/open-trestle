@@ -391,7 +391,7 @@ func TestSetupBootstrapLocalRefusesOllamaCloudModels(t *testing.T) {
 	invoke := func(t *testing.T, args []string, want int) string {
 		t.Helper()
 		var out, errOut bytes.Buffer
-		code := runSetupWithClock(append([]string{"bootstrap"}, args...), &out, &errOut, fixedSetupClock{setupTimeCLI()})
+		code := runSetup(append([]string{"bootstrap"}, args...), &out, &errOut)
 		var result setupBootstrapResult
 		if code != want || json.Unmarshal(out.Bytes(), &result) != nil {
 			t.Fatalf("bootstrap code=%d want=%d out=%s err=%s", code, want, out.String(), errOut.String())

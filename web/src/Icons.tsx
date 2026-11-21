@@ -1,17 +1,12 @@
-import type {
-  RunStatus,
-  RuntimeComponentState,
-  SetupPlan,
-  SetupState,
-  TaskStatus,
-} from "./types";
+import type { RunStatus, RuntimeComponentState, TaskStatus } from "./types";
 
 export type StatusValue =
   | RunStatus
   | RuntimeComponentState
-  | SetupPlan["status"]
-  | SetupState
-  | TaskStatus;
+  | TaskStatus
+  | "incomplete"
+  | "passed"
+  | "unavailable";
 
 type StatusMark =
   | "active"
@@ -29,7 +24,6 @@ type StatusGlyph = { mark: StatusMark; glyph: string };
 const statusGlyphs = {
   active: { mark: "active", glyph: "●" },
   available: { mark: "available", glyph: "◇" },
-  blocked: { mark: "failed", glyph: "×" },
   canceled: { mark: "unavailable", glyph: "−" },
   failed: { mark: "failed", glyph: "×" },
   incomplete: { mark: "incomplete", glyph: "!" },
