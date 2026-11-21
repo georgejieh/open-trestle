@@ -1,6 +1,6 @@
-# OpenAI Responses provider adapter
+# OpenAI-compatible provider adapter
 
-The adapter in `adapters/providers/openai` sends review requests to the [OpenAI Responses API](https://platform.openai.com/docs/api-reference/responses). Its request and response fields follow the official [`openai/openai-openapi`](https://github.com/openai/openai-openapi) contract. This page is for contributors and operators who need to know what the adapter sends, what it accepts back, and which decisions it leaves to the gateway.
+The adapter in `adapters/providers/openai` sends review requests to the [OpenAI Responses API](https://platform.openai.com/docs/api-reference/responses) or to a Chat Completions endpoint (see the [Chat transport](local-model-review.md#chat-completions-transport)). Its Responses fields follow the official [`openai/openai-openapi`](https://github.com/openai/openai-openapi) contract. This page is for contributors and operators who need to know what the adapter sends, what it accepts back, and which decisions it leaves to the gateway.
 
 The adapter implements the gateway's `RouteDispatcher` contract, and it only executes requests. Route policy, provider eligibility, privacy classification, budget reservation and retry decisions stay with the gateway.
 
@@ -78,37 +78,13 @@ The adapter retrieves a credential for each request through `APIKeyProvider`. Ke
 
 ### Failure classes
 
-HTTP failures become gateway classes, and the adapter does not keep the provider's error text. Network ambiguity, server errors, malformed successful responses and timeouts have `outcome_unknown` replay safety, which means the gateway will not retry them automatically. An explicit rate-limit response can carry a bounded `Retry-After` delay. It is marked as having no model side effect and known zero usage. A 503 that names a `Retry-After` in seconds is classified as a rate limit too. A 503 without one, or with an HTTP date or zero, stays `provider_server`.
+HTTP failures become gateway classes, and the adapter does not keep the provider's error text. The status-to-class table, the retry rules and the failure details are in [provider failures](remote-model-review.md#provider-failures). Every request profile, including the OpenCode console, classifies a non-200 status the same way, from the status alone, and the adapter drains and discards the error body.
 
-Every request profile, including the OpenCode console, classifies a non-200 status the same way, from the status alone. The adapter drains the error body unread, so a provider's message does not reach a result, record or log.
+Replay safety tells the gateway whether it may retry. A timeout (408, 504), another 5xx response, a network ambiguity and a 200 reply that the adapter refuses have `outcome_unknown` replay safety, so the gateway does not retry them automatically. Every other class, including `invalid_response` for a non-200 status such as 409, has `no_side_effect` replay safety. A rate-limit response (429, or a 503 that names a `Retry-After` in seconds) carries a bounded `Retry-After` delay and known zero usage. A 503 without one, or with an HTTP date or zero, stays `provider_server`.
 
-| Status | Class | Replay safety |
-|---|---|---|
-| 400, 422 | `request_rejected` (the request is invalid, for example an unknown model ID or a parameter the model or endpoint does not accept) | `no_side_effect` |
-| 401 | `authentication` | `no_side_effect` |
-| 402 | `payment_required` (billing or quota) | `no_side_effect` |
-| 403 | `authorization` | `no_side_effect` |
-| 404 | `model_unavailable` (model or endpoint not served) | `no_side_effect` |
-| 405, 415 | `request_rejected` (the endpoint does not take the method or media type) | `no_side_effect` |
-| 408, 504 | `timeout` | `outcome_unknown` |
-| 410 | `model_retired` | `no_side_effect` |
-| 413 | `budget_exhausted` | `no_side_effect` |
-| 429 | `rate_limited`, with a bounded `Retry-After` and known zero usage | `no_side_effect` |
-| 503 with a `Retry-After` in seconds | `rate_limited`, as 429 | `no_side_effect` |
-| other 5xx | `provider_server` | `outcome_unknown` |
-| any other, for example 409 | `invalid_response` (an unexpected answer) | `no_side_effect` |
+A 200 response that the adapter refuses is `invalid_response`. The adapter refuses a reply that is malformed, truncated, empty or oversized, that is not the strict document described above, or that is a Chat Completions reply with an unrecognized field. For OpenRouter, the unrecognized field check applies to the answer, not to its [routing metadata](openrouter-zdr-profile.md#how-a-reply-is-read).
 
-A 200 response that the adapter refuses is also `invalid_response`, with `outcome_unknown` replay safety. The adapter refuses a reply that is malformed, truncated, empty or oversized, that is not the strict document described above, or that is a Chat Completions reply with an unrecognized field. For OpenRouter, the unrecognized field check applies to the answer, not to its [routing metadata](openrouter-zdr-profile.md#how-a-reply-is-read).
-
-### How the gateway and task handlers respond
-
-`payment_required`, `model_unavailable`, `model_retired` and `request_rejected` are not transient, so the gateway does not retry them. None of them counts as a provider outage.
-
-The model handlers fail the task as a `policy` refusal for each of these four classes, as they do for `authentication` and `authorization`. When the provider answered, they record the matching `provider_*` task failure reason. For a rejected request that reason is `provider_request_rejected`.
-
-A rate limit is handled differently. Open Trestle first retries it on the same route, at most twice inside the task attempt, after the bounded `Retry-After`. Each retry takes over the reservation of the attempt it replaces. The task records `provider_rate_limited` only when every retry is rate-limited too. The local review reports all of these as failure details; see [local model review](local-model-review.md#provider-refusals).
-
-An `invalid_response` after the request was sent keeps the task's `internal` failure and records the `provider_response_invalid` reason and failure detail, so a refused reply is not reported as an internal bug. An `invalid_response` before sending records neither.
+`payment_required`, `model_unavailable`, `model_retired` and `request_rejected` are not transient, so the gateway does not retry them, and none of them counts as a provider outage. The model handlers fail the task as a `policy` refusal for each of these classes, as they do for `authentication` and `authorization`, and record the matching `provider_*` reason. An `invalid_response` after the request was sent keeps the task's `internal` failure and records `provider_response_invalid`. An `invalid_response` before sending records neither.
 
 The adapter makes no request when it is constructed and has no background activity.
 
@@ -129,8 +105,8 @@ A receipt does not authorize dispatch by itself. The proof the handler seals doe
 Generic adapters reject `brokered_remote` and `subscription_oauth`. The closed request profiles add explicitly bound brokered routes:
 
 - the [OpenRouter ZDR Chat profile](openrouter-zdr-profile.md), in runtime policy v3 to v5, and v8 for the current profile
-- the [OpenCode Go profile](opencode-go-profile.md), in v4
-- the [OpenCode Console profile](opencode-console-profile.md), in v5
+- the [OpenCode Go profile](opencode-go-profile.md), in v4 and v5
+- the [OpenCode Console profile](opencode-go-profile.md#opencode-console-profile), in v5
 
 These profiles do not make brokered routes or OAuth generally supported.
 
@@ -138,26 +114,10 @@ During configuration validation, Open Trestle classifies DNS names without resol
 
 ## Sanitized egress boundary
 
-Before either standard model stage is authorized, the host extracts the typed text fields and scans them in the secret scan helper. It replaces reported bytes without changing the byte length or the line breaks. A second scan then checks the projected request. Dispatch is denied unless both scans complete and the second scan finds nothing. Candidate generation and verification are sanitized separately, and verification includes the candidate, source and memory text from its own typed request.
-
-The pinned scanner is Betterleaks v1.8.1, commit `5eab48332cc48565864514e3bc6de89df091a7c4`, with 417 embedded default rules at ruleset identity `27ded783c81940d13c22cc46556a3f8184baf397bff08a69fcfae87991925f42`, RE2, and build profile `public_detect_run_re2_host_go1.26.11_wasip1_wasm_v1`. The scanner runs as a WebAssembly (wasip1) guest in the helper, which uses the wazero runtime and evaluates the guest's regular expressions with RE2.
-
-- Scans write and require only that profile, from a helper whose SHA-256 matches the value pinned into the daemon. A receipt is accepted only for the helper digest that the reading program pins.
-- A scan accepts 1 to 256 UTF-8 fields, with no more than 256 KiB per field and 2 MiB decoded in total.
-- Invalid input, a timeout, cancellation, an incomplete iteration, resource exhaustion, a helper fault, unexpected output or any remaining finding produces no partial success and no remote dispatch.
-
-The scanner output and the durable receipt contain no content. They keep the scanner and helper identities, completion and byte counts, field roles and ordinals, rule IDs, and zero-based half-open byte spans. They do not keep field text, paths, snippets, matched values, source digests, upstream fingerprints or provider error text. The spans reveal the location and length of a match, so limit access to receipts.
-
-### What the scan misses
-
-On the reviewed corpus the scanner found 11 of 14 expected occurrences across 10 of 11 positive files under the pinned profile. The misses were bearer credentials, AWS secret keys and AWS session tokens. One near-miss file produced a `generic-api-key` finding at `[7,51)`, so those bytes are redacted even though the finding is not a true secret.
-
-The scanner does not guarantee that a request contains no secret, and other false negatives and false positives are possible. A remote provider receives the sanitized request.
+Before either standard model stage is authorized, the host scans the typed text fields of the request twice in the secret scan helper. Dispatch is denied unless both scans complete and the second finds nothing. A receipt is accepted only for the helper digest that the reading program pins. The scanner, its pin and its limits are described in [what the scan does](remote-model-review.md#what-the-scan-does).
 
 ### The built-in HTTP client
 
-The built-in HTTP client has an authority identity that Open Trestle derives. It gives each request a deadline of two minutes per 4096 tokens of that request's output allowance, with a minimum of two minutes and a maximum of five minutes (`DefaultClientRequestTimeout`). A 16384-token allowance therefore gets five minutes. A deadline set earlier by the caller still wins.
-
-The client identity is version 3 of `open-trestle/openai-default-http-client`, and it binds the five-minute outer timeout and that rule.
+The built-in HTTP client has an authority identity that Open Trestle derives. Its request deadline depends on the output allowance (see [request deadline](remote-model-review.md#output-allowance-and-request-deadline)), and a deadline set earlier by the caller still wins. The client identity is version 3 of `open-trestle/openai-default-http-client`, and it binds the five-minute outer timeout and that rule.
 
 A caller that supplies its own `http.Client` must provide a non-secret `HTTPClientIdentity`. That client's own timeout applies (two minutes when it sets none), and it is bound separately. Custom transports without an identity are rejected.
