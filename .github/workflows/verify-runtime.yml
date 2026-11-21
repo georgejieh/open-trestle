@@ -398,7 +398,8 @@ jobs:
         run: |
           go test -count=1 -v -run='Escape|Sandbox' ./internal/checksandbox/ | Tee-Object -FilePath "$env:RUNNER_TEMP\escape-tests.txt"
           if ($LASTEXITCODE -ne 0) { exit 1 }
-          if (Select-String -Path "$env:RUNNER_TEMP\escape-tests.txt" -Pattern '--- SKIP' -SimpleMatch) { Write-Error 'an escape test skipped'; exit 1 }
+          # Go cannot run in the Windows sandbox, so its toolchain subtest skips.
+          if (Select-String -Path "$env:RUNNER_TEMP\escape-tests.txt" -Pattern '--- SKIP' -SimpleMatch | Where-Object { $_.Line -notmatch 'TestToolchainsRunInSandbox/go' }) { Write-Error 'an escape test skipped'; exit 1 }
           go test -count=1 -v -run='Toolchains' ./internal/checksandbox/
       - name: Build, vet and test the secret-scanner Windows packages
         working-directory: workers/secret-scanner
