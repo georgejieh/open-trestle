@@ -1965,7 +1965,7 @@ def main() -> int:
         bootstrap_result = json.loads(setup.stdout)
         if bootstrap_result["status"] != "pending" or bootstrap_result["ready"] is not False:
             raise RuntimeError("bootstrap init must leave the setup pending")
-        setup_root = bootstrap_result["plan"]
+        setup_root = bootstrap_result["plan_identity"]
         setup_path = setup_dir / "runs" / "setup" / "plan.json"
         inspect = execute([str(trestle), "setup", "inspect", "--state", str(setup_path), "--expected-root-identity", setup_root])
         write_artifact(artifacts / "setup-plan.json", inspect.stdout)
