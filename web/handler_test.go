@@ -73,7 +73,7 @@ func TestHandlerRedirectsCanonicalConsolePath(t *testing.T) {
 
 func TestHandlerServesHashedAssetsAsImmutable(t *testing.T) {
 	matches, err := fs.Glob(consoleFiles, "dist/assets/*.js")
-	if err != nil || len(matches) != 2 {
+	if err != nil || len(matches) != 1 {
 		t.Fatalf("assets=(%v,%v)", matches, err)
 	}
 	for _, match := range matches {
@@ -92,7 +92,6 @@ func TestHandlerRejectsNonDistributionArtifactsEvenWhenPresent(t *testing.T) {
 		"assets/index-Abc123.js.map":    {Data: []byte("{}")},
 		"assets/notes-Abc123.js":        {Data: []byte("private fixture")},
 		"assets/index.js":               {Data: []byte("private fixture")},
-		"assets/SetupApp.css":           {Data: []byte("private fixture")},
 		"assets/nested/index-Abc123.js": {Data: []byte("private fixture")},
 		"assets/index-link.js":          {Data: []byte("target"), Mode: fs.ModeSymlink},
 		"assets/index-directory.js":     {Mode: fs.ModeDir},
@@ -111,10 +110,9 @@ func TestHandlerRejectsNonDistributionArtifactsEvenWhenPresent(t *testing.T) {
 
 func TestHandlerServesOnlyRegularHashedAssetNames(t *testing.T) {
 	filesystem := fstest.MapFS{
-		"assets/index-Abc_123-.js":    {Data: []byte("export {};")},
-		"assets/SetupApp-Abc_123-.js": {Data: []byte("export {};")},
-		"assets/index-Abc_123-.css":   {Data: []byte("body {}")},
-		"favicon.svg":                 {Data: []byte("<svg></svg>")},
+		"assets/index-Abc_123-.js":  {Data: []byte("export {};")},
+		"assets/index-Abc_123-.css": {Data: []byte("body {}")},
+		"favicon.svg":               {Data: []byte("<svg></svg>")},
 	}
 	handler := &Handler{filesystem: filesystem, assets: http.FileServer(http.FS(filesystem))}
 	for name := range filesystem {
@@ -128,21 +126,6 @@ func TestHandlerServesOnlyRegularHashedAssetNames(t *testing.T) {
 				t.Errorf("HEAD %s returned a body", name)
 			}
 		}
-	}
-}
-
-func TestHandlerServesSetupApplicationWithoutQueryState(t *testing.T) {
-	for _, method := range []string{http.MethodGet, http.MethodHead} {
-		response := httptest.NewRecorder()
-		NewHandler().ServeHTTP(response, httptest.NewRequest(method, "https://trestle.test/console/setup", nil))
-		if response.Code != http.StatusOK || response.Header().Get("Cache-Control") != "no-store" {
-			t.Fatalf("%s=(%d,%q)", method, response.Code, response.Header())
-		}
-	}
-	response := httptest.NewRecorder()
-	NewHandler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "https://trestle.test/console/setup?token=secret", nil))
-	if response.Code != http.StatusBadRequest {
-		t.Fatalf("query=%d", response.Code)
 	}
 }
 

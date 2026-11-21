@@ -14,7 +14,7 @@ import (
 //go:embed dist
 var consoleFiles embed.FS
 
-var consoleAssetName = regexp.MustCompile(`^/console/assets/(index-[A-Za-z0-9_-]+\.(js|css)|SetupApp-[A-Za-z0-9_-]+\.js)$`)
+var consoleAssetName = regexp.MustCompile(`^/console/assets/index-[A-Za-z0-9_-]+\.(js|css)$`)
 
 type Handler struct {
 	filesystem fs.FS
@@ -48,7 +48,7 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	switch {
 	case request.URL.Path == "/console":
 		http.Redirect(writer, request, "/console/", http.StatusPermanentRedirect)
-	case request.URL.Path == "/console/" || request.URL.Path == "/console/setup":
+	case request.URL.Path == "/console/":
 		writer.Header().Set("Cache-Control", "no-store")
 		serveEmbeddedIndex(writer, request)
 	case consoleAssetName.MatchString(request.URL.Path) || request.URL.Path == "/console/favicon.svg" || request.URL.Path == "/console/not-found.css":
