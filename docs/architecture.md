@@ -17,7 +17,7 @@ GitHub webhook, CLI daemon submission, MCP plan submission, or the CLI direct re
   -> verified webhook ingress, authenticated daemon API, or in-process direct session
   -> versioned review run plan
   -> immutable review snapshot
-  -> repository and change-impact data
+  -> repository index, change-impact data and, with consent, repository checks
   -> one built-in deterministic check and model review (the finder)
   -> verification (a different model)
   -> deterministic judgement: dedupe, rank, pre-existing class, advisory (direct path)
@@ -27,12 +27,18 @@ GitHub webhook, CLI daemon submission, MCP plan submission, or the CLI direct re
 
 There are two ways to run this flow.
 
-- The direct path is `trestle local-git model-review`, which `trestle review` and the first review in `trestle init` also run. It executes the review task graph inside the `trestle` process with process-private stores and keeps nothing afterwards.
+- The direct path is `trestle local-git model-review`, which `trestle review` and the first review in `trestle init` also run. It executes the review task graph inside the `trestle` process with process-private stores. It keeps the repository index on disk for later reviews, and the `review` and `init` wrappers also keep last-review metadata.
 - The daemon path runs the same handlers inside `trestled` with durable runs. The GitHub webhook planner, `trestle local-git submit-review`, `trestle runs submit` and the MCP `open_trestle.submit_run` tool submit reviews to it.
 
 The TUI, `trestle lsp` and the VS Code extension, the web console and ACP observe one daemon run. They cannot start a review. On both paths the runtime, not the surface, owns authorization, policy, provider routing, execution safety, evidence retention and audit receipts.
 
-Today the deterministic analysis stage runs one built-in rule (`static_debug_output`) and the Go semantic-impact profile. Analyzer adapters that policy approves, such as linters and static analysis, are planned (see the [roadmap](roadmap.md)).
+A direct review prepares its context before any model call:
+
+- It builds the [repository index](repository-index.md) of the base and head commits. The index holds the syntax analysis of each file (13 languages, see [syntax analysis](syntax-analysis.md)) and supplies the enclosing definitions, callers, tests and a ranked repository map.
+- With your consent, it runs the repository's own tests in a sandbox (see [repository checks](repository-checks.md)).
+- It runs the built-in rule `static_debug_output` and the Go semantic-impact profile, and computes pattern hygiene and style detection.
+
+Analyzer adapters that policy approves, such as linters and static analysis, are planned (see the [roadmap](roadmap.md)).
 
 After verification, a direct review runs a deterministic judge stage in the `localreview` package. No model takes part in it. The judge does three things:
 
@@ -50,7 +56,7 @@ The review ledger records the immutable snapshot identity, source ranges, policy
 
 ### Semantic impact evidence
 
-The runtime builds semantic impact profiles from approved language adapters, and each profile is tied to one snapshot. The Go adapter and the deterministic analysis handler record changed declarations, public API changes, name-based reference candidates and affected-test candidates. They also record explicit gaps in parsing, language support, source and resources. A profile names the exact base and head snapshots, the change model, the digests of the input files, the adapter identity, the graph schema, the evidence grades and the declared coverage.
+The runtime builds semantic impact profiles from approved language adapters, and each profile is tied to one snapshot. The Go adapter and the deterministic analysis handler record changed declarations and public API changes. They also record explicit gaps in parsing, language support, source and resources. A profile names the exact base and head snapshots, the change model, the digests of the input files, the adapter identity, the graph schema, the evidence grades and the declared coverage.
 
 Each element carries an evidence grade. Two grades exist today:
 
@@ -76,7 +82,7 @@ An acquired review snapshot records the exact repository, the base and head revi
 
 Every model request has a policy envelope. The envelope holds the tenant and repository scope, the privacy classification, the permitted provider zones, the required capabilities, the time and cost budgets and the logging rules. A local-only request cannot silently fall back to a remote route.
 
-Standard candidate-generation and verification requests may use an approved `private_remote` route only after the host sanitizes every typed text field. The sanitizer runs a pinned Betterleaks v1.8.1 profile and masks each reported zero-based half-open byte span. It then scans the result again in a fresh child process. Dispatch requires the second (residual) scan to finish with no findings. Investigation requests and investigation tool results stay local-only.
+Standard candidate-generation and verification requests may use an approved `private_remote` route only after the host sanitizes every typed text field. The sanitizer runs a pinned Betterleaks v1.8.1 profile and masks each reported zero-based half-open byte span. It then scans the result again in the same helper session. Dispatch requires the second (residual) scan to finish with no findings. Investigation requests and investigation tool results stay local-only.
 
 The sanitized request and its egress receipt are immutable artifacts. The egress receipt records which request left the host and how it was scanned. It binds these values:
 
@@ -95,9 +101,13 @@ The boundary accepts at most 256 UTF-8 fields and 2 MiB decoded in total. Any of
 
 This is a narrow confidentiality control, not full secret detection, and the sanitized text still leaves the host for a remote route. For what the scanner misses, see [privacy](privacy.md) and the scanner section of [operations](operations.md).
 
+### Route capacity authority
+
+A route is eligible only when its approved capabilities satisfy both the policy minimums and the full authorized request envelope. `max_output_tokens` cannot exceed the route's output capacity, and `estimated_input_tokens + max_output_tokens` cannot exceed its context capacity. These checks run before ranking and are validated again on both the eligibility result and the content-free selection receipt. Selection candidate scores keep the approved context and output capacities, so receipt validation does not depend on a registry that may change.
+
 ### Execution
 
-Repository files, issue text, CI definitions, logs, analyzer output and model output are treated as data, not instructions (see the [prompt-injection boundary](prompt-injection-boundary.md)). Commands come only from versioned adapters with a narrow argument grammar. Dynamic validation is off by default. It needs authorization, a permitted target, isolated execution, resource limits, default-deny networking and a durable receipt.
+Repository files, issue text, CI definitions, logs, analyzer output and model output are treated as data, not instructions (see the [prompt-injection boundary](prompt-injection-boundary.md)). Commands come only from versioned adapters with a narrow argument grammar. Running repository code is off by default. The repository checks run a fixed set of test commands, only after you consent, in a sandbox with no network and with resource limits (see [repository checks](repository-checks.md)). Nothing else in the repository runs.
 
 Read-only evidence work may share immutable, content-addressed artifacts across analyzers and review workers. Cache keys include the snapshot, adapter version, policy version and request parameters. Candidate generation and verification do not rely on another worker's conversational summary. Restartable execution records capture the state of intake, snapshot capture, evidence acquisition, analysis, candidate generation and verification.
 
@@ -121,9 +131,7 @@ Results show a human-facing review disposition next to the coverage: verified bl
 
 The setup core turns the deployment posture and readiness checks into a versioned, resumable plan that holds no secrets. The plan comes with an immutable checker catalog and a replayable receipt ledger.
 
-The CLI initializes and inspects protected state, validates local storage and the posture of observer credentials, requires exact runtime policy identities and a named approval, and runs a bounded, provider-neutral dry run with no network authority. A loopback-only guided web service and a keyboard-first terminal workflow use the same plan and receipt contracts.
-
-The setup surfaces use secure defaults, show the consequence of less-safe choices, keep recovery state and remain usable over SSH.
+The CLI initializes and inspects protected state, validates local storage and the posture of observer credentials, requires exact runtime policy identities and a named approval, and runs a bounded, provider-neutral dry run with no network authority. `trestle init` and `trestle setup bootstrap` are the setup surfaces. They use secure defaults, show the consequence of less-safe choices, keep recovery state and remain usable over SSH.
 
 ## Integration model
 
@@ -160,18 +168,14 @@ Keep the historical-packet startup refusal and the prepared-to-success refusal u
 
 The deployment architecture uses a trusted control plane with local state, content-free task notifications, policy evaluation and scoped remote workers. The trusted CLI, snapshot, receipt, daemon, control-plane and remote-worker boundaries are implemented in Go.
 
-The following parts are planned design with no code, manifests or charts in the tree: OpenTelemetry observability, isolated sandbox runners, a Docker Compose profile for a single operator, and Helm charts or Kubernetes manifests for larger installations (see the [roadmap](roadmap.md)). None of this is a released deployment. Today only Linux amd64 has a tested path, and remote model providers work only with the packaged Linux amd64 install (see [platforms](platforms.md)). Support for macOS and Windows is planned for the first release.
+The following parts are planned design with no code, manifests or charts in the tree: OpenTelemetry observability, a Docker Compose profile for a single operator, and Helm charts or Kubernetes manifests for larger installations. None of this is a released deployment. The check sandbox for repository tests exists for Linux, Windows and macOS. Linux and Windows are tested, remote model providers work with any build that has its secret scan helper, and the packaged install is Linux amd64 only (see [platforms](platforms.md)).
 
 ## Non-goals
 
 Open Trestle does not aim to provide:
 
 - hidden provider fallback for restricted repositories;
-- arbitrary repository-command execution;
+- running repository commands other than the fixed test commands of the repository checks;
 - source mutation, merge, deployment or external reporting by default;
 - unrestricted third-party plugins;
 - dynamic testing of public, third-party or unspecified targets.
-
-### Route capacity authority
-
-A route is eligible only when its approved capabilities satisfy both the policy minimums and the full authorized request envelope. `max_output_tokens` cannot exceed the route's output capacity, and `estimated_input_tokens + max_output_tokens` cannot exceed its context capacity. These checks run before ranking and are validated again on both the eligibility result and the content-free selection receipt. Selection candidate scores keep the approved context and output capacities, so receipt validation does not depend on a registry that may change.

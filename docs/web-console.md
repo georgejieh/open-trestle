@@ -24,11 +24,9 @@ The browser client rejects invalid scopes, unsafe tokens, redirects, unexpected 
 
 It streams response bodies through a counter that allows a 1 MiB payload plus 4 KiB of API framing, and it cancels on overflow before the whole body is buffered. Its requests use no-store caching and omit ambient credentials, and it applies a 15-second timeout. Repository and diagnostic text is rendered only through React text nodes.
 
-
-
 ## Views
 
-A shortened visual identity includes the full digest as assistive text and in the accessible name of the copy action. A missing diagnostic set is labeled `n/a`, not zero.
+A shortened identity includes the full digest as assistive text and in the accessible name of the copy action. A missing diagnostic set is labeled `n/a`, not zero.
 
 ### Overview
 
@@ -44,19 +42,11 @@ The console accepts three receipt versions and refuses a receipt whose version d
 - Version 2, which adds a linked context abstention.
 - Version 3, which adds a source failure reason on source acquisition, a context route refusal on context assembly, or a provider refusal on candidate generation or verification.
 
-A provider refusal shows a label, the explanation and a `Hint` with the same action as the local review. The console accepts these refusals, each paired with a failure kind. A refusal with any other failure, or on any other task kind, is rejected.
+A provider refusal shows a label, the explanation and a `Hint` with the same action as the local review. The console accepts these refusals, each paired with a failure kind, and rejects a refusal with any other failure or on any other task kind:
 
-| Refusal | Failure | Label (where this page names one) |
-| --- | --- | --- |
-| `provider_payment_required` | `policy` | none named |
-| `provider_model_unavailable` | `policy` | none named |
-| `provider_model_retired` | `policy` | none named |
-| `provider_authentication_failed` | `policy` | none named |
-| `provider_authorization_denied` | `policy` | none named |
-| `provider_request_rejected` | `policy` | Provider request rejected |
-| `provider_rate_limited` | `transient` | none named |
-| `provider_response_invalid` | `internal` | Provider reply refused |
-| `model_output_invalid` | `internal` | Model answer not a review document |
+- `policy`: `provider_payment_required`, `provider_model_unavailable`, `provider_model_retired`, `provider_authentication_failed`, `provider_authorization_denied` and `provider_request_rejected` (labeled Provider request rejected).
+- `transient`: `provider_rate_limited`.
+- `internal`: `provider_response_invalid` (labeled Provider reply refused) and `model_output_invalid` (labeled Model answer not a review document).
 
 A `route_context_insufficient` refusal carries its token counts. It shows the same hint as the local review: the required, input, output and declared counts, and the context length to raise. A `no_eligible_route` refusal carries no counts.
 
@@ -64,13 +54,13 @@ When a run is not found, the console reads the scope's delivery refusal (`GET ..
 
 ### Runtime
 
-The runtime view shows the storage posture for the repository, the configuration identities that are not secret, the handler bindings with controls to copy their full values, and whether the supervised services are ready. A token without runtime access does not block the run or diagnostics views.
+The runtime view shows the local storage and artifact protection posture for the repository, the configuration identities that are not secret, the handler bindings with controls to copy their full values, and whether the supervised services are ready. A token without runtime access does not block the run or diagnostics views.
 
 ### Review
 
 The review view is a queue for human review. How it presents a result depends on the diagnostic-set version.
 
-For versions 1 through 5, the verified finding totals stay separate from the outcomes of deterministic checks:
+For versions 1 through 5 and 8, the verified finding totals stay separate from the outcomes of deterministic checks:
 
 - Version 2 also shows the exact counts of accepted, verified, rejected and
   inconclusive candidates. The console calls accepted candidates admitted
@@ -78,6 +68,7 @@ For versions 1 through 5, the verified finding totals stay separate from the out
 - Version 3 ties in the validated verification-context identity. It adds counts of analyzed, selected and omitted sources.
 - Version 4 adds sorted reasons for omissions, as aggregates that contain no content.
 - Version 5 adds one deterministic static-debug check that contains no content, with lineage to the analysis and the change.
+- Version 8 is version 5 plus findings on removed base lines. The console shows such a finding with its path and the removed base line range instead of head lines.
 
 The check appears as a `Cleared gate`, `Failed check`, `Incomplete check` or `Abstention`. Only a pass with full coverage and zero matches counts as cleared, and only for that rule. Not applicable means that no changed Go range could be checked, and it does not clear the rule. The console does not present rejected candidates as cleared deterministic gates. It labels any inconclusive candidate or omitted source count as incomplete. Source counts and reasons do not claim coverage of the whole repository and do not expose paths.
 
@@ -120,7 +111,7 @@ CI snapshots the checked-out `web/dist` directory before rebuilding, and then co
 
 `npm run visual --prefix web` starts a temporary loopback fixture server and launches the installed Chromium binary. It captures desktop and narrow-screen screenshots of the review screens, checks for browser console errors and horizontal overflow, and then shuts everything down. It does not contact a daemon or any external service.
 
-The packaged system driver runs `web/scripts/daemon-visual-check.mjs` against the real daemon, both before shutdown and after a restart. Each phase receipt records the run, the diagnostic set, the identity and state of the deterministic check, the observation identities, the viewport, the PNG image dimensions and digest, the counts of console errors and egress, overflow, keyboard focus, reduced motion and the floor on tap-target size. The Python driver validates the receipt contract and the metrics, parses the PNG signatures, chunks, CRCs, IHDR dimensions and the IDAT and IEND structure, and rehashes every receipt and screenshot from disk. Fixture screenshots do not substitute for these phases.
+The packaged system driver runs `web/scripts/daemon-visual-check.mjs` against the real daemon before shutdown and after a restart, and its receipts record the run, the diagnostic set, the deterministic check, the viewport, the screenshot digest and the accessibility measurements.
 
 ### Distribution limits
 

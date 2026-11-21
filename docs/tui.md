@@ -2,7 +2,7 @@
 
 `trestle tui` is a terminal screen for watching one review run through the
 authenticated daemon API. It is for operators who run the daemon and want to see
-a run's progress, its task state and its review diagnostics. It shows the run receipt, task state, and review diagnostics. Diagnostic versions 1 through 5 contain verified findings, and version 6 contains unverified deterministic observations. The interface does not schedule work, read repository files, execute commands, claim work leases, change policy, invoke models, or publish results.
+a run's progress, its task state and its review diagnostics. It shows the run receipt, task state, and review diagnostics. Diagnostic versions 1 through 5 and 8 contain verified findings, version 6 contains unverified deterministic observations, and version 7 is the final full-review result. The interface does not schedule work, read repository files, execute commands, claim work leases, change policy, invoke models, or publish results.
 
 ## Start
 
@@ -95,6 +95,8 @@ The diagnostics depend on the diagnostic-set version:
   `Incomplete check` or `Abstention`, followed by checked and applicable
   changed-Go-range counts and the matches.
 - Version 6 prints the deterministic check and its observations. It labels them as not verified and does not count them as verified findings.
+- Version 7 prints the terminal outcome and the deterministic and verified parts it carries, each with the lines of its own version.
+- Version 8 prints like version 5. A finding on removed base lines shows its path and `removed base lines` with the base line range.
 
 Only `passed` is called cleared, and only for that rule. A not-applicable
 result is shown as an abstention: no changed Go range was applicable, and the rule

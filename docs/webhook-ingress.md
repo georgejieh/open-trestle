@@ -10,7 +10,7 @@ Webhook ingress is how a GitHub pull-request event becomes a review run in the d
 
 ## GitHub boundary
 
-The GitHub adapter follows GitHub's current guidance:
+The GitHub adapter follows GitHub's webhook guidance:
 
 - It accepts only `X-Hub-Signature-256` using HMAC-SHA-256.
 - It compares signatures in constant time.
@@ -89,7 +89,7 @@ The executable planner creates two separate root tasks, `source-base` and `sourc
 - The protection mode.
 - The retention time.
 
-The `source-head` input (source input v1) names `pull_request.head.sha`. The `source-base` input (source input v3) names `pull_request.base.sha` as the requested base and `pull_request.head.sha` as the head, and it authorizes acquisition of their merge base. GitHub presents a pull request as `merge-base...head`, and `base.sha` is the tip of the base branch when the event fired. The source task resolves and records the merge base; see [source acquisition](source-acquisition-handler.md#merge-base-inputs). Base and head must use one object format. If the base and head commits are equal, the planner still plans the run, and the run records `nothing_to_review` as the source task's reason. The `change` task depends on both source snapshots succeeding. The recipes of later tasks bind the payload digest, the pull-request number, the base and head object IDs, the task kind and the identities of the tasks they depend on.
+The `source-head` input (source input v1) names `pull_request.head.sha`. The `source-base` input (source input v3) names `pull_request.base.sha` as the requested base and `pull_request.head.sha` as the head, and it authorizes acquisition of their merge base. GitHub presents a pull request as `merge-base...head`, and `base.sha` is the tip of the base branch when the event fired. The source task resolves and records the merge base; see [source acquisition](runtime.md#merge-base-inputs). Base and head must use one object format. If the base and head commits are equal, the planner still plans the run, and the run records `nothing_to_review` as the source task's reason. The `change` task depends on both source snapshots succeeding. The recipes of later tasks bind the payload digest, the pull-request number, the base and head object IDs, the task kind and the identities of the tasks they depend on.
 
 ### Planner versions
 

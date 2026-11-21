@@ -30,11 +30,4 @@ The server offers two tools. Both are described by JSON Schema. Both return the 
 
 The server does not expose credentials, raw lease capabilities, source files, arbitrary filesystem reads, shell execution, policy changes, provider selection overrides or publication. Repository strings and the receipt text it returns are treated as data; see the [prompt-injection boundary](prompt-injection-boundary.md). Tool annotations are hints that help a host ask for confirmation. They do not replace the daemon's own authorization.
 
-## Sources
-
-The implementation follows the MCP `2026-07-28` specification and TypeScript schema:
-
-- https://modelcontextprotocol.io/specification/2026-07-28
-- https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/stdio
-- https://modelcontextprotocol.io/specification/2026-07-28/server/tools
-- https://github.com/modelcontextprotocol/specification/blob/main/schema/2026-07-28/schema.ts
+The implementation follows the [MCP `2026-07-28` specification](https://modelcontextprotocol.io/specification/2026-07-28).

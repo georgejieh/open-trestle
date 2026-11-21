@@ -1,6 +1,6 @@
 # Operations and recovery
 
-This page is for operators who build, package, install and recover Open Trestle. It covers building from source, the Linux amd64 install package and its lifecycle commands, the secret scan helper, backup and restore, and shutdown. Most sections are numbered procedures.
+This page is for operators who build, package, install and recover Open Trestle and who run the local daemon, `trestled`. It covers building from source, the secret scan helper, the Linux amd64 install package and its lifecycle commands, release evidence, runtime configuration checks, backup and restore, shutdown and health.
 
 ## Build
 
@@ -16,79 +16,21 @@ GOWORK=off GOTOOLCHAIN=go1.26.11 go test ./...
 )
 ```
 
-## Local evaluation evidence boundary
-
-`tools/local_alpha_system.py` is a driver that records the results of a local build for evaluation. It is not a deployment profile.
-
-### What the driver accepts
-
-The driver must run from a source checkout that is not bare. The checkout's Git top level must equal the resolved source root, and the unreplaced `HEAD` commit and tree define what the checkout contains.
-
-The driver rejects all of these:
-
-- Replacement refs.
-- Grafts, whether common or per worktree.
-- Redirected worktrees.
-- Environment overrides of Git authority.
-- Alternate objects.
-- Symlinked Git control, object or ref storage.
-
-The local alpha does not support reftable reference storage or split indexes. Both fail before the driver produces output or runs a candidate. A legitimate linked worktree is accepted only when its effective top level, and its per-worktree and common Git controls, validate against the source root.
-
-Tracked paths must match the `HEAD` tree in object type, executable bit, file bytes and symlink targets. The driver reads the Git tree and index state without refreshing the index. Before it creates the evidence directory or copies a candidate, it rejects any of these:
-
-- Staged or unresolved entries.
-- Hidden index flags.
-- Unsupported or sparse entries.
-- Untracked paths that are not ignored.
-
-Ignored paths may exist, but they must stay stable throughout the run.
-
-### How the driver seals its inputs
-
-The driver takes the browser script and the local contract from the `HEAD` blobs. It copies the pinned Playwright payload into the browser sandbox that the output owns, and it hashes the payload again before it runs anything.
-
-It inspects the candidate manifest and the archive digest without executing anything. They must match the source revision and the detached checksum before any output is created. The driver then copies the bytes it inspected into the sandbox and validates them again before `verify-archive`.
-
-### What the visual evidence covers
-
-The production console recomputes the Runtime identities with browser WebCrypto before it displays them. Each visual phase receipt binds these things:
-
-- The authenticated runtime-status response that the console displays.
-- The matching values in the DOM.
-- The Runtime screenshot.
-- An immediate, bounded reread after the capture.
-
-Every fetch of identity data rejects redirects, requires the canonical final endpoint, has a total deadline, and limits streamed bytes. Configuration and component semantics must survive a restart.
-
-All of this output is unsigned and local. It does not show that the build is ready for production.
-
 ### Build information
 
-Both `trestle build-info` and `trestled build-info` print the same version-1 JSON contract about the source: the program name, `source_revision`, `source_tree` and `source_bound`. They do not start a daemon or read route credentials. Ordinary development builds report empty source identities and `source_bound: false`.
+`trestle build-info` and `trestled build-info` print the same JSON about the source: the program name, `source_revision`, `source_tree` and `source_bound`. They start no daemon and read no credentials. Ordinary development builds report empty source identities and `source_bound: false`.
 
-Protected packaging requires clean, committed source. The source verifier must pass for `HEAD`, the index, the tracked bytes and modes, the index flags and the Git configuration. Packaging then does the following:
-
-- It derives the revision and the tree from that check.
-- It injects them into both product binaries.
-- It runs each `build-info` command and compares the metadata.
-- It checks the tracked source again before it accepts the staging tree.
-
-`--verify` also checks the metadata of the staged product against the current clean source. Run packaging from a clean checkout and keep custom staging outputs ignored.
-
-Root product builds ignore the Go environment files, `GOFLAGS` and `GOEXPERIMENT`, and keep the pinned toolchain and the fixed build flags.
-
-The embedded identities describe a local build. They are not a publisher's signature or a remote attestation. In the final artifact verification, compare the revision that the archive declares with the metadata of the installed binary.
+Protected packaging requires clean, committed source. It derives the revision and tree from `HEAD`, injects them into both product binaries, runs each `build-info` command and compares the result. `--verify` also checks the staged product against the current clean source. Root product builds ignore Go environment files, `GOFLAGS` and `GOEXPERIMENT`. The embedded identities describe a local build and are not a publisher's signature.
 
 ## Package the secret scanner
 
-A normal root `go build` pins no scan helper. Such a `trestle` or `trestled` build refuses every review with `this build pins no secret scan helper; build it with tools/package_secret_scanner.py`. To build a working copy for development on Linux, macOS or Windows (needs Go 1.26.11 and Python 3), use the tool's development mode:
+A normal root `go build` pins no scan helper. Such a `trestle` or `trestled` refuses every review that sends a request to a model, with `this build pins no secret scan helper; build trestle with its helper by python3 tools/package_secret_scanner.py --development DIR`. To build a working copy on Linux, macOS or Windows (needs Go 1.26.11 and Python 3), use development mode:
 
 ```sh
 python3 tools/package_secret_scanner.py --development DIR [--target GOOS/GOARCH]
 ```
 
-`DIR` is relative to the current directory, and the default target is the machine you run it on. The tool writes `DIR/bin/trestle`, `DIR/bin/trestled` and `DIR/libexec/open-trestle/open-trestle-scan-helper` (`.exe` names for Windows) with the helper pinned. Run `DIR/bin/trestle`.
+`DIR` is relative to the current directory, and the default target is the machine you run it on. The tool writes `DIR/bin/trestle`, `DIR/bin/trestled` and `DIR/libexec/open-trestle/open-trestle-scan-helper` (`.exe` names on Windows) with the helper pinned. Run `DIR/bin/trestle`.
 
 To build the release staging tree, use the output mode:
 
@@ -98,29 +40,29 @@ python3 tools/package_secret_scanner.py --verify .container
 docker build --network=none -t open-trestle:local .
 ```
 
-The output mode builds the helper twice and requires byte-identical results. It builds `trestle` and `trestled` with the helper's SHA-256 pinned (`-X github.com/georgejieh/open-trestle/internal/secretscan.expectedHelperSHA256=<hex>`), and it stages the helper at `libexec/open-trestle/open-trestle-scan-helper`. It writes two release files:
+The output mode builds the helper twice and requires byte-identical results. It builds `trestle` and `trestled` with the helper's SHA-256 pinned, stages the helper at `libexec/open-trestle/open-trestle-scan-helper` and writes `release/secret-scanner-release.json` (digests, target, toolchain, build flags, linked modules and patched dependencies) and `release/secret-scanner.spdx.json`. `--verify` checks a staging tree against those files.
 
-- `release/secret-scanner-release.json`: the helper SHA-256, the guest SHA-256, the target, the toolchain, the build flags, the linked modules of the helper and of the guest, and the patched Betterleaks and tiktoken-go copies with their patch SHA-256.
-- `release/secret-scanner.spdx.json`: the SPDX inventory.
+The `Dockerfile` copies the staging tree into a scratch image that runs `trestled` as UID and GID 65532 and declares port 8741. `trestled` listens on `127.0.0.1:8741` unless `--listen` names another address, so the port is reachable only inside the container. A non-loopback address such as `0.0.0.0:8741` requires `--tls-cert` and `--tls-key`. Local review mode (`--local-full-review`) requires a loopback address.
 
-`--verify` checks a staging tree against those files. Reproducible builds were confirmed for Linux, macOS and Windows on amd64 and arm64.
+Mount a writable volume at `/var/lib/open-trestle`, owned by UID 65532 with mode `0700`. The image sets `XDG_CACHE_HOME=/var/lib/open-trestle/cache`, so the scanner keeps its compile cache there. Put `--state-dir` in another folder of the volume, such as `/var/lib/open-trestle/state`. Supply the route inventory and runtime policy through read-only mounts and credentials through environment variables, and do not bake them into an image. If the scanner cannot be used, `trestled` says why at start and refuses every request to a model.
 
-The included `Dockerfile` copies that staging tree into a scratch image that has no registry base. The image runs `trestled` as UID and GID 65532. It declares port 8741, the daemon's default. `trestled` listens on `127.0.0.1:8741` unless `--listen` names another address, so the port is reachable only inside the container. A non-loopback address such as `0.0.0.0:8741` requires `--tls-cert` and `--tls-key`. Local review mode (`--local-full-review`) requires a loopback address.
+### Secret-scanner runtime boundary
 
-Mount a writable volume at `/var/lib/open-trestle`, owned by UID 65532 with mode `0700`. The image sets `XDG_CACHE_HOME=/var/lib/open-trestle/cache`, so the secret scanner keeps its compile cache there; put `--state-dir` in another folder of the volume, such as `/var/lib/open-trestle/state`. If the scanner cannot be used, `trestled` says why at start and refuses every request to a model.
+The scanner is Betterleaks v1.8.1 running in a WebAssembly (wasip1) guest. The helper executes the guest with the wazero runtime and evaluates its regular expressions with RE2.
 
-Supply the route inventory and runtime policy through read-only mounts, and supply credentials through environment variables. Do not bake route inventories, policies, tokens or key material into an image. The image includes the project license, NOTICE, the license texts of the runtime third-party components and the scanner release evidence.
+The helper is at `<folder of the trestle program>/../libexec/open-trestle/open-trestle-scan-helper` (`.exe` on Windows). The Linux package installs `/usr/local/libexec/open-trestle/open-trestle-scan-helper` as a root-owned `0555` file next to `/usr/local/bin/trestle`. Before each start the program checks that the helper is not writable, is owned by you or root (on Windows, by you or a system account) and matches the pinned SHA-256. A missing or changed helper refuses the review with a message, and nothing is sent.
+
+`trestle review` and `trestle local-git model-review` run one helper process per review run, and each specialist member of a review set has its own. `trestled` runs each sanitization in a helper session of its own. A sanitization scans the request, then scans the masked request, which must be clean. Generation and verification sanitize separately.
+
+The cache is at `$XDG_CACHE_HOME/open-trestle/scan-cache/` when `XDG_CACHE_HOME` is an absolute path, otherwise `~/.cache/open-trestle/scan-cache/` (on Windows `%USERPROFILE%\.cache\open-trestle\scan-cache`). It holds the compiled guest and RE2 module, about 110 MB, and it must be private: owned by you, mode `0700`, with every folder above it changeable only by you or root. On Windows it needs an owner-only access control list. On macOS it must also carry no ACL entry, and a cache with one is refused with a message that tells you to remove it with `chmod -N`. The first review fills the cache and prints `Preparing the secret scanner for first use; this can take a minute.` and `trestled` fills it at start. Deleting the folder is safe.
+
+A request frame holds 1 to 256 UTF-8 fields of at most 256 KiB each and 2 MiB in total. Request frames are capped at 3 MiB, response frames at 4 MiB, and a complete response at 8,192 findings. A limit, timeout, cancellation, nonzero exit, any byte on stderr, malformed or extra output, an incomplete scan or a finding left in the residual scan discards all matches and blocks dispatch. A secret is masked, and if the scan cannot complete the request is refused and nothing is sent.
+
+The scanner keeps only closed failure classes, scanner and build-profile identities, the helper digest, durations, counts of fields, bytes and matches, receipt identities, rule IDs and zero-based half-open byte spans. The helper writes protocol data only to stdout and keeps stderr empty. The program does not log frames, source bytes, matched values or upstream errors. A span still shows the location and length of a suspected secret, so restrict access to receipts, audit and metrics to the review scope.
 
 ## Build and inspect the unsigned Linux amd64 candidate
 
-The candidate is an installable package for Linux amd64. It is a Python zip application with a detached SHA-256 file. It has no signature. Run the candidate builder only after `package_secret_scanner.py --verify` and the [passive vulnerability gate](vulnerability-gate.md) have produced the fixed `.container` inventory. The builder refuses a staging tree that lacks the gate's `release/vulnerability-scan.json`.
-
-To build the candidate and check it:
-
-1. Run the vulnerability gate on the staging tree.
-2. Set the revision and the creation time from the commit.
-3. Build the archive.
-4. Check the archive against its sidecar and then verify its contents.
+The candidate is an installable package for Linux amd64: a Python zip application with a detached SHA-256 file. The builder does not sign it. Release signing is a separate offline step, and `trestle update` verifies the `.sig`; see [updates](updates.md#signing-a-release). Run the builder after `package_secret_scanner.py --verify` and the [vulnerability gate](vulnerability-gate.md) have produced the `.container` inventory. It refuses a staging tree that lacks `release/vulnerability-scan.json`.
 
 ```sh
 python3 tools/vulnerability_gate.py --staging .container
@@ -136,20 +78,9 @@ sha256sum -c open-trestle-linux-amd64.pyz.sha256
 ./open-trestle-linux-amd64.pyz verify-archive
 ```
 
-The builder uses only the standard library. It writes an executable Python zip application and a detached SHA-256 file. Every member uses `ZIP_STORED`, fixed Unix metadata and a fixed timestamp. The manifest records each install path, source identity, mode, size, digest and ELF role.
+The builder uses only the standard library. Every member uses `ZIP_STORED`, fixed Unix metadata and a fixed timestamp, and the manifest records each install path, source identity, mode, size, digest and ELF role. It never replaces an existing output or sidecar, so build into a directory that only you control.
 
-### What the package contains
-
-The input inventory contains:
-
-- `trestle` and `trestled`.
-- The secret scan helper.
-- The manual model-catalog wrapper.
-- The project LICENSE and NOTICE.
-- All reviewed runtime license files.
-- The three scanner release-evidence files.
-
-Manifest version 2 requires `scripts/model_catalog.py` as data that is not executable, with mode `0444`. It is installed at `/usr/local/share/open-trestle/scripts/model_catalog.py`. Run it with Python:
+The package contains `trestle`, `trestled`, the scan helper, the model-catalog wrapper `scripts/model_catalog.py` (installed at `/usr/local/share/open-trestle/scripts/model_catalog.py`, mode `0444`, run with Python), the project LICENSE and NOTICE, the reviewed runtime license files and the three scanner release-evidence files. The staging tree also holds `ca-certificates.crt`, which the Dockerfile copies into the image. The installed payload does not include it, an empty data directory, source, tests or build tools. The wrapper calls the installed CLI and does not download or run models:
 
 ```sh
 python3 /usr/local/share/open-trestle/scripts/model_catalog.py \
@@ -158,23 +89,11 @@ python3 /usr/local/share/open-trestle/scripts/model_catalog.py \
   --proposal /private/model-proposal.json
 ```
 
-The wrapper calls the installed CLI. It does not download or run models.
+The sidecar checks integrity, not authenticity. Get the expected digest through a separate trusted channel and run `sha256sum -c` before you run the pyz, because `verify-archive` already executes the lifecycle code embedded in the archive.
 
-The lifecycle validator still accepts manifest-version-1 archives, which have no wrapper, so a new candidate can validate its older predecessor and restore it. Use the new candidate to upgrade, because an older embedded lifecycle cannot parse version 2.
+## Candidate lifecycle
 
-The package does not include the CA bundle, an empty data directory, source, tests, private references or build tools. The build stops on inputs that are unexpected, missing, symlinked, in the wrong mode, changing, not amd64 or dynamically linked. It never replaces an existing output or sidecar path. Build into a directory that only the invoking account controls. CI builds the pair twice in separate locations and compares both byte for byte.
-
-### What the checksum proves
-
-The sidecar checks integrity, not authenticity. Get the expected digest through a separate trusted channel, and run `sha256sum -c` before you run the pyz. Running `verify-archive` already executes the lifecycle code embedded in the archive. The candidate has no signature and no production support.
-
-### Candidate lifecycle
-
-The lifecycle commands install, verify, upgrade, roll back, recover and remove the package. Commands for production mode omit `--destdir`. They require an effective UID of 0 and install below `/usr/local`. They require ancestors that root owns and that group and world cannot write, and they preserve root:root ownership.
-
-CI may instead prefix the install paths with an absolute, existing `--destdir` that is not a symlink and is not `/`. Destdir mode is not a production installation.
-
-Lifecycle transactions require exclusive control of the paths they manage. In production mode, root ownership and ancestors that nobody else can write enforce that against writers that are not root.
+The lifecycle commands install, verify, upgrade, roll back, recover and remove the package. Production commands omit `--destdir`, require an effective UID of 0 and install below `/usr/local`. They require ancestors that root owns and that group and world cannot write. CI may prefix the install paths with an absolute, existing `--destdir` that is not a symlink and not `/`; destdir mode is not a production installation.
 
 ```sh
 # production mode, after external checksum verification
@@ -182,167 +101,41 @@ sudo ./open-trestle-linux-amd64.pyz install
 sudo ./open-trestle-linux-amd64.pyz verify-installed
 sudo ./open-trestle-linux-amd64.pyz smoke --output "$(pwd)/open-trestle-linux-smoke.json"
 
-# each separately verified, strictly newer same-target candidate, as often as needed
+# each separately verified, strictly newer same-target candidate
 sudo ./open-trestle-linux-amd64-new.pyz upgrade
 sudo /usr/local/libexec/open-trestle/open-trestle-distribution.pyz verify-installed
 
 # only to return to the generation that the latest upgrade replaced
 sudo /usr/local/libexec/open-trestle/open-trestle-distribution.pyz rollback-version
 
-# retain the transaction-starting candidate outside the install root; use it after interruption
+# after an interruption, from a retained copy of the candidate that started the transaction
 sudo ./open-trestle-linux-amd64-new.pyz recover
 
-# choose one complete removal action for whichever generation is installed
+# remove the installed generation: roll back an install, or uninstall normally
 sudo /usr/local/libexec/open-trestle/open-trestle-distribution.pyz rollback
-# or, for a normal removal
 sudo /usr/local/libexec/open-trestle/open-trestle-distribution.pyz uninstall
 ```
 
-For an installed package, `trestle update` runs the `upgrade` step for you. It finds a strictly newer candidate, verifies it in Go, copies it into a private folder, runs its `verify-archive`, prints what it found and asks, and then runs `sudo -- <copy> upgrade`. `trestle update --from FILE` does the same for a candidate that you name. See [updates](updates.md). The lifecycle commands on this page remain the way to install, roll back, recover and remove.
+For an installed package, `trestle update` runs the `upgrade` step for you: it finds a strictly newer candidate, verifies it, copies it into a private folder, runs its `verify-archive`, prints what it found and asks before it runs `sudo -- <copy> upgrade`. `trestle update --from FILE` does the same for a candidate you name. See [updates](updates.md).
 
-#### Install
+- **install** checks the sidecar, archive structure, manifest, modes, sizes, SHA-256 values, ELF headers and inventory before it writes anything. It writes each file with `O_EXCL` and `O_NOFOLLOW`, syncs it and commits it with `renameat2(RENAME_NOREPLACE)`, and records a receipt and journal of every file the package owns. Existing targets stop the operation, and there is no force option.
+- **upgrade** verifies the installed generation and the complete candidate, accepts only a newer SemVer version for the same target and stages the full replacement before it changes any live file. It keeps the archive and sidecar of the immediate predecessor, and a tampered, missing or unsafe rollback slot stops it. Collisions in paths only the new version has, the same or a lower version, tampered or unowned files, unsafe ancestors and wrong modes or ownership all fail before anything changes.
+- **rollback-version** restores only the predecessor recorded for the installed generation, consumes the slot and cannot run twice. Upgrade and rollback preserve operator configuration, state and files the package does not own.
+- **verify-installed** checks the receipt, the journal, the trusted ancestors, production ownership, and the modes, sizes, hashes and ELF identities. **smoke** runs that check and then a probe at the CLI command boundary that changes nothing. In destdir mode smoke does not exercise the scan helper, and its JSON output does not show that the daemon, a provider or the network is ready.
+- **rollback** and **uninstall** run an ownership preflight and remove only files that still match the receipt and only directories the package created and that are empty. A file that is missing, changed, replaced, a symlink or owned by the wrong user stops removal before any owned file is deleted. Both preserve `/etc/open-trestle`, `/var/lib/open-trestle`, directories that existed before and files the package does not own. There is no purge mode. The lifecycle does not configure, enable or start a service.
 
-`install` checks all of these before it writes any file: the sidecar, the archive structure, the manifest, the payload modes and sizes, the SHA-256 values, the ELF headers and the inventory. It streams members one at a time and does not call ZIP extraction APIs. It writes each file with `O_EXCL` and `O_NOFOLLOW`, calls fsync on it, and commits it with the Linux call `renameat2(RENAME_NOREPLACE)`. A receipt and a transaction journal record the installed archive and every file that the package owns. Existing targets stop the operation, and there is no force option.
+### Recover an interrupted transition
 
-#### Upgrade
+An interrupted install, upgrade or version rollback leaves one canonical transaction record at the destination root (`.open-trestle-linux-amd64.transaction.bootstrap.json`, `.pending.json` or `.committed.json`). To recover:
 
-`upgrade` first verifies the installed generation and the complete candidate. It accepts only a newer SemVer version for the same target. It stages and validates the full replacement before it changes any live file. It keeps the archive and sidecar of the immediate predecessor. In protected receipt and journal files, it records the old and new versions, archives and manifests, and the transaction and the action.
-
-When the rollback slot already holds a predecessor, the same transaction moves the generation that it supersedes into the slot. It discards the older predecessor's archive, sidecar, receipt and journal copies. It first verifies them like every file that the package owns, so a slot that is tampered with, missing, a symlink, in the wrong mode or in an unsafe parent directory stops the upgrade. The transaction plan names the discarded generation and all four copies before anything moves. They are quarantined like any replaced file and removed only after the commit.
-
-These conditions fail before anything changes:
-
-- Collisions in paths that only the new version has.
-- The same or a lower version.
-- Tampered controls or owned files.
-- Unsafe ancestors.
-- Wrong modes or ownership.
-- Inconsistencies in the rollback slot.
-
-#### Roll back to the previous version
-
-`rollback-version` runs only from the installed generation. It restores only the predecessor that is recorded for that generation, and it consumes the slot. It cannot select an older archive and cannot run twice. Upgrade and version rollback preserve operator configuration, state and all files that the package does not own.
-
-A predecessor that was installed, or reached by `rollback-version`, gets its original receipt and journal back. A predecessor that was itself an upgrade names its own predecessor, which was discarded, so it gets a new `rollback-version` receipt and journal with no predecessor. Every earlier lifecycle that can upgrade accepts that receipt.
-
-#### Transaction records and recovery
-
-The candidate reserves three canonical records at the destination root. At most one of them exists at a time:
-
-- `.open-trestle-linux-amd64.transaction.bootstrap.json`
-- `.open-trestle-linux-amd64.transaction.pending.json`
-- `.open-trestle-linux-amd64.transaction.committed.json`
-
-Each record has a specific meaning:
-
-- The bootstrap record contains the plan, but it permits no change to managed files. `recover` removes only a valid bootstrap record.
-- A pending record always selects a rollback to the prior generation, or removal of the files for an install that was interrupted.
-- A committed record requires every new final file to match. `recover` then removes only the temporary and quarantine files that the record lists. It does not reconstruct a committed file that is missing.
-
-The rename from pending to committed, followed by an fsync of the destination root, is the only decision to commit.
-
-Plans record the old and new generations, the control digests, the names for staging and quarantine, and the directory inventories. Transaction records are version 2. Version 2 adds the discarded predecessor, and only an upgrade may name one. The slot that the upgrade frees must hold that generation, which is older than the one being superseded. The slot that it refills must hold the superseded generation and its controls.
-
-This candidate still recovers version 1 records that an earlier lifecycle left behind. A lifecycle that reads only version 1 records refuses a version 2 record without changing anything. In that case, recover with the candidate that started the transaction.
-
-After a restart, Open Trestle classifies state by path, file type, mode, size, SHA-256 and the applicable ownership policy. Saved inode and device numbers are used only for live race checks.
-
-To recover from an interrupted transition:
-
-1. Keep the candidate that started the transaction, or another verified rescue pyz that is byte-identical to it, outside the installation root. An interrupted transition can quarantine the installed lifecycle path.
+1. Keep the candidate that started the transaction, or a byte-identical verified copy, outside the installation root. An interrupted transition can quarantine the installed lifecycle path.
 2. Run `recover` from that copy.
 
-`recover` first classifies the recorded state without changing anything. If it finds anything malformed, multiple, tampered, unsafe, unexpected or ambiguous, it stops and keeps every object for you to inspect. Its cleanup unlinks only a file that matches the record, and it calls `rmdir` only on a recorded directory that is empty. It does not recurse, and it does not delete operator configuration, state, adjacent files or a directory that is not empty. Running recovery again after it succeeds does nothing. Commands that change the installation run the same recovery gate first. `verify-installed` instead reports that explicit recovery is required.
-
-#### Crash tests
-
-On Ubuntu 24.04, an opt-in destdir test matrix sends SIGKILL immediately after each of these points:
-
-- Every successful file or directory fsync.
-- Every successful `renameat2` boundary.
-
-It does so for install, for upgrade into an empty rollback slot and into an occupied one, for `rollback-version` before and after such a slot replacement, and for recovery itself.
-
-Every case converges to the generation from before the commit, or to the verified generation from after it. The slot holds the matching rollback archive, and no bytes of a discarded generation remain. Operator sentinels survive and recorded debris is removed.
-
-The tests depend on atomic rename and on file and directory fsync that succeed. They do not cover any of the following:
-
-- Loss of unflushed writes.
-- Torn writes.
-- Kernel panic.
-- Controller caches.
-- Reboot.
-- Production `/`.
-- Enforcement of root ownership.
-- Any declared filesystem or mount profile.
-- Network or overlay filesystems.
-- A hostile root.
-
-They make no claim about power loss or a supported deployment.
-
-#### Verify and smoke test
-
-`verify-installed` checks the receipt and the journal, the trusted ancestors, ownership in production, and the modes, sizes, hashes and ELF identities. `smoke` first runs that check. It then runs a probe at the CLI command boundary that changes nothing, with a minimal environment.
-
-In destdir mode, the smoke test does not exercise the scan helper. Smoke output is JSON with no content, and it does not show that the daemon, a provider or the network is ready.
-
-#### Roll back an install and uninstall
-
-`rollback` reverses the install transaction that the receipt records. `uninstall` runs the same ownership preflight before it deletes anything. Both remove only files that still match the receipt, and only directories that the package created and that are empty.
-
-If the preflight sees a file that is missing, changed, replaced, a symlink or owned by the wrong user, removal stops before any owned file is deleted.
-
-Both commands preserve the application configuration under `/etc/open-trestle`, the application state under `/var/lib/open-trestle`, directories that existed before, and files that the package does not own. There is no purge mode. The lifecycle does not configure, enable or start a service, and it does not create application configuration or state.
-
-### Secret-scanner runtime boundary
-
-The scanner is Betterleaks v1.8.1 running inside a WebAssembly (wasip1) guest. The secret scan helper executes the guest with the wazero runtime and evaluates the guest's regular expressions with RE2. The WebAssembly sandbox and a hard process kill on any deadline or fault are the containment.
-
-The helper is at `<folder of the trestle program>/../libexec/open-trestle/open-trestle-scan-helper` (`.exe` on Windows). The Linux package installs `/usr/local/libexec/open-trestle/open-trestle-scan-helper` as a root-owned `0555` file next to `/usr/local/bin/trestle`. macOS and Windows installs use the same layout relative to the program. Their installers come later.
-
-The packaging tool pins the helper's SHA-256 into `trestle` and `trestled`. Before each start, the program checks that the helper file is not writable, is owned by you or root (on Windows, by you or a system account), and matches the pinned SHA-256. A missing or changed helper refuses the review with a message, and nothing is sent. This check protects against replacement by an account that has no privileges. It does not protect a host after the compromise of root or the kernel.
-
-`trestle review` and `trestle local-git model-review` run one helper process per review run, and each specialist member of a review set has its own. `trestled` runs each sanitization in a helper session of its own. A successful sanitization scans the request, then scans the masked request, which must be clean. Generation and verification sanitize their requests separately. The helper uses up to about 0.5 GB of memory while it runs. It starts in about 0.6 s with a filled cache. In one measurement, a review with six scans of 60 KB took about 2 s of scanning, and model calls take far longer.
-
-The cache is at `$XDG_CACHE_HOME/open-trestle/scan-cache/` when `XDG_CACHE_HOME` is an absolute path, otherwise `~/.cache/open-trestle/scan-cache/` (on Windows `%USERPROFILE%\.cache\open-trestle\scan-cache`). It holds the compiled guest and RE2 module, about 110 MB. It must be private: owned by you, mode `0700`, and every folder above it changeable only by you or root. On Windows it needs an owner-only access control list. On macOS it must also carry no ACL entry, and a cache with one is refused with a message that tells you to remove it with `chmod -N`. The first review fills the cache and prints `Preparing the secret scanner for first use; this can take a minute.` `trestled` fills it at start. Deleting the folder is safe; the next review fills it again.
-
-The framed request accepts 1 to 256 fields of valid UTF-8, with at most 256 KiB each and 2 MiB decoded in total. Request frames are capped at 3 MiB, response frames at 4 MiB, and a complete response at 8,192 findings.
-
-Any of these discards all matches and blocks dispatch: a limit, a timeout, a cancellation, a nonzero exit, a byte on stderr, malformed or extra output, an incomplete scan or a finding that remains in the residual scan. Open Trestle does not accept a partial scan result. A secret is masked. If the scan cannot complete, the request is refused and nothing is sent.
-
-### Scanner observability and privacy
-
-The records that the scanner keeps are limited to these things:
-
-- Closed classes of failure.
-- Scanner and build-profile identities.
-- The helper digest.
-- Duration.
-- Counts of fields, bytes and matches.
-- Receipt identities.
-- Rule IDs.
-- Byte spans that are zero-based and half-open.
-
-The helper writes protocol data only to stdout and must keep stderr empty. The program does not log request or response frames, source bytes, matched values, upstream errors or the text of process errors. The initial receipt and the residual receipt contain no field content, paths, snippets, matches, source digests or Betterleaks fingerprints.
-
-A record with no content can still reveal sensitive information. A span shows the field ordinal, the location and the length of a suspected secret. Restrict access to receipts, audit and metrics to the review scope, and do not attach span or rule data to general metrics. The provider receives sanitized request text; keep content logging by the provider disabled under the approved route.
-
-### Scanner upgrade and requalification
-
-Treat any change as a new build profile that needs review. This covers changes to the Betterleaks version or commit, the embedded config, the rule inventory, the regexp engine, the adapter behavior, the WebAssembly runtime or Go toolchain, the target, the sandbox, the timeouts and the build flags. Before you adopt the new profile:
-
-1. Compare the upstream public API and detection behavior with the current version. Review the embedded config, the sorted rule IDs, and every linked module and license.
-2. Regenerate the ruleset identity, the allowlist, the deterministic helper, the helper and guest digests, the release evidence, the SPDX inventory and the pin of the helper digest.
-3. Run all public tests of the protocol, the exact spans, repeats, cancellation, resources, the sandbox, leakage and the residual scan.
-4. Run three canonical passes of the unchanged private corpus. The current gate is exactly 11/14 expected occurrences, 10/11 positive files, 2/2 repeated locations and 11/11 exact spans. The gate also expects the three misses that are named (the bearer token, the AWS secret key and the AWS session token) and one `generic-api-key` near miss at `[7,51)`. A loss, a changed span, or an additional or changed near miss blocks adoption until someone has reviewed it.
-5. Measure the scan time and memory of the helper with a filled cache, and compare them with the figures above.
-6. Rerun the root and scanner-module tests, the race tests, vet, the deterministic packaging, the staging inventory, the release evidence and the security review of the frozen diff.
-
-The private corpus and the raw scanner output stay outside tracked release material. The baseline measures one fixed corpus. The scanner misses some credential formats, including the ones named above.
+`recover` first classifies the recorded state without changing anything. A pending record returns to the prior generation or removes the files of an interrupted install. A committed record needs every new final file to match, and `recover` then removes only the temporary and quarantine files it lists. If it finds anything malformed, multiple, tampered, unsafe, unexpected or ambiguous, it stops and keeps every object for inspection. It unlinks only files that match the record, removes only empty recorded directories and never deletes operator configuration or state. Running it again after success does nothing. Commands that change the installation run the same gate first, and `verify-installed` reports that recovery is required.
 
 ## Generate unsigned local release evidence
 
-Release evidence is a checksum list and an SPDX 2.3 inventory of the artifacts you built. Generate it from a clean checkout and from the artifacts that were built from its declared revision. The tool reads the runtime Go module graph that is embedded in the two root binaries and the scan helper, and the non-development dependency entries in the npm lockfiles.
+Release evidence is a checksum list and an SPDX 2.3 inventory of the artifacts you built. Generate it from a clean checkout and artifacts built from its declared revision. The tool reads the runtime Go module graph embedded in the two root binaries and the scan helper, and the non-development entries in the npm lockfiles.
 
 ```sh
 test -z "$(git status --porcelain)"
@@ -366,28 +159,13 @@ python3 tools/release_evidence.py \
   --output release-evidence
 ```
 
-The `linux-amd64-lifecycle` artifact is JSON with no content. CI writes it after it has completed these steps in order: a v1 install, a v2 upgrade and verification, a v1 `rollback-version` and verification, a second v2 upgrade, a smoke test and an uninstall. It records the action names, the target, the versions, the archive digests and the pass status.
+`--created` is the commit timestamp in UTC. The inputs must stay below the working directory. The changelog must be a regular UTF-8 file of at most 1 MiB with exactly one non-empty `## Unreleased` section made of unique categories from `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed` or `Security`, with `- ` bullets. The tool copies those into `release-notes.md` with the version, revision and creation time. The `linux-amd64-lifecycle` artifact is content-free JSON that CI writes after an install, upgrade, version rollback, second upgrade, smoke test and uninstall.
 
-Use the commit timestamp, normalized to UTC, for `--created`. The inputs for artifacts, Go binaries, npm lockfiles and the changelog must stay below the working directory. The required changelog must be a regular UTF-8 file that is not a symlink, of at most 1 MiB. It must contain exactly one `## Unreleased` section that is not empty. That section is made of unique categories from `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed` or `Security`, with bullets that start `- ` and are not empty. The tool preserves those authored categories, bullets and indented continuation lines in `release-notes.md`. Beside them it writes the bound version, the revision, the creation time and a fixed warning that this is a candidate and is not supported.
-
-The output directory contains `release-notes.md`, `SHA256SUMS` and `sbom.spdx.json`. The tool never replaces existing output. It installs the complete directory atomically, so a failure does not leave partial output at the requested path. It hashes each artifact in one streaming pass that computes SHA-1 and SHA-256, and it rejects files that change while it reads them. `SHA256SUMS` contains SHA-256 only. Inputs that are missing, empty, duplicated, malformed, sensitive, escaping or symlinks fail.
-
-This is an unsigned local inventory. The declared revision and timestamp come from the caller. CI also validates both generated SBOMs with the SPDX Workgroup `spdx-tools` 0.8.5 validator, from a test-only lock that is pinned and checked by hash.
-
-The release-evidence tool does none of the following:
-
-- It does not identify the built container image.
-- It does not sign artifacts.
-- It does not publish an attestation.
-- It does not consult a vulnerability database.
-- It does not establish a SLSA level.
-- It does not make the current experimental release suitable for production.
-
-CI separately runs the [passive vulnerability gate](vulnerability-gate.md) before it generates this inventory.
+The output directory holds `release-notes.md`, `SHA256SUMS` and `sbom.spdx.json`. The tool never replaces existing output, installs the directory atomically, hashes each artifact in one pass and rejects files that change while it reads them. The revision and timestamp come from the caller. The tool does not identify the container image, sign artifacts, publish an attestation, consult a vulnerability database or establish a SLSA level. CI runs the [vulnerability gate](vulnerability-gate.md) before it generates this inventory.
 
 ## Validate runtime authority
 
-Validate the route inventory and runtime policy before the daemon starts. The command reads no provider credentials and contacts no service. It checks that the adapter of each supported provider can use the provider's endpoint: HTTPS or HTTP on loopback only, a canonical host, port and path, and no credentials, queries or fragments in the URL.
+Validate the route inventory and runtime policy before the daemon starts. The command reads no provider credentials and contacts no service. It checks that each supported provider's adapter can use its endpoint: HTTPS or HTTP on loopback only, a canonical host, port and path, and no credentials, queries or fragments in the URL.
 
 ```sh
 trestle config validate \
@@ -395,128 +173,53 @@ trestle config validate \
   --runtime-policy /etc/open-trestle/policy.json
 ```
 
-The daemon applies stricter file checks at startup. Each of these paths must be a regular file that is not a symlink and has no group or world write permission.
-
-## Local full-review recovery point
-
-A recovery point is a copy of a stopped local daemon's state that you can compare with later.
-
-To take a recovery point:
-
-1. Stop the daemon.
-2. Copy its private `--state-dir`, the configured `--setup-state` file and its `.receipts` directory.
-3. Keep the route inventory, the runtime policy, the Git object store of the source, the setup-root identity, the binary version and the scan helper, and record them with the recovery point.
-4. Keep credentials separately.
-
-Do not copy a live journal, and do not combine files from different recovery points. Protect the backup bytes with the same private modes and access controls as the originals.
-
-The local source-owner record binds the absolute paths and the Linux directory identities of the state root, the artifact root and the Git object root. If you restore the bytes of regular files into those same retained directories, the ownership can be preserved. Recreating a directory, restoring to another path or moving to another machine is not supported. Startup refuses an owner mismatch even when the copied bytes are otherwise complete. Do not edit or remove the owner record to get around that refusal. If you cannot preserve the original ownership, keep the backup and use a separately initialized state root for a new run.
-
-Before you restart workers:
-
-1. Compare the closed backup inventory and the file hashes with the restored bytes.
-2. Verify the configured setup and source identities.
-3. Replay the terminal receipts and the diagnostics without dispatching any work.
-4. Confirm that their identities match the recovery-point record.
-
-The `trestled verify-restore` command in [Offline in-place recovery comparison](#offline-in-place-recovery-comparison) does this for the supported layout. Do not start the daemon in place of this replay-only check. Normal daemon startup is not a read-only verifier: it can recover stored effects, and it starts workers that run before the model, even when `--local-model-workers` is disabled. If you cannot perform the check, keep the stopped state and the recovery point, and do not treat the restore as qualified.
-
-These steps cover recovery in place with the daemon stopped. They are not a portable backup or a protocol for filesystem snapshots.
-
-A terminal internal failure alone does not permit a restart. Consider an initial generation attempt that was rejected only because of the shape of the candidate document. Startup can accept the retained failed run, but only after fresh checks all succeed: the journal, the five-event audit, the artifacts, the current route, the handler, the scanner and the full catalog of the pipeline. The failed run remains inconclusive and has no candidate output. A restart does not dispatch that history again.
-
-Missing, expired, changed, extra or uncertain records still stop startup, and so do unresolved effect markers. This path does not recover model effects that failed or are partial. Do not delete the journal, the audit events, the artifacts or the owner record to force a restart. Stop the daemon and keep the complete recovery point. If startup refuses that history, use a separately initialized state root and a new run ID for unrelated work, and keep the original state for review. This isolates the old history. It is not a recovery in place.
-
-This evaluation profile is not yet a supported v1 installation.
+The daemon applies stricter file checks at startup: each of these paths must be a regular file, not a symlink, with no group or world write permission.
 
 ## Backup and restore
 
-Stop the daemon and take one consistent copy of the entire private `--state-dir` (journal, artifacts, audit ledger, diagnostics and webhook inbox) together with the configured `--setup-state` file. Do not copy a live file journal piece by piece. A copy of only part of the state directory is incomplete.
+A recovery point is a copy of a stopped local daemon's state that you compare with later. To take one:
+
+1. Stop the daemon and every child process.
+2. Copy the entire private `--state-dir` (journal, artifacts, audit ledger, diagnostics and webhook inbox) and the configured `--setup-state` file with its `.receipts` directory. Do not copy a live journal piece by piece, and do not combine files from different recovery points.
+3. Keep the route inventory, runtime policy, the Git object store of the source, the setup-root identity, the binary and the scan helper, and record them with the recovery point.
+4. Keep credentials separately. Protect the backup with the same private modes as the originals.
+
+The local source-owner record binds the absolute paths and Linux directory identities of the state root, the artifact root and the Git object root. Restoring the bytes of regular files into the same retained directories preserves ownership. Recreating a directory, restoring to another path or moving to another machine is not supported, and startup refuses an owner mismatch even when the bytes are complete. Do not edit or remove the owner record to get around that. If you cannot preserve ownership, keep the backup and use a separately initialized state root for new runs.
 
 To accept a restore, work through these checks in order:
 
 1. Restore into an isolated environment.
-2. Start the daemon against the restored state and verify that it reads a known artifact that is not sensitive.
-3. Run a review that only replays, and compare the terminal state that it derives from the journal with the recorded receipt.
+2. Compare the closed backup inventory and file hashes with the restored bytes, and verify the configured setup and source identities.
+3. Replay the terminal receipts and diagnostics without dispatching any work, and confirm their identities match the recovery-point record. `trestled verify-restore` below does this for the supported layout. Normal daemon startup is not a read-only verifier: it can recover stored effects and starts workers that run before the model, even with `--local-model-workers` off.
 4. Enable ingress, workers and model dispatch only after those checks pass.
 
-To rule out a stale restore, rely on your records of the recovery point. See also [offline in-place recovery comparison](#offline-in-place-recovery-comparison).
+These steps cover recovery in place with the daemon stopped. They are not a portable backup or a protocol for filesystem snapshots.
 
-## Retire an old active review plan after a typed incompatibility
+Missing, expired, changed, extra or uncertain records, and unresolved effect markers, stop startup. Do not delete the journal, audit events, artifacts or owner record to force a restart. Keep the complete recovery point. If startup refuses a history, use a separately initialized state root and a new run ID for unrelated work and keep the original state for review.
 
-Some changes make an old review plan impossible to replay. This section describes how to deal with such a plan without rewriting its history.
+### Cancel a run the daemon cannot replay
 
-In the local full-review evaluation profile, a context abstention first appends a bounded v3 prepare event, which has no content, to the private file journal. Only then does the daemon store the scoped deterministic artifact and append the result of the failed task. On restart, before any supervisor or listener can settle an expired context lease, the daemon replays an unresolved prepare event. It validates the plan, task, scope, provenance and artifact bytes, restores a missing artifact from the journaled envelope, and writes one linked result for the failed task.
+If replay or startup reports a typed incompatibility for an old active run:
 
-If a prepared artifact is corrupt, expired, ambiguous or unavailable, startup stops. It never becomes a success with empty output or a task that is ready for the model. This path applies to the local FileRunJournal and the local artifact store. The full local daemon rejects stores that are not local.
+1. Halt dispatch for that run. Do not treat the journal as a completed review, and do not rewrite its plan and events.
+2. Stop the daemon and take a backup of the entire `--state-dir` and the `--setup-state` file.
+3. Try to retire the run with a compatible runtime and an authenticated `trestle runs cancel --tenant ID --repository ID --run ID --server URL`, after confirming that the runtime can replay the run and that cancellation is authorized for its scope.
+4. If cancellation is confirmed, start the daemon against that state and submit a new run ID. Do not reuse the old one.
+5. If no compatible runtime can replay and cancel the run, leave it intact and isolated. The daemon keeps refusing that state, so use a separately initialized state root for new runs.
 
-If replay or startup reports a typed incompatibility for an old active review plan, follow these steps:
+There is no automatic cancellation and no migration of an incompatible active run.
 
-1. Halt dispatch for that plan. Do not treat an incompatible journal as a completed review, and do not rewrite its immutable plan and events.
-2. Stop the daemon and take a consistent backup of the entire private `--state-dir` (journal, artifacts and diagnostics) together with the configured `--setup-state` file, before you decide anything else. Do not copy a live file journal piece by piece.
-3. Record the recovery point and confirm that you can read the backup.
-4. Try to retire the plan. An operator may use a compatible runtime and an authenticated `trestle runs cancel --tenant ID --repository ID --run ID --server URL`. First verify that the runtime can replay the plan and that cancellation is authorized for that scope.
-5. If a compatible runtime cannot safely replay and cancel the plan, leave the old plan intact and isolated for the operator to review later. There is no automatic cancellation and no migration of an incompatible active plan.
-6. If the cancellation is confirmed, start the newer daemon against that state and submit a new review run ID.
-7. If the old active plan stays intact, the newer daemon will still refuse that state. Isolate and keep its backup, and use a separately initialized state root for any new run.
+### Offline in-place recovery comparison
 
-Do not reuse the old run ID.
-
-## Shutdown and health
-
-Use `/healthz` for liveness of the process and `/readyz` for readiness of its dependencies. Send `SIGTERM` to shut the daemon down. An internal failure of the runtime also starts a shutdown.
-
-On shutdown, the daemon closes admission of root requests and cancels the contexts of the runtime and of requests. Before it starts to clean up its stores, it waits to observe all of these:
-
-- The HTTP shutdown.
-- Every supervisor that started.
-- Every root handler that it admitted.
-- The drain of the repository-worker handlers.
-
-Late root requests receive `503 Service Unavailable`. A written response, a returned supervisor or a closed listener does not alone show that the handlers stopped.
-
-The shutdown observer waits ten seconds. If users or cleanup outlive it, the stores are not closed beneath users that are still live. Embedded callers receive an error that shutdown is incomplete. The error keeps the daemon and exposes `Finish(context.Context)` for another bounded observation. Every observation refers to the same stopped runtime and the same ordered chain of closers, each of which runs once. The daemon does not retry a closer that was partly attempted. Cleanup errors remain failures even after the call to the closer returns.
-
-The `trestled` executable reports an incomplete shutdown and exits with a nonzero status. It does not wait indefinitely or retry in the background. The HTTP shutdown phase has a grace period of ten seconds, while the closers of the stores have no shared time limit. An embedded caller must keep an incomplete error until it finishes observing the shutdown or ends its process.
-
-Configure the service manager with a grace period for termination, and alert on an overrun or on a failed shutdown. Before a backup or restart, confirm that the old daemon process and every process it started have exited. A closed socket or a shutdown error does not show that all work has stopped.
-
-The health endpoints do not show that a review succeeded. Query the authenticated run receipt and the review diagnostics instead. Versions 1 through 5 contain the state of verified findings. Version 6 contains scripted observations that remain unverified and need their own disposition in a review.
-
-To confirm that the daemon loaded the expected route, policy and handler identities and completed the reconciliation of its supervisors, inspect the runtime of the repository:
-
-```sh
-OPEN_TRESTLE_API_TOKEN="$OBSERVER_TOKEN" \
-  trestle admin runtime status \
-  --server https://trestle.example.invalid \
-  --tenant example \
-  --repository example-repository
-```
-
-The optional `OPEN_TRESTLE_OBSERVER_TOKEN` that is configured on `trestled` has `run_read` and `runtime_read` only. Use it for this command. The required `OPEN_TRESTLE_API_TOKEN` is the credential of the operator and the worker, with full access, so do not put it in a read-only console.
-
-Compare these values with the record of your deployment:
-
-- `configuration_identity`.
-- The route and policy identities.
-- The storage posture.
-- The handler identities.
-- The readiness of each component.
-
-The command does not reveal service endpoints or credentials.
-
-## Offline in-place recovery comparison
-
-This procedure compares a stopped, restored daemon state with a record you took earlier. It changes nothing and starts nothing.
+This procedure compares a stopped, restored state with a record you took earlier. It changes nothing and starts nothing.
 
 To take the record:
 
-1. Stop the daemon and every child process before you take a consistent copy.
-2. Keep the original state, artifact, setup and Git object directories. The owner record binds the Linux directory identity and the absolute paths, so recreating those directories is not supported, even if the file bytes match.
-3. Run `trestled recovery-point`. It writes a comparison record to stdout. Save that record outside the state directory, with permissions for the operator only.
-4. Keep the matching state and Git object bytes, the ledger of setup receipts, the daemon binary, the scan helper, the route inventory and the runtime policy. Credentials are separate, and these offline commands never read them.
+1. Stop the daemon and every child process, and keep the original state, artifact, setup and Git object directories.
+2. Run `trestled recovery-point`. It writes a comparison record to stdout. Save it outside the state directory with permissions for the operator only.
+3. Keep the matching state and Git object bytes, the setup receipts, the daemon binary, the scan helper, the route inventory and the runtime policy. These offline commands never read credentials.
 
-```
+```sh
 umask 077
 trestled recovery-point --state-dir /private/state \
   --repository-authority local.example --repository-namespace team \
@@ -526,13 +229,32 @@ trestled recovery-point --state-dir /private/state \
   > /private/recovery-point.json
 ```
 
-To compare after a restore:
+To compare after a restore, restore the bytes of regular leaf files into the retained directories and run `trestled verify-restore` with the same flags and `--record /private/recovery-point.json`.
 
-1. Restore the bytes of regular leaf files into the retained directories.
-2. Run `trestled verify-restore` with the same flags and `--record /private/recovery-point.json`.
+The command compares the private inventory hashes, the owner and setup identities, the replayed receipts, the artifacts, the diagnostics, the audit history, the Git object bytes and the retained runtime inputs. It starts no daemon, dispatches no work, runs no scanners, calls no providers, repairs nothing and recovers no pending effects. A lock held by an existing writer, or an unresolved effect, makes it refuse. A non-empty webhook intake is outside this local comparison.
 
-The command compares the private inventory hashes, the owner and setup identities, the replayed receipts, the artifact and deletion records, the diagnostics, the audit history, the Git object bytes and the retained runtime inputs. It does not start a daemon, dispatch work, run scanners, call providers, repair files or recover pending effects. A lock that an existing writer still holds, or an unresolved effect, makes it refuse the comparison. Intake of webhooks that is not empty is outside this local comparison, in which publication is disabled.
+A `matched` result means the stopped bytes match the record, and active runs produce `matched_pending`. Both report `restart_authorized:false` and neither shows that the backup is fresh or that uncertain history is safe to restart. Keep refused state for review, and do not edit an owner record or delete an uncertain marker to pass.
 
-A `matched` result means that the stopped bytes you observed match the record. Active runs produce `matched_pending`. Both report `restart_authorized:false`. Neither shows that the backup is fresh or that uncertain history is safe to restart. Keep refused state so that you can review it. Do not edit an owner record or delete an uncertain marker to make the command pass.
+The command supports setup at `state/setup/plan.json` only. It bounds the record at 4 MiB, each inventory of state and of Git at 30,000 entries and 256 MiB of regular file bytes at depth 8, and the runs at 500. Exceeding a bound is a refusal, not a sign of corruption.
 
-The command currently supports setup at `state/setup/plan.json` only. It bounds the record at 4 MiB. It bounds each inventory of state and of Git at 30,000 entries and 256 MiB of regular file bytes, at depth 8, and at 500 runs. Exceeding a bound is a refusal, not a sign of corruption. The bounds of the stores and the parsers also apply.
+## Shutdown and health
+
+Use `/healthz` for liveness and `/readyz` for readiness of dependencies. Send `SIGTERM` to shut the daemon down. An internal failure of the runtime also starts a shutdown.
+
+On shutdown the daemon closes admission of root requests and cancels the contexts of the runtime and of requests. Before it cleans up its stores, it waits to observe the HTTP shutdown, every supervisor that started, every root handler it admitted and the drain of the repository-worker handlers. Late root requests receive `503 Service Unavailable`.
+
+The shutdown observer waits ten seconds. If users or cleanup outlive it, the stores are not closed beneath live users, and embedded callers receive an error that shutdown is incomplete; it exposes `Finish(context.Context)` for another bounded observation. The `trestled` executable reports an incomplete shutdown and exits nonzero. It does not retry in the background. The closers of the stores share no time limit.
+
+Configure the service manager with a termination grace period, and alert on an overrun or a failed shutdown. Before a backup or restart, confirm that the old process and every process it started have exited. A closed socket or a shutdown error does not show that all work has stopped.
+
+The health endpoints do not show that a review succeeded. Query the authenticated run receipt and the review diagnostics instead; see [daemon API](daemon-api.md). To confirm that the daemon loaded the expected route, policy and handler identities and finished reconciling its supervisors, inspect the runtime status:
+
+```sh
+OPEN_TRESTLE_API_TOKEN="$OBSERVER_TOKEN" \
+  trestle admin runtime status \
+  --server https://trestle.example.invalid \
+  --tenant example \
+  --repository example-repository
+```
+
+The optional `OPEN_TRESTLE_OBSERVER_TOKEN` configured on `trestled` has `run_read` and `runtime_read` only, so use it for this command. The required `OPEN_TRESTLE_API_TOKEN` is the operator and worker credential with full access and does not belong in a read-only console. Compare `configuration_identity`, the route and policy identities, the handler identities and the readiness of each component with your deployment record. The command does not reveal service endpoints or credentials.

@@ -46,19 +46,20 @@ did not touch are listed separately and never block a merge on their own.
 
 ### Languages
 
-The first release is meant to understand every major production language at
-the level of its syntax tree: Java, JavaScript, TypeScript, Python, HTML, C,
-C++, C#, Swift, Go, Rust, PHP and Ruby. Each of these languages gets the same
-depth of analysis. Support for the languages used with game
-engines such as Godot, Unity and Unreal Engine, and for the custom languages that
-large companies build in-house, is planned after that.
+Open Trestle reads source at the level of its syntax tree for Java, JavaScript,
+TypeScript, Python, HTML, C, C++, C#, Swift, Go, Rust, PHP and Ruby. Only Go
+also records where a variable, constant or function is used as a value.
+Support for the languages used with game engines such as Godot, Unity and
+Unreal Engine, and for the custom
+languages that large companies build in-house, is planned.
 
 ### Privacy
 
 With a model server on your own machine, a review sends your code only to that
 server. Open Trestle scans each review request for secrets twice before
-sending it, whether the server is local or remote. It sends no telemetry. The [privacy](docs/privacy.md) page lists what is sent,
-when, and to whom.
+sending it, whether the server is local or remote; investigation requests are
+not scanned and go only to a local server. It sends no telemetry. The
+[privacy](docs/privacy.md) page lists what is sent, when, and to whom.
 
 ## Project status
 
@@ -71,12 +72,21 @@ What works today, on Linux and Windows (macOS builds but is untested on a real M
   default branch, which is the same set of changes a pull request shows. Running
   `trestle` on its own opens a home screen with your setup, recent spending and
   the last review.
-- The model review in stage 5 works. Results come as text in the terminal, or
-  as JSON, SARIF or Markdown for other tools.
+- A review builds an index of the repository first (`trestle index` builds and
+  queries it directly). The models see the definition around each changed hunk,
+  the callers and other uses of changed code, the tests that reference it and a
+  ranked map of the repository. `trestle profile` reads the repository's tests
+  and CI configuration.
+- Syntax analysis covers every language listed above.
+- With your consent, a review runs the repository's own tests in a sandbox
+  with no network, before any model call (`trestle checks on|off|status`). Both
+  models receive the outcomes. See [repository checks](docs/repository-checks.md).
+- The two-model review in stage 5 works. Results come as text in the terminal,
+  or as JSON, SARIF or Markdown for other tools.
 - Remote providers (OpenRouter, Ollama Cloud and OpenCode Go) and local model
   servers (Ollama, llama.cpp, vLLM, LM Studio and other OpenAI-compatible
-  servers) are supported. Every request is scanned for secrets twice by the secret
-  scan helper before it is sent. A development build with the helper runs on
+  servers) are supported. Every request except an investigation request (local only) is scanned for
+  secrets twice by the secret scan helper before it is sent. A development build with the helper runs on
   Linux, macOS and Windows; the packaged install is Linux amd64 only.
 - You can set a spending limit for each API key. Open Trestle warns you as you
   approach it and stops sending requests when you reach it. Its totals are
@@ -84,27 +94,19 @@ What works today, on Linux and Windows (macOS builds but is untested on a real M
 
 What is not built yet:
 
-- Codebase understanding, stages 1 and 2, is only partly built. The models read
-  any language, and they see the changed code with some of its surrounding
-  context, but no repository-wide index or map exists yet, and only Go code gets
-  syntax-level analysis of what a change touches.
-- Testing, stages 3 and 4, is not built. Open Trestle does not run tests yet.
-- macOS and Windows builds compile, but neither has been tested, and some
-  features, including remote providers, are refused on both. See
-  [platforms](docs/platforms.md).
+- Choosing which of the checks that ship with Open Trestle to run, and writing
+  new tests for a change (stage 3). Only the repository's own tests run.
+- Syntax analysis for the game-engine and in-house languages.
+- A desktop app. The VS Code extension can show the results of a daemon run but
+  cannot start a review.
 - The [GitHub Actions example](examples/github-actions/README.md) has been
-  tested offline but has not yet run on GitHub. The VS Code extension can show
-  the results of a review but cannot start one.
-- There is no signed release or download yet. You build Open Trestle from
-  source. The first release is meant to install like any other application: you
-  download an installer for your system, run the setup wizard and review your
-  own repository.
+  tested offline but has not yet run on GitHub.
+- A signed release or download. You build Open Trestle from source. The first
+  release is meant to install like any other application: you download an
+  installer for your system, run the setup wizard and review your own
+  repository.
 
-The first release is meant to complete stages 1 to 4 for the languages above,
-bring the same review to Linux, macOS and Windows with installers and a desktop
-app, and finish the GitHub Actions and VS Code integrations. Reviewing an entire
-codebase, rather than one pull request, is planned after that. The
-[roadmap](docs/roadmap.md) has the details.
+The [roadmap](docs/roadmap.md) lists what is next.
 
 ## Getting started
 

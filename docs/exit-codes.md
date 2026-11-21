@@ -23,9 +23,10 @@ the saved setup, and returns its code.
 | `1` | The run failed, for example a model reply could not be accepted or a provider failed temporarily. |
 
 A review set (`--specialists`) merges the results of its members. The exit code
-is `4` in two cases: a member did not finish and the merged set has an
-introduced finding of high or critical severity, or every member finished and
-the set has an introduced finding of medium severity or higher. See
+is `4` when a member did not finish and the merged set has an introduced
+finding of high or critical severity, when every member finished and the set
+has an introduced finding of medium severity or higher, or when a member was
+refused. See
 [the set table](local-model-review.md#specialist-review-set-opt-in).
 
 ### Exit-code policy
@@ -38,9 +39,9 @@ change is clear.
 | Policy | Exit `0` when | Otherwise |
 | --- | --- | --- |
 | `default` (when the flag is absent) | never | `4`, `3`, `2` or `1` as above |
-| `findings` | the run succeeded and no verified finding has high or critical severity, including no candidates, medium or low findings only, and coverage gaps | the default code |
+| `findings` | the run succeeded and no verified finding that is not pre-existing has high or critical severity, including no candidates, medium or low findings only, and coverage gaps | the default code |
 | `strict` | the run succeeded with no candidates at all | the default code, so any verified finding fails the step |
-| `always-zero` | a valid result was written, including a refused or failed run | `1` if the result could not be written, `2` for invalid usage |
+| `always-zero` | a valid result was written, including a refused or failed run (for a review set, the general review must have succeeded) | `1` if the result could not be written, `2` for invalid usage |
 
 Under `always-zero`, a passing step says nothing about whether the review ran, so
 read the SARIF or the JSON `status`. For review sets, see
@@ -65,7 +66,7 @@ The first review inside `trestle init` uses these codes, not the table for
 | --- | --- | --- |
 | `0` | Updated, already up to date, or you answered no. | Nothing newer was found where it looked. |
 | `10` | Not used. | A newer version is available; for a release, its signature verified. |
-| `1` | Not installed as a package, a check failed, GitHub could not be read, or the upgrade failed. | Not installed as a package, a check failed, or GitHub could not be read. |
+| `1` | Not a Linux amd64 system, not installed as a package, a check failed, GitHub could not be read, or the upgrade failed. | Not a Linux amd64 system, not installed as a package, a check failed, or GitHub could not be read. |
 | `2` | A usage error, or no terminal to confirm and no `--yes`. | A usage error. |
 
 ## Keys, usage and the home screen
@@ -80,23 +81,31 @@ The first review inside `trestle init` uses these codes, not the table for
 | `--help`, `-h`, `help` | `0`, usage on standard output. |
 | An unknown command | `2`, usage on standard error. |
 
+## Checks, index and profile
+
+| Command | Codes |
+| --- | --- |
+| `trestle checks on`, `off`, `status` | `0`; `2` for a bad usage or when the folder is not inside a Git checkout; `3` when the repository has no setup yet; `4` when the answer could not be saved. |
+| `trestle index build`, `status`, `query` | `0`; `1` for a failure; `2` for a bad usage or a `--commit` that does not resolve. |
+| `trestle profile` | The same as `trestle index`. |
+| `trestle build-info` | `0`; `1` when the build identity cannot be written; `2` for a bad usage. |
+
 ## Setup
 
 | Command | Codes |
 | --- | --- |
 | `trestle setup bootstrap init`, `check`, `inspect`, `prepare-review` | `0` ready; `3` checks pending; `4` refused; `1` failure; `2` usage. |
-| Other `setup`, `config`, `admin`, `runs` and static `local-git` commands | `0` success; `1` failure; `2` usage. |
+| Other `setup`, `config`, `admin`, `runs` and static `local-git` commands | `0` success; `1` failure; `2` usage. `local-git retained-memory-input` also returns `3` when canceled and `4` when it refuses protected input. |
 
 ## Fixtures and evaluation
 
 | Command | Codes |
 | --- | --- |
 | `trestle review PATH` | `0` findings or no findings; `3` inconclusive; `4` blocked; `1` an error. |
-| `trestle ci --format=json PATH`, `--format=sarif PATH` | `0`, or `3` when inconclusive, or `1`. |
+| `trestle ci --format=json PATH`, `--format=sarif PATH` | `0`, or `3` when inconclusive, or `4` when blocked, or `1`. |
 | `trestle validate-fixture PATH` | `0` valid; `1` invalid. |
 | `trestle evaluate static-debug` | `0` the built-in cases passed; `3` they did not; `1` failure. |
 | `trestle evaluate deterministic-corpus-candidate` | `3` mismatch; `4` matched; `1` failure. |
 | `trestle evaluate model-contract-candidate` | `4` after printing the report; `1` failure. |
 
-The observers (`trestle tui`, `mcp`, `lsp`, `acp`) run until their input closes.
-This page does not list their exit codes, because they have not been traced.
+The observers (`trestle tui`, `mcp`, `lsp`, `acp`) run until their input closes. The terminal UI also exits on `q` or `quit`, and after one snapshot with `--once`.
