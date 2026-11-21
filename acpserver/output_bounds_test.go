@@ -25,7 +25,8 @@ func TestServerOmitsDiagnosticsThatExceedEscapedFrameBudget(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	set, err := diagnostics.NewSet(scope, strings.Repeat("d", 64), strings.Repeat("1", 40), strings.Repeat("e", 64), findings)
+	check, _ := diagnostics.NewDeterministicCheck("3f01f93e51003eb3a0deca04719a3957d6e367c97c33bdfea105174d95698092", strings.Repeat("8", 64), strings.Repeat("7", 64), diagnostics.CheckPassed, 1, 2, 1, 2, 0)
+	set, err := diagnostics.NewSetWithDeterministicChecks(scope, strings.Repeat("d", 64), strings.Repeat("1", 40), strings.Repeat("e", 64), strings.Repeat("f", 64), uint16(len(findings)), 0, 0, 1, 1, 0, nil, []diagnostics.DeterministicCheck{check}, findings)
 	if err != nil {
 		t.Fatal(err)
 	}

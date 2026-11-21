@@ -130,40 +130,37 @@ func writeDeterministicDiagnostics(builder *strings.Builder, set diagnostics.Set
 func writeVerifiedDiagnostics(builder *strings.Builder, set diagnostics.Set, width int) {
 	findings := set.Findings()
 	fmt.Fprintf(builder, "%d verified finding(s), source revision %s\n", len(findings), truncateTerminalText(set.HeadRevision(), 16))
-	if set.SchemaVersion() >= 2 {
-		fmt.Fprintf(builder, "%d candidate(s): %d verified\n", set.CandidateCount(), set.VerifiedCount())
-		fmt.Fprintf(builder, "%d rejected, %d inconclusive\n", set.RejectedCount(), set.InconclusiveCount())
-		if set.InconclusiveCount() > 0 {
-			builder.WriteString("Coverage incomplete: at least one candidate remained inconclusive.\n")
-		}
-		if set.SchemaVersion() >= 3 {
-			fmt.Fprintf(builder, "%d source(s): %d selected, %d omitted\n", set.SourceAnalyzedCount(), set.SourceSelectedCount(), set.SourceOmittedCount())
-			if set.SourceOmittedCount() > 0 {
-				builder.WriteString("Source coverage incomplete: at least one analyzed source was omitted.\n")
-			}
-			if summaries := set.OmissionSummaries(); set.SchemaVersion() >= 4 && len(summaries) > 0 {
-				builder.WriteString("Omission reasons:\n")
-				for _, summary := range summaries {
-					fmt.Fprintf(builder, "  %d %s\n", summary.Count(), strings.ReplaceAll(summary.Reason().String(), "_", " "))
-				}
-			}
-			if set.SchemaVersion() == 5 || set.SchemaVersion() == 8 {
-				check := set.DeterministicChecks()[0]
-				switch check.State() {
-				case diagnostics.CheckPassed:
-					builder.WriteString("Cleared gate: static debug output passed.\n")
-				case diagnostics.CheckFailed:
-					builder.WriteString("Failed check: static debug output failed; exact matches require review.\n")
-				case diagnostics.CheckIncomplete:
-					builder.WriteString("Incomplete check: static debug output did not cover every applicable range; human review is required.\n")
-				case diagnostics.CheckNotApplicable:
-					builder.WriteString("Abstention: no changed Go range was applicable; this rule was not cleared.\n")
-				}
-				fmt.Fprintf(builder, "%d/%d changed Go range(s), %d exact match(es)\n", check.CheckedRanges(), check.ApplicableRanges(), check.MatchCount())
-			}
-		}
-		builder.WriteString("Coverage does not approve the change or prove correctness.\n")
+	fmt.Fprintf(builder, "%d candidate(s): %d verified\n", set.CandidateCount(), set.VerifiedCount())
+	fmt.Fprintf(builder, "%d rejected, %d inconclusive\n", set.RejectedCount(), set.InconclusiveCount())
+	if set.InconclusiveCount() > 0 {
+		builder.WriteString("Coverage incomplete: at least one candidate remained inconclusive.\n")
 	}
+	fmt.Fprintf(builder, "%d source(s): %d selected, %d omitted\n", set.SourceAnalyzedCount(), set.SourceSelectedCount(), set.SourceOmittedCount())
+	if set.SourceOmittedCount() > 0 {
+		builder.WriteString("Source coverage incomplete: at least one analyzed source was omitted.\n")
+	}
+	if summaries := set.OmissionSummaries(); len(summaries) > 0 {
+		builder.WriteString("Omission reasons:\n")
+		for _, summary := range summaries {
+			fmt.Fprintf(builder, "  %d %s\n", summary.Count(), strings.ReplaceAll(summary.Reason().String(), "_", " "))
+		}
+	}
+	// A final set reports its check separately.
+	if set.SchemaVersion() != 7 {
+		check := set.DeterministicChecks()[0]
+		switch check.State() {
+		case diagnostics.CheckPassed:
+			builder.WriteString("Cleared gate: static debug output passed.\n")
+		case diagnostics.CheckFailed:
+			builder.WriteString("Failed check: static debug output failed; exact matches require review.\n")
+		case diagnostics.CheckIncomplete:
+			builder.WriteString("Incomplete check: static debug output did not cover every applicable range; human review is required.\n")
+		case diagnostics.CheckNotApplicable:
+			builder.WriteString("Abstention: no changed Go range was applicable; this rule was not cleared.\n")
+		}
+		fmt.Fprintf(builder, "%d/%d changed Go range(s), %d exact match(es)\n", check.CheckedRanges(), check.ApplicableRanges(), check.MatchCount())
+	}
+	builder.WriteString("Coverage does not approve the change or prove correctness.\n")
 	for _, finding := range findings {
 		location := fmt.Sprintf("%s:%d", safeTerminalText(finding.Path()), finding.StartLine())
 		if finding.EndLine() != finding.StartLine() {

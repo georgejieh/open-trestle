@@ -11,7 +11,7 @@ import (
 )
 
 func TestParseSetRetainsHistoricalMixedTiedFindingOrderAcrossVersions(t *testing.T) {
-	versions := []int{1, 2, 3, 4, 5, 7}
+	versions := []int{5, 7}
 	wantTiedTitles := []string{"tied finding 5", "tied finding 1", "tied finding 2", "tied finding 3", "tied finding 0", "tied finding 4"}
 	identities := make(map[string]bool, len(versions))
 	for _, version := range versions {
@@ -48,7 +48,7 @@ func TestNewSetPreservesRelativeOrderForMixedTiedFindings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	set, err := NewSet(scope, strings.Repeat("d", 64), strings.Repeat("1", 40), strings.Repeat("e", 64), findings)
+	set, err := verifiedTestSet(t, scope, findings)
 	if err != nil {
 		t.Fatal(err)
 	}

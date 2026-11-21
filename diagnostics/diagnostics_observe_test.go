@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/georgejieh/open-trestle/audit"
@@ -21,7 +20,7 @@ func observerSetFixture(t *testing.T) (string, audit.ReviewScope, Set, []byte) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	value, err := NewSet(scope, strings.Repeat("b", 64), strings.Repeat("1", 40), strings.Repeat("c", 64), nil)
+	value, err := verifiedTestSet(t, scope, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

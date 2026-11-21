@@ -32,9 +32,13 @@ func TestRunLSPAuthenticatedStoredAndExportedDiagnosticJourney(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	verified, err := diagnostics.NewSetWithOmissionReasons(plan.Scope(), strings.Repeat("d", 64),
+	verifiedCheck, err := diagnostics.NewDeterministicCheck("3f01f93e51003eb3a0deca04719a3957d6e367c97c33bdfea105174d95698092", strings.Repeat("8", 64), strings.Repeat("7", 64), diagnostics.CheckPassed, 1, 2, 1, 2, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verified, err := diagnostics.NewSetWithDeterministicChecks(plan.Scope(), strings.Repeat("d", 64),
 		strings.Repeat("1", 40), strings.Repeat("e", 64), strings.Repeat("f", 64),
-		1, 0, 0, 2, 1, 1, []diagnostics.OmissionSummary{omission}, []diagnostics.Finding{finding})
+		1, 0, 0, 2, 1, 1, []diagnostics.OmissionSummary{omission}, []diagnostics.DeterministicCheck{verifiedCheck}, []diagnostics.Finding{finding})
 	if err != nil {
 		t.Fatal(err)
 	}
