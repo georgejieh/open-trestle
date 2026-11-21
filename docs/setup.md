@@ -6,19 +6,21 @@ The only profile is `local_single_node`: local storage, local models only, no ne
 
 ## Checks
 
-`trestle init` and `trestle setup bootstrap check` run these checks and record a receipt for each one:
+`trestle setup bootstrap check`, which `trestle init` runs for you, runs these checks and records a receipt for each one. A check that already passed is skipped, and the run stops at the first check that does not pass.
 
 | Check | What it confirms |
 | --- | --- |
-| `state_storage_posture_validated` | The setup folder and its parents are owned by you and not writable by others. |
-| `local_administrator_validated` | The current account is the setup owner. |
+| `state_storage_posture_validated` | The setup folder is private to you, and no other ordinary account can change its parent folders. Unix checks owners and modes; Windows checks the owner and the access control list. |
+| `local_administrator_validated` | The name given with `--approved-by` matches the plan's recovery owner. The identity of the running process is recorded. |
 | `policy_validated` | The saved route inventory and runtime policy match the local profile and your approval. |
 | `dry_run_validated` | A review pipeline run with fixed content and no model passes. |
-| `local_inference_validated` | Optional: both models answered one fixed test request. |
-| `observer_credential_posture_validated` | Daemon only: the operator and observer tokens are set and differ. |
-| `backup_validated` | Daemon only: a protected backup of the plan exists. |
+| `local_inference_validated` | Only with `--allow-local-probe`: both models answered one fixed test request. |
+| `observer_credential_posture_validated` | Daemon only: the operator and observer tokens differ, and each is 32 to 512 printable ASCII characters with no spaces. |
+| `backup_validated` | Daemon only, with `--backup-directory`: a protected backup of the plan exists. |
 
-A plan is `ready` only when every check has a passing receipt from the built-in checker. A blocked or unavailable check keeps the plan unready. Replacing the policy receipt resets the local-inference and dry-run checks to pending.
+`trestle init` skips the two daemon-only checks. A direct review can therefore be ready while the plan is not: review readiness needs the checks above that apply to a direct review, plus the secret scanner.
+
+A plan is `ready` only when every check in its own catalog has a passing receipt. Four requirements (`profile_selected`, `scope_valid`, `effect_posture_locked`, `recovery_owner_named`) pass when the plan is created and need no receipt. A blocked or unavailable check keeps the plan unready. Replacing the policy receipt resets the local-inference and dry-run checks to pending.
 
 The plan embeds its receipt history, and a private, append-only ledger beside it at `plan.json.receipts` holds a copy of each receipt. Reading the plan replays that history, so editing the plan file cannot make it ready. Keep the plan and its ledger together.
 
@@ -55,9 +57,9 @@ trestle setup backup restore \
   --expected-plan-identity "$BACKED_UP_PLAN_IDENTITY"
 ```
 
-Restore rebuilds the receipt ledger and validates the restored plan. It never overwrites, and it can resume an interrupted rebuild. A snapshot is one protected copy; keeping it on separate media is your responsibility.
+Restore rebuilds the receipt ledger and validates the recorded receipts; it reruns no checks. It never overwrites, and it can resume an interrupted rebuild. Creating a snapshot does not record `backup_validated`; the bootstrap check does that. A snapshot is one protected copy; keeping it on separate media is your responsibility.
 
-Both commands print an `open-trestle/setup-command-result` record and exit `0` on success, `1` on failure and `2` on a usage error.
+On success both commands print an `open-trestle/setup-command-result` record and exit `0`. A failure exits `1` and a usage error exits `2`, each with a message on standard error.
 
 ## Plan location for the daemon
 
