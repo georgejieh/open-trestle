@@ -15,7 +15,17 @@ import (
 
 func TestMain(m *testing.M) {
 	checksandbox.RunChildIfRequested()
-	os.Exit(m.Run())
+	// Sandbox grants are recorded below the state folder; keep the tests'
+	// records out of the user's.
+	state, err := os.MkdirTemp("", "open-trestle-test-state-")
+	if err != nil {
+		panic(err)
+	}
+	os.Setenv("XDG_STATE_HOME", state)
+	code := m.Run()
+	_ = checksandbox.RemoveToolchainGrants()
+	os.RemoveAll(state)
+	os.Exit(code)
 }
 
 // fakeRunner answers each run from a script keyed by tree side and attempt.
