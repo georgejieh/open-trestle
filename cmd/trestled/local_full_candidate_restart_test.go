@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	postgresstore "github.com/georgejieh/open-trestle/adapters/storage/postgres"
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/client"
 	"github.com/georgejieh/open-trestle/controlplane"
@@ -44,7 +43,7 @@ func TestDaemonLocalFullCandidateRateLimitedRestartBootsAfterLeaseExpiry(t *test
 // restarts after the lease and after the retention lapse.
 func runCandidatePutSyntheticRestart(t *testing.T, rateLimits int) {
 	ctx := context.Background()
-	model := newDaemonBudgetedModelFixture(t, "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")
+	model := newDaemonFakeModelFixture(t, "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")
 	model.generation.rateLimits = rateLimits
 	sent := 1 + rateLimits
 	args, originalEnv, repository, base, head, _, _ := localFullDaemonFixture(t)
@@ -66,7 +65,7 @@ func runCandidatePutSyntheticRestart(t *testing.T, rateLimits int) {
 			route["output_micro_usd_per_million_tokens"] = float64(0)
 		}
 	}
-	inventoryBytes = daemonBudgetedModelJSON(t, inventoryWire)
+	inventoryBytes = daemonFakeModelJSON(t, inventoryWire)
 	if err := os.WriteFile(inventoryPath, inventoryBytes, 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -98,9 +97,9 @@ func runCandidatePutSyntheticRestart(t *testing.T, rateLimits int) {
 	for index, endpoint := range []string{model.generation.URL() + "/v1", model.verification.URL() + "/v1"} {
 		connection := connections[index].(map[string]any)
 		connection["endpoint"] = endpoint
-		connection["credential_environment"] = []string{daemonBudgetedModelGenerationKeyEnv, daemonBudgetedModelVerificationKeyEnv}[index]
+		connection["credential_environment"] = []string{daemonFakeModelGenerationKeyEnv, daemonFakeModelVerificationKeyEnv}[index]
 	}
-	encoded = daemonBudgetedModelJSON(t, policyWire)
+	encoded = daemonFakeModelJSON(t, policyWire)
 	if err := os.WriteFile(policyPath, encoded, 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -110,15 +109,15 @@ func runCandidatePutSyntheticRestart(t *testing.T, rateLimits int) {
 	}
 	getenv := func(key string) string {
 		switch key {
-		case daemonBudgetedModelGenerationKeyEnv:
-			return daemonBudgetedModelGenerationKey
-		case daemonBudgetedModelVerificationKeyEnv:
-			return daemonBudgetedModelVerificationKey
+		case daemonFakeModelGenerationKeyEnv:
+			return daemonFakeModelGenerationKey
+		case daemonFakeModelVerificationKeyEnv:
+			return daemonFakeModelVerificationKey
 		default:
 			return originalEnv(key)
 		}
 	}
-	deps := daemonDependencies{openPostgres: postgresstore.Open, clock: httpapi.SystemClock{}, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()}
+	deps := daemonDependencies{clock: httpapi.SystemClock{}, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()}
 	d, err := buildDaemonWithDependencies(ctx, args, getenv, &bytes.Buffer{}, deps)
 	if err != nil {
 		t.Fatal(err)
@@ -278,7 +277,7 @@ func runCandidatePutSyntheticRestart(t *testing.T, rateLimits int) {
 	if err := stream.Close(); err != nil {
 		t.Fatal(err)
 	}
-	future := daemonBudgetedRawClock{at: leaseExpires.Add(5 * time.Second).Truncate(time.Millisecond)}
+	future := daemonFakeRawClock{at: leaseExpires.Add(5 * time.Second).Truncate(time.Millisecond)}
 	deps.clock = future
 	d, err = buildDaemonWithDependencies(ctx, args, getenv, &bytes.Buffer{}, deps)
 	if err != nil {
@@ -414,7 +413,7 @@ func runCandidatePutSyntheticRestart(t *testing.T, rateLimits int) {
 	if err := second.Close(); err != nil {
 		t.Fatal(err)
 	}
-	deps.clock = daemonBudgetedRawClock{at: future.Now().Add(25 * time.Hour)}
+	deps.clock = daemonFakeRawClock{at: future.Now().Add(25 * time.Hour)}
 	third, err := buildDaemonWithDependencies(ctx, args, getenv, &bytes.Buffer{}, deps)
 	if err != nil {
 		t.Fatalf("startup after retention lapsed on an exhausted candidate lease: %v", err)

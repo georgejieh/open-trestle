@@ -29,7 +29,7 @@ func assertSetupGitHubPermissionLegacyIdentityOnly(t *testing.T) {
 	if err != nil || other == authority {
 		t.Fatal("legacy identity lost installation binding")
 	}
-	plan, err := setupcore.NewPlan(setupcore.ProfileControlledHybrid, "tenant-a", "repo-a", "owner", setupTimeCLI())
+	plan, err := setupcore.NewPlan(setupcore.ProfileLocalSingleNode, "tenant-a", "repo-a", "owner", setupTimeCLI())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,26 +46,6 @@ func assertSetupGitHubPermissionLegacyIdentityOnly(t *testing.T) {
 	}
 }
 
-func TestSetupGitHubPermissionProbeDefersAndSeparatesToken(t *testing.T) {
-	assertSetupGitHubPermissionLegacyIdentityOnly(t)
-	runSetupGitHubPermissionNativeTest(t, "probe-defers-and-separates")
-}
-func TestSetupGitHubPermissionProbeRejectsAuthorityAndSharedTokenBeforeInspection(t *testing.T) {
-	assertSetupGitHubPermissionLegacyIdentityOnly(t)
-	runSetupGitHubPermissionNativeTest(t, "probe-authority-and-shared-token")
-}
-func TestSetupGitHubPermissionProbeClassifiesOutcomes(t *testing.T) {
-	assertSetupGitHubPermissionLegacyIdentityOnly(t)
-	runSetupGitHubPermissionNativeTest(t, "probe-classifies-outcomes")
-}
-func TestSetupCLIRecordsExactIntegrationPermissionReceipt(t *testing.T) {
-	assertSetupGitHubPermissionLegacyIdentityOnly(t)
-	runSetupGitHubPermissionNativeTest(t, "cli-permission-receipt")
-}
-func TestSetupTUIServiceRunsGitHubIntegrationPermissionCheck(t *testing.T) {
-	assertSetupGitHubPermissionLegacyIdentityOnly(t)
-	runSetupGitHubPermissionNativeTest(t, "tui-permission-receipt")
-}
 func TestSetupGitHubPermissionCheckerFencesChangedConfigurationBeforeTokenRead(t *testing.T) {
 	assertSetupGitHubPermissionLegacyIdentityOnly(t)
 	runSetupGitHubPermissionNativeTest(t, "probe-changed-configuration")

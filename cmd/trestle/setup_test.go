@@ -89,7 +89,7 @@ func TestSetupInitRefusesOverwriteAndUnsafeInput(t *testing.T) {
 func TestSetupInspectRejectsBroadPermissionsAndSymlink(t *testing.T) {
 	root := t.TempDir()
 	state := filepath.Join(root, "setup.json")
-	plan, _ := setupcore.NewPlan(setupcore.ProfileAirGapped, "tenant-a", "repo-a", "owner", setupTimeCLI())
+	plan, _ := setupcore.NewPlan(setupcore.ProfileLocalSingleNode, "tenant-a", "repo-a", "owner", setupTimeCLI())
 	encoded, _ := setupcore.EncodePlan(plan)
 	if err := os.WriteFile(state, encoded, 0o644); err != nil {
 		t.Fatal(err)
@@ -485,19 +485,19 @@ func TestSetupOfflineCheckArgumentsFailClosed(t *testing.T) {
 	}
 }
 
-func TestSetupRemoteProviderAuthorizationIsOfflineAndReceiptDriven(t *testing.T) {
+func TestSetupRemoteProviderAuthorizationIsRefusedForLocalProfile(t *testing.T) {
 	root := t.TempDir()
 	_ = os.Chmod(root, 0o700)
 	state := filepath.Join(root, "plan.json")
 	var stdout, stderr bytes.Buffer
-	if code := runSetupWithClock([]string{"init", "--profile", "controlled_hybrid", "--tenant", "tenant-a", "--repository", "repo-a", "--recovery-owner", "owner", "--state", state}, &stdout, &stderr, fixedSetupClock{setupTimeCLI()}); code != 0 {
+	if code := runSetupWithClock([]string{"init", "--profile", "local_single_node", "--tenant", "tenant-a", "--repository", "repo-a", "--recovery-owner", "owner", "--state", state}, &stdout, &stderr, fixedSetupClock{setupTimeCLI()}); code != 0 {
 		t.Fatal(stderr.String())
 	}
 	inventory, policy, inventoryID, runtimePolicyID, reviewPolicyID := setupPolicyCLIPaths(t, root, "private_remote")
 	stdout.Reset()
 	stderr.Reset()
 	args := []string{"check", "provider", "--state", state, "--route-inventory", inventory, "--runtime-policy", policy, "--approve-inventory-identity", inventoryID, "--approve-runtime-policy-identity", runtimePolicyID, "--approve-review-policy-identity", reviewPolicyID, "--approved-by", "owner"}
-	if code := runSetupWithClock(args, &stdout, &stderr, fixedSetupClock{setupTimeCLI().Add(time.Second)}); code != 0 || stderr.Len() != 0 || !strings.Contains(stdout.String(), `"key":"remote_provider_authorized"`) || !strings.Contains(stdout.String(), `"state":"passed"`) {
+	if code := runSetupWithClock(args, &stdout, &stderr, fixedSetupClock{setupTimeCLI().Add(time.Second)}); code != 1 || stdout.Len() != 0 {
 		t.Fatalf("provider=(%d,%q,%q)", code, stdout.String(), stderr.String())
 	}
 	encoded, _ := os.ReadFile(state)

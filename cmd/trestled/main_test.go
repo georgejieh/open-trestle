@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
-	"crypto/tls"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -17,12 +16,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
-	githubsource "github.com/georgejieh/open-trestle/adapters/scm/github"
-	"github.com/georgejieh/open-trestle/audit"
-	"github.com/georgejieh/open-trestle/internal/evidence"
-	reviewcore "github.com/georgejieh/open-trestle/internal/review"
 	"github.com/georgejieh/open-trestle/runtimeconfig"
 )
 
@@ -78,7 +72,7 @@ func TestBuildDaemonRejectsUnsafeConfiguration(t *testing.T) {
 		name        string
 		args        []string
 		environment func(string) string
-	}{{"missing token", []string{"--state-dir", root, "--tenant", "tenant-a", "--repository", "repo-a"}, daemonEnvironment(nil)}, {"short observer token", []string{"--state-dir", root, "--tenant", "tenant-a", "--repository", "repo-a"}, daemonEnvironment(map[string]string{"OPEN_TRESTLE_API_TOKEN": "01234567890123456789012345678901", "OPEN_TRESTLE_OBSERVER_TOKEN": "short"})}, {"missing tenant", []string{"--state-dir", root, "--repository", "repo-a"}, validEnvironment}, {"missing repository", []string{"--state-dir", root, "--tenant", "tenant-a"}, validEnvironment}, {"remote plaintext", []string{"--listen", "0.0.0.0:8741", "--state-dir", root, "--tenant", "tenant-a", "--repository", "repo-a"}, validEnvironment}, {"partial TLS", []string{"--listen", "0.0.0.0:8741", "--state-dir", root, "--tenant", "tenant-a", "--repository", "repo-a", "--tls-cert", "cert.pem"}, validEnvironment}, {"local with postgres authority", []string{"--state-dir", root, "--tenant", "tenant-a", "--repository", "repo-a", "--postgres-authority-identity", strings.Repeat("a", 64)}, validEnvironment}, {"daemon authority initialization removed", []string{"--state-dir", root, "--tenant", "tenant-a", "--repository", "repo-a", "--initialize-postgres-authority"}, validEnvironment}, {"unknown metadata store", []string{"--state-dir", root, "--tenant", "tenant-a", "--repository", "repo-a", "--metadata-store", "unknown"}, validEnvironment}, {"postgres without URL", []string{"--state-dir", root, "--tenant", "tenant-a", "--repository", "repo-a", "--metadata-store", "postgres"}, validEnvironment}, {"postgres without database authority", []string{"--state-dir", root, "--tenant", "tenant-a", "--repository", "repo-a", "--metadata-store", "postgres"}, daemonEnvironment(map[string]string{"OPEN_TRESTLE_API_TOKEN": "01234567890123456789012345678901", "OPEN_TRESTLE_POSTGRES_URL": "postgres://user:password@127.0.0.1/reviews?sslmode=disable"})}, {"ignored postgres URL", []string{"--state-dir", root, "--tenant", "tenant-a", "--repository", "repo-a"}, daemonEnvironment(map[string]string{"OPEN_TRESTLE_API_TOKEN": "01234567890123456789012345678901", "OPEN_TRESTLE_POSTGRES_URL": "postgres://ignored"})}, {"incomplete S3", []string{"--state-dir", root, "--tenant", "tenant-a", "--repository", "repo-a", "--metadata-store", "postgres", "--artifact-store", "s3"}, daemonEnvironment(map[string]string{"OPEN_TRESTLE_API_TOKEN": "01234567890123456789012345678901", "OPEN_TRESTLE_POSTGRES_URL": "postgres://user:password@127.0.0.1/reviews?sslmode=disable"})}, {"ignored GitHub API token", []string{"--state-dir", root, "--tenant", "tenant-a", "--repository", "repo-a"}, daemonEnvironment(map[string]string{"OPEN_TRESTLE_API_TOKEN": "01234567890123456789012345678901", "OPEN_TRESTLE_GITHUB_API_TOKEN": "ignored"})}, {"ignored AWS credential", []string{"--state-dir", root, "--tenant", "tenant-a", "--repository", "repo-a"}, daemonEnvironment(map[string]string{"OPEN_TRESTLE_API_TOKEN": "01234567890123456789012345678901", "OPEN_TRESTLE_AWS_ACCESS_KEY_ID": "ignored-key"})}, {"ignored S3 credential", []string{"--state-dir", root, "--tenant", "tenant-a", "--repository", "repo-a"}, daemonEnvironment(map[string]string{"OPEN_TRESTLE_API_TOKEN": "01234567890123456789012345678901", "OPEN_TRESTLE_S3_ACCESS_KEY_ID": "ignored-key"})}}
+	}{{"missing token", []string{"--state-dir", root, "--tenant", "tenant-a", "--repository", "repo-a"}, daemonEnvironment(nil)}, {"short observer token", []string{"--state-dir", root, "--tenant", "tenant-a", "--repository", "repo-a"}, daemonEnvironment(map[string]string{"OPEN_TRESTLE_API_TOKEN": "01234567890123456789012345678901", "OPEN_TRESTLE_OBSERVER_TOKEN": "short"})}, {"missing tenant", []string{"--state-dir", root, "--repository", "repo-a"}, validEnvironment}, {"missing repository", []string{"--state-dir", root, "--tenant", "tenant-a"}, validEnvironment}, {"remote plaintext", []string{"--listen", "0.0.0.0:8741", "--state-dir", root, "--tenant", "tenant-a", "--repository", "repo-a"}, validEnvironment}, {"partial TLS", []string{"--listen", "0.0.0.0:8741", "--state-dir", root, "--tenant", "tenant-a", "--repository", "repo-a", "--tls-cert", "cert.pem"}, validEnvironment}, {"ignored GitHub API token", []string{"--state-dir", root, "--tenant", "tenant-a", "--repository", "repo-a"}, daemonEnvironment(map[string]string{"OPEN_TRESTLE_API_TOKEN": "01234567890123456789012345678901", "OPEN_TRESTLE_GITHUB_API_TOKEN": "ignored"})}, {"required review mode", []string{"--state-dir", root, "--tenant", "tenant-a", "--repository", "repo-a", "--github-review-mode", "required"}, validEnvironment}}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			daemon, err := buildDaemon(context.Background(), test.args, test.environment, os.Stderr)
@@ -133,19 +127,6 @@ func TestBuildDaemonMountsConfiguredGitHubWebhook(t *testing.T) {
 	daemon.server.Handler.ServeHTTP(response, request)
 	if response.Code != http.StatusAccepted {
 		t.Fatalf("response=%d %s", response.Code, response.Body.String())
-	}
-}
-
-func TestSecureServiceEndpointRequiresHTTPSOrLoopback(t *testing.T) {
-	for _, value := range []string{"https://kms.us-east-1.amazonaws.com", "http://127.0.0.1:4566"} {
-		if !validSecureServiceEndpoint(value) {
-			t.Errorf("rejected %q", value)
-		}
-	}
-	for _, value := range []string{"http://kms.example.test", "http://localhost:4566", "https://user:secret@kms.example.test", "https://kms.example.test/path"} {
-		if validSecureServiceEndpoint(value) {
-			t.Errorf("accepted %q", value)
-		}
 	}
 }
 
@@ -285,52 +266,6 @@ func TestEnvironmentOpenAICredentialsAreReadOnlyOnRequest(t *testing.T) {
 	}
 }
 
-func TestRepositoryPublicationTokenProviderUsesExactRequestTimeAuthority(t *testing.T) {
-	scope, err := audit.NewReviewScope("tenant-a", "repo-a", "run-a")
-	if err != nil {
-		t.Fatal(err)
-	}
-	repository, err := evidence.NewRepositoryIdentity("github.com", []string{"owner"}, "repo")
-	if err != nil {
-		t.Fatal(err)
-	}
-	revision, err := evidence.NewRevisionIdentity(evidence.RevisionKindGitCommit, evidence.RevisionAlgorithmSHA1, strings.Repeat("a", 40))
-	if err != nil {
-		t.Fatal(err)
-	}
-	target, err := reviewcore.NewPublicationTarget("tenant-github-review", repository, "pull-42", revision)
-	if err != nil {
-		t.Fatal(err)
-	}
-	calls := 0
-	provider := repositoryPublicationTokenProvider{tenantID: "tenant-a", repositoryID: "repo-a", repositoryFullName: "owner/repo", publisherID: "tenant-github-review", environment: "OPEN_TRESTLE_GITHUB_PUBLICATION_TOKEN", getenv: func(name string) string {
-		calls++
-		if name != "OPEN_TRESTLE_GITHUB_PUBLICATION_TOKEN" {
-			t.Fatalf("name=%q", name)
-		}
-		return "publication-secret"
-	}}
-	token, err := provider.RetrievePublicationToken(context.Background(), scope, target)
-	if err != nil || token.Validate() != nil || calls != 1 {
-		t.Fatalf("token=(%#v,%v), calls=%d", token, err, calls)
-	}
-	otherScope, err := audit.NewReviewScope("tenant-a", "repo-b", "run-a")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if provider.ConfigurationIdentity() == "" {
-		t.Fatal("missing credential provider identity")
-	}
-	otherProvider := provider
-	otherProvider.repositoryFullName = "owner/other"
-	if provider.ConfigurationIdentity() == otherProvider.ConfigurationIdentity() {
-		t.Fatal("credential provider identity omitted repository scope")
-	}
-	if token, err := provider.RetrievePublicationToken(context.Background(), otherScope, target); !errors.Is(err, githubsource.ErrPublicationCredentialsUnavailable) || token.Validate() == nil || calls != 1 {
-		t.Fatalf("cross-scope token=(%#v,%v), calls=%d", token, err, calls)
-	}
-}
-
 func TestBuildDaemonObserverTokenIsReadOnly(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "state")
 	operator := "01234567890123456789012345678901"
@@ -369,14 +304,6 @@ func TestBuildDaemonRejectsDuplicateObserverAuthority(t *testing.T) {
 	}
 }
 
-func TestRemoteStorageTransportIsDirectAndBounded(t *testing.T) {
-	transport := newDaemonRemoteStorageTransport()
-	if transport == nil || transport.Proxy != nil || !transport.DisableKeepAlives || transport.ForceAttemptHTTP2 || transport.TLSClientConfig == nil || transport.TLSClientConfig.MinVersion != tls.VersionTLS12 || transport.ResponseHeaderTimeout != 10*time.Second || transport.MaxResponseHeaderBytes != 1<<20 {
-		t.Fatalf("transport=%#v", transport)
-	}
-	transport.CloseIdleConnections()
-}
-
 func TestBuildDaemonRejectsWebhookSecretReuse(t *testing.T) {
 	for _, other := range []string{"OPEN_TRESTLE_API_TOKEN", "OPEN_TRESTLE_OBSERVER_TOKEN", "OPEN_TRESTLE_GITHUB_SETUP_TOKEN", "OPEN_TRESTLE_SETUP_TOKEN"} {
 		t.Run(other, func(t *testing.T) {
@@ -392,24 +319,6 @@ func TestBuildDaemonRejectsWebhookSecretReuse(t *testing.T) {
 				t.Fatalf("daemon=%#v err=%v", daemon, err)
 			}
 		})
-	}
-}
-
-func TestPublicationCredentialProviderRejectsWebhookSecretReuseAtRetrieval(t *testing.T) {
-	secret := "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
-	digest := sha256.Sum256([]byte(secret))
-	provider := repositoryPublicationTokenProvider{tenantID: "tenant-a", repositoryID: "repo-a", repositoryFullName: "owner/repo", publisherID: "tenant-github-review", environment: "OPEN_TRESTLE_GITHUB_PUBLICATION_TOKEN", forbiddenCredentialDigest: digest, getenv: func(string) string { return secret }}
-	withoutFence := provider
-	withoutFence.forbiddenCredentialDigest = [sha256.Size]byte{}
-	if provider.ConfigurationIdentity() == withoutFence.ConfigurationIdentity() {
-		t.Fatal("credential identity omitted webhook separation posture")
-	}
-	scope, _ := audit.NewReviewScope("tenant-a", "repo-a", "run-a")
-	repository, _ := evidence.NewRepositoryIdentity("github.com", []string{"owner"}, "repo")
-	revision, _ := evidence.NewRevisionIdentity(evidence.RevisionKindGitCommit, evidence.RevisionAlgorithmSHA1, strings.Repeat("a", 40))
-	target, _ := reviewcore.NewPublicationTarget("tenant-github-review", repository, "pull-42", revision)
-	if _, err := provider.RetrievePublicationToken(context.Background(), scope, target); !errors.Is(err, githubsource.ErrPublicationCredentialsUnavailable) {
-		t.Fatalf("error=%v", err)
 	}
 }
 

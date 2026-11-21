@@ -27,7 +27,7 @@ An adapter instance is bound to one canonical repository authority, one API endp
 
 A request that does not match is blocked before any network access. `TokenProvider` retrieves a token separately for every GitHub API request. A nil provider allows documented anonymous access to public resources. A typed-nil provider is rejected, so it cannot select anonymous access by accident.
 
-Setup permission validation is separate from source acquisition. `trestle setup check integration` uses a dedicated GitHub App user access token to inspect one installation. It then uses the separate runtime installation token to inspect the selected repository scope. It accepts only the metadata, contents and pull-request read permissions, and it does not grant access to acquire source or publish.
+Setup permission validation is separate from source acquisition. `trestle setup check integration` uses a dedicated GitHub App user access token to inspect one installation. It then uses the separate runtime installation token to inspect the selected repository scope. It accepts only the metadata, contents and pull-request read permissions, and it does not grant access to acquire source. No current setup profile uses it.
 
 The default API endpoint is `https://api.github.com`. The default pinned API version is `2026-03-10`. An operator can select another exact `YYYY-MM-DD` version for GitHub Enterprise compatibility. Plain HTTP is accepted only for an IP-literal loopback endpoint.
 

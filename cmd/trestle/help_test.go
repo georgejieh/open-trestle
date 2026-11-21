@@ -28,7 +28,7 @@ func TestUsageGroupsCommandsByAudience(t *testing.T) {
 		{"Everyday", []string{"usage: trestle review [", "usage: trestle update [", "usage: trestle usage "}},
 		{"Setup and keys", []string{"usage: trestle init ", "usage: trestle keys [list]"}},
 		{"Integrations", []string{"usage: trestle local-git model-review ", "usage: trestle runs submit ", "usage: trestle mcp ", "usage: trestle lsp "}},
-		{"Operators", []string{"usage: trestle setup bootstrap ", "usage: trestle config validate ", "usage: trestle admin bundle "}},
+		{"Operators", []string{"usage: trestle setup bootstrap ", "usage: trestle config validate ", "usage: trestle admin runtime "}},
 		{"Evaluation", []string{"usage: trestle evaluate adjudication ", "usage: trestle validate-fixture "}},
 	}
 	starts := make([]int, len(groups)+1)

@@ -302,24 +302,12 @@ func setupRequirementAction(requirement setupcore.Requirement) string {
 		return "Provide --administrator-approved-by matching the named recovery owner, then run the selected check."
 	case setupcore.CheckObserverCredentialPostureValidated:
 		return "Set distinct operator and observer token environments, then run the selected check."
-	case setupcore.CheckPostgresStorageValidated:
-		return "Approve the identity from trestle admin postgres identity, then run this explicit read-only database check."
-	case setupcore.CheckEnvelopeStorageValidated:
-		return "Approve the identity from trestle admin envelope identity, then run this explicit encrypted object create, read, exact delete, and absence check."
-	case setupcore.CheckSecretBackendValidated:
-		return "Approve the identity from trestle admin kms identity, then run this explicit tenant-key generate and unwrap check."
 	case setupcore.CheckRemoteProviderAuthorized:
 		return "Approve the protected route inventory, runtime policy, and review policy identities, then run this credential-free remote-provider authorization check."
 	case setupcore.CheckIntegrationPermissionsValidated:
 		return "Approve the exact GitHub broker and permission authorities and explicitly allow token creation. This check creates a short-lived read-only installation token for selected-repository inspection and permits renewal only on foreground demand. Owner records remain after close; restart requires an explicitly approved fresh generation."
 	case setupcore.CheckWebhookValidated:
 		return "Approve the exact GitHub webhook authority, then run the local signature, filtering, idempotency, conflict, and cleanup check."
-	case setupcore.CheckSharedRateLimitValidated:
-		return "Approve the exact PostgreSQL shared rate-limit authority, then prove cross-instance quota, cardinality, expiry, and cleanup behavior."
-	case setupcore.CheckReplicaReconciliationValidated:
-		return "Approve the exact PostgreSQL reconciliation authority, then run the bounded two-instance journal, lease, finalization, and cleanup check."
-	case setupcore.CheckSignedBundleValidated:
-		return "Approve the exact opaque bundle digest, size, Ed25519 public key, and signature authority, then stream the local verification check."
 	case setupcore.CheckPolicyValidated:
 		return "Provide the protected policy paths and all three approved identities, then run the selected check."
 	case setupcore.CheckLocalInferenceValidated:

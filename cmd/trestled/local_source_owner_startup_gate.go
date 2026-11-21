@@ -572,24 +572,6 @@ func (s *localNoGitOwnerPreflight) recheckConstructed(ctx context.Context, state
 	return noGitOwnerAbsent(stateRoot)
 }
 
-// The inventory's exact owner-leaf exception is only useful to the all-local
-// owner gate. Reject it in local-metadata/nonlocal-artifact mode before effects.
-func rejectMixedLocalOwner(stateDirectory string) (result error) {
-	path, err := filepath.Abs(stateDirectory)
-	if err != nil {
-		return err
-	}
-	root, err := localExistingRoot(path)
-	if err != nil {
-		return err
-	}
-	if root == nil {
-		return nil
-	}
-	defer func() { result = errors.Join(result, root.Close()) }()
-	return noGitOwnerAbsent(root)
-}
-
 // A missing no-Git state may be created below a trusted, non-writable 0755
 // parent; unlike Git enrollment it need not demand a 0700 parent.
 type localNoGitMissingBoundary struct {

@@ -15,7 +15,6 @@ import (
 	"testing"
 	"time"
 
-	postgresstore "github.com/georgejieh/open-trestle/adapters/storage/postgres"
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/client"
 	"github.com/georgejieh/open-trestle/controlplane"
@@ -37,12 +36,12 @@ const refusalRouteContextTokens = 4097
 
 var everyRequestRefused = routeCapacity{refusalRouteContextTokens, 4096, refusalRouteContextTokens, 1}
 
-func contextRefusalModelWorkerFixture(t *testing.T) ([]string, func(string) string, *daemonBudgetedModelFixture, evidence.RepositoryIdentity, evidence.RevisionIdentity, evidence.RevisionIdentity, runtimeconfig.RuntimePolicy, runtimeconfig.RouteInventory) {
+func contextRefusalModelWorkerFixture(t *testing.T) ([]string, func(string) string, *daemonFakeModelFixture, evidence.RepositoryIdentity, evidence.RevisionIdentity, evidence.RevisionIdentity, runtimeconfig.RuntimePolicy, runtimeconfig.RouteInventory) {
 	t.Helper()
 	return capacityModelWorkerFixture(t, everyRequestRefused)
 }
 
-func capacityModelWorkerFixture(t *testing.T, capacity routeCapacity) ([]string, func(string) string, *daemonBudgetedModelFixture, evidence.RepositoryIdentity, evidence.RevisionIdentity, evidence.RevisionIdentity, runtimeconfig.RuntimePolicy, runtimeconfig.RouteInventory) {
+func capacityModelWorkerFixture(t *testing.T, capacity routeCapacity) ([]string, func(string) string, *daemonFakeModelFixture, evidence.RepositoryIdentity, evidence.RevisionIdentity, evidence.RevisionIdentity, runtimeconfig.RuntimePolicy, runtimeconfig.RouteInventory) {
 	t.Helper()
 	args, getenv, fake, repository, base, head, _, _ := localModelWorkerFixture(t)
 	rewrite := func(path string, change func(map[string]any)) []byte {
@@ -55,7 +54,7 @@ func capacityModelWorkerFixture(t *testing.T, capacity routeCapacity) ([]string,
 			t.Fatal(err)
 		}
 		change(wire)
-		raw = daemonBudgetedModelJSON(t, wire)
+		raw = daemonFakeModelJSON(t, wire)
 		if err := os.WriteFile(path, raw, 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -99,7 +98,7 @@ func capacityModelWorkerFixture(t *testing.T, capacity routeCapacity) ([]string,
 // assertContextRouteRefusal checks one settled refusal: the context task's
 // recorded reason and counts on the API receipt, the failed run, the retained
 // packet, no input, marker or route audit, and the expected model call count.
-func assertContextRouteRefusal(t *testing.T, d *daemon, api *client.Client, fake *daemonBudgetedModelFixture, scope audit.ReviewScope, statePath string, at time.Time, declared uint32, calls int) {
+func assertContextRouteRefusal(t *testing.T, d *daemon, api *client.Client, fake *daemonFakeModelFixture, scope audit.ReviewScope, statePath string, at time.Time, declared uint32, calls int) {
 	t.Helper()
 	ctx := context.Background()
 	receipt, err := api.GetRun(ctx, scope)
@@ -161,7 +160,7 @@ func assertContextRouteRefusal(t *testing.T, d *daemon, api *client.Client, fake
 			t.Fatal("refusal gained route evidence")
 		}
 	}
-	for _, endpoint := range []*daemonBudgetedModelEndpoint{fake.generation, fake.verification} {
+	for _, endpoint := range []*daemonFakeModelEndpoint{fake.generation, fake.verification} {
 		if got, _, _, failures := endpoint.snapshot(); got != calls || len(failures) != 0 {
 			t.Fatalf("model calls=%d, want %d; failures=%v", got, calls, failures)
 		}
@@ -176,9 +175,9 @@ func assertContextRouteRefusal(t *testing.T, d *daemon, api *client.Client, fake
 	}
 }
 
-func startContextRefusalDaemon(t *testing.T, args []string, getenv func(string) string, clock *daemonBudgetedHandlerClock) (*daemon, *client.Client, *httptest.Server) {
+func startContextRefusalDaemon(t *testing.T, args []string, getenv func(string) string, clock *daemonFakeHandlerClock) (*daemon, *client.Client, *httptest.Server) {
 	t.Helper()
-	d, err := buildDaemonWithDependencies(context.Background(), args, getenv, &bytes.Buffer{}, daemonDependencies{openPostgres: postgresstore.Open, clock: clock, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()})
+	d, err := buildDaemonWithDependencies(context.Background(), args, getenv, &bytes.Buffer{}, daemonDependencies{clock: clock, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +217,7 @@ func runLocalFullReviewOnSupervisors(t *testing.T, d *daemon, api *client.Client
 func TestDaemonLocalModelWorkersContextRouteRefusalSettles(t *testing.T) {
 	args, getenv, fake, repository, base, head, policy, inventory := contextRefusalModelWorkerFixture(t)
 	args = append(args, "--local-model-workers")
-	clock := &daemonBudgetedHandlerClock{at: time.Now().UTC().Truncate(time.Millisecond)}
+	clock := &daemonFakeHandlerClock{at: time.Now().UTC().Truncate(time.Millisecond)}
 	statePath := daemonTestFlagValue(t, args, "--state-dir")
 	d, api, _ := startContextRefusalDaemon(t, args, getenv, clock)
 	for _, run := range []string{"run-route-refusal", "run-route-refusal-later"} {
@@ -235,7 +234,7 @@ func TestDaemonLocalModelWorkersContextRouteRefusalSurvivesRestart(t *testing.T)
 		t.Run(mode, func(t *testing.T) {
 			args, getenv, fake, repository, base, head, policy, inventory := contextRefusalModelWorkerFixture(t)
 			args = append(args, "--local-model-workers")
-			clock := &daemonBudgetedHandlerClock{at: time.Now().UTC().Truncate(time.Millisecond)}
+			clock := &daemonFakeHandlerClock{at: time.Now().UTC().Truncate(time.Millisecond)}
 			statePath := daemonTestFlagValue(t, args, "--state-dir")
 			d, api, server := startContextRefusalDaemon(t, args, getenv, clock)
 			scope := runLocalFullReviewOnSupervisors(t, d, api, "run-route-refusal", repository, base, head, policy, inventory, clock.Now())
@@ -295,7 +294,7 @@ func probeRequiredTokens(t *testing.T, floor routeCapacity) (large, small uint64
 	args, getenv, _, repository, base, head, policy, inventory := capacityModelWorkerFixture(t, floor)
 	args = append(args, "--local-model-workers")
 	largeHead := largeReviewHead(t, args)
-	clock := &daemonBudgetedHandlerClock{at: time.Now().UTC().Truncate(time.Millisecond)}
+	clock := &daemonFakeHandlerClock{at: time.Now().UTC().Truncate(time.Millisecond)}
 	d, api, _ := startContextRefusalDaemon(t, args, getenv, clock)
 	required := func(run string, head evidence.RevisionIdentity) uint64 {
 		scope := runLocalFullReviewOnSupervisors(t, d, api, run, repository, base, head, policy, inventory, clock.Now())
@@ -331,7 +330,7 @@ func TestDaemonLocalModelWorkersRefusedRunLaterRunAndRestart(t *testing.T) {
 			args, getenv, fake, repository, base, head, policy, inventory := capacityModelWorkerFixture(t, capacity)
 			args = append(args, "--local-model-workers")
 			largeHead := largeReviewHead(t, args)
-			clock := &daemonBudgetedHandlerClock{at: time.Now().UTC().Truncate(time.Millisecond)}
+			clock := &daemonFakeHandlerClock{at: time.Now().UTC().Truncate(time.Millisecond)}
 			statePath := daemonTestFlagValue(t, args, "--state-dir")
 			d, api, server := startContextRefusalDaemon(t, args, getenv, clock)
 			refused := runLocalFullReviewOnSupervisors(t, d, api, "run-large-refused", repository, base, largeHead, policy, inventory, clock.Now())

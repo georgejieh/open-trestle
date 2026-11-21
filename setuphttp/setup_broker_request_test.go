@@ -18,7 +18,6 @@ import (
 )
 
 const setupBrokerHTTPConfirmation = "create GitHub installation token and run integration_permissions_validated"
-const setupBrokerHTTPCurrentChecker = "8308da20feae56a9f00344d5ac0824bf5133f1eff42d2ab31bce83b172daf3e9"
 
 type setupBrokerHTTPClock struct{}
 
@@ -57,9 +56,9 @@ func newSetupBrokerHTTPBoundary(t *testing.T, stateMode string) *setupBrokerHTTP
 	}
 	var err error
 	if stateMode == "historic" {
-		b.plan, err = setupcore.NewPlan(setupcore.ProfileControlledHybrid, b.tenant, b.repository, "owner", time.UnixMilli(100).UTC())
+		b.plan, err = setupcore.NewPlan(setupcore.ProfileLocalSingleNode, b.tenant, b.repository, "owner", time.UnixMilli(100).UTC())
 	} else {
-		b.plan, err = setupcore.NewCurrentPlan(setupcore.ProfileControlledHybrid, b.tenant, b.repository, "owner", time.UnixMilli(100).UTC())
+		b.plan, err = setupcore.NewCurrentPlan(setupcore.ProfileLocalSingleNode, b.tenant, b.repository, "owner", time.UnixMilli(100).UTC())
 	}
 	if err != nil {
 		t.Fatal(err)
@@ -175,39 +174,7 @@ func (b *setupBrokerHTTPBoundary) unchanged(t *testing.T) {
 		t.Fatalf("state changed: %v", err)
 	}
 }
-func (b *setupBrokerHTTPBoundary) resultReceipt(t *testing.T, res *httptest.ResponseRecorder, expected setupcore.CheckState) {
-	t.Helper()
-	var value struct {
-		Contract string          `json:"contract"`
-		Version  int             `json:"schema_version"`
-		Plan     json.RawMessage `json:"plan"`
-		Receipt  json.RawMessage `json:"receipt"`
-	}
-	decoder := json.NewDecoder(bytes.NewReader(res.Body.Bytes()))
-	decoder.DisallowUnknownFields()
-	if res.Code != http.StatusOK || decoder.Decode(&value) != nil || decoder.Decode(&struct{}{}) != io.EOF || value.Contract != "open-trestle/setup-check-result" || value.Version != 1 {
-		t.Fatalf("result=%d %s", res.Code, res.Body.String())
-	}
-	plan, planErr := setupcore.DecodePlan(value.Plan)
-	receipt, receiptErr := setupcore.DecodeCheckReceipt(value.Receipt)
-	if planErr != nil || receiptErr != nil {
-		t.Fatalf("plan=%v receipt=%v", planErr, receiptErr)
-	}
-	if receipt.State() != expected || receipt.Key() != setupcore.CheckIntegrationPermissionsValidated || receipt.CheckerIdentity() != setupBrokerHTTPCurrentChecker || receipt.PlanIdentity() != b.plan.Identity() || plan.Revision() != b.plan.Revision()+1 || len(plan.Receipts()) != 1 || plan.Receipts()[0].Identity() != receipt.Identity() {
-		t.Fatal("wrong receipt binding")
-	}
-	persisted, err := setupcore.InspectStateFile(context.Background(), b.path)
-	if err != nil || persisted.Identity() != plan.Identity() {
-		t.Fatalf("receipt not persisted: %v", err)
-	}
-	for _, forbidden := range []string{b.token, "operator-", "observer-", "PRIVATE KEY", "installation_token"} {
-		if strings.Contains(res.Body.String(), forbidden) {
-			t.Fatalf("response leaked %q", forbidden)
-		}
-	}
-}
-
-func TestSetupBrokerHTTPV2RunsThroughRunnerAndAcceptsKeyPermutation(t *testing.T) {
+func TestSetupBrokerHTTPV2IsRefusedByRunnerForLocalProfile(t *testing.T) {
 	for _, permutation := range []bool{false, true} {
 		t.Run(map[bool]string{false: "encoder_order", true: "reverse_order"}[permutation], func(t *testing.T) {
 			b := newSetupBrokerHTTPBoundary(t, "current")
@@ -224,10 +191,11 @@ func TestSetupBrokerHTTPV2RunsThroughRunnerAndAcceptsKeyPermutation(t *testing.T
 				}
 				raw = "{" + strings.Join(parts, ",") + "}"
 			}
-			b.resultReceipt(t, b.serve(raw, "application/json; charset=utf-8"), setupcore.CheckPassed)
-			if b.builderCalls != 1 || b.probeCalls != 1 || b.environmentCalls != 0 {
+			setupBrokerHTTPError(t, b.serve(raw, "application/json; charset=utf-8"), 422, "check_failed")
+			if b.builderCalls != 1 || b.probeCalls != 0 || b.environmentCalls != 0 {
 				t.Fatalf("builder=%d probe=%d environment=%d", b.builderCalls, b.probeCalls, b.environmentCalls)
 			}
+			b.unchanged(t)
 		})
 	}
 }
@@ -349,7 +317,7 @@ func TestSetupBrokerHTTPLegacyIntegrationRefusedBeforeMissingState(t *testing.T)
 }
 
 func TestSetupBrokerHTTPStateBuilderAndCoreRefusalsAreDistinct(t *testing.T) {
-	for _, mode := range []string{"missing_state", "invalid_state", "stale_plan", "wrong_common", "absent_host", "nil_builder", "descriptor_tenant", "descriptor_repository", "historic_catalog", "wrong_actor", "wrong_permission"} {
+	for _, mode := range []string{"missing_state", "invalid_state", "stale_plan", "wrong_common", "absent_host", "nil_builder", "descriptor_tenant", "descriptor_repository", "historic_catalog"} {
 		t.Run(mode, func(t *testing.T) {
 			stateMode := "current"
 			if mode == "missing_state" {
@@ -385,45 +353,20 @@ func TestSetupBrokerHTTPStateBuilderAndCoreRefusalsAreDistinct(t *testing.T) {
 				b.repository = "another-repository"
 			case "historic_catalog":
 				code = "check_failed"
-			case "wrong_actor":
-				value["approved_by"] = "another-owner"
-			case "wrong_permission":
-				value["approve_integration_permission_authority_identity"] = strings.Repeat("f", 64)
 			}
-			res := b.serve(setupBrokerHTTPEncode(t, value), "application/json")
-			if mode == "wrong_actor" || mode == "wrong_permission" {
-				b.resultReceipt(t, res, setupcore.CheckBlocked)
-			} else {
-				setupBrokerHTTPError(t, res, status, code)
-				if stateMode == "absent" {
-					b.noStateArtifacts(t)
-				} else if mode == "invalid_state" {
-					content, err := os.ReadFile(b.path)
-					if err != nil || string(content) != "not-json" {
-						t.Fatalf("invalid state changed: %v", err)
-					}
-				} else {
-					b.unchanged(t)
+			setupBrokerHTTPError(t, b.serve(setupBrokerHTTPEncode(t, value), "application/json"), status, code)
+			if stateMode == "absent" {
+				b.noStateArtifacts(t)
+			} else if mode == "invalid_state" {
+				content, err := os.ReadFile(b.path)
+				if err != nil || string(content) != "not-json" {
+					t.Fatalf("invalid state changed: %v", err)
 				}
+			} else {
+				b.unchanged(t)
 			}
 			if b.builderCalls != builds || b.probeCalls != 0 || b.environmentCalls != 0 {
 				t.Fatalf("builder=%d want=%d probe=%d environment=%d", b.builderCalls, builds, b.probeCalls, b.environmentCalls)
-			}
-		})
-	}
-}
-
-func TestSetupBrokerHTTPProbeOutcomesKeepReceiptSchemaOne(t *testing.T) {
-	for _, state := range []setupcore.CheckState{setupcore.CheckBlocked, setupcore.CheckUnavailable} {
-		t.Run(string(state), func(t *testing.T) {
-			b := newSetupBrokerHTTPBoundary(t, "current")
-			b.result = setupcore.NewInvalidIntegrationPermissionProbeResult()
-			if state == setupcore.CheckUnavailable {
-				b.result = setupcore.NewUnavailableIntegrationPermissionProbeResult()
-			}
-			b.resultReceipt(t, b.serve(b.wire(t), "application/json"), state)
-			if b.builderCalls != 1 || b.probeCalls != 1 {
-				t.Fatalf("builder=%d probe=%d", b.builderCalls, b.probeCalls)
 			}
 		})
 	}
@@ -499,41 +442,6 @@ func TestSetupBrokerHTTPUnrelatedV1CheckKeepsItsWire(t *testing.T) {
 				t.Fatal("unrelated check reached integration")
 			}
 		})
-	}
-}
-
-func TestSetupBrokerHTTPInitializeUsesCurrentCatalog(t *testing.T) {
-	b := newSetupBrokerHTTPBoundary(t, "absent")
-	value := map[string]any{"contract": "open-trestle/setup-init-request", "schema_version": 1, "profile": "controlled_hybrid", "tenant_id": b.tenant, "repository_id": b.repository, "recovery_owner": "owner", "confirmation": "create setup plan"}
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/setup/init", strings.NewReader(setupBrokerHTTPEncode(t, value)))
-	req.Header.Set("Authorization", "Bearer "+b.token)
-	req.Header.Set("Content-Type", "application/json")
-	res := httptest.NewRecorder()
-	b.handler.ServeHTTP(res, req)
-	if res.Code != http.StatusCreated {
-		t.Fatalf("initialize=%d %s", res.Code, res.Body.String())
-	}
-	plan, err := setupcore.InspectStateFile(context.Background(), b.path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	found := false
-	for _, authority := range plan.CheckerAuthorities() {
-		if authority.Key == setupcore.CheckIntegrationPermissionsValidated {
-			found = true
-			if authority.CheckerIdentity != setupBrokerHTTPCurrentChecker {
-				t.Fatal("init installed historical integration authority")
-			}
-		}
-	}
-	if !found || len(plan.Receipts()) != 0 {
-		t.Fatal("init missing current pending integration")
-	}
-	b.noDispatch(t)
-	b.plan = plan
-	b.resultReceipt(t, b.serve(b.wire(t), "application/json"), setupcore.CheckPassed)
-	if b.builderCalls != 1 || b.probeCalls != 1 {
-		t.Fatalf("builder=%d probe=%d", b.builderCalls, b.probeCalls)
 	}
 }
 

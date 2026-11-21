@@ -28,7 +28,7 @@ func setupConnectionEndpointMatchesZone(connection runtimeconfig.ProviderConnect
 }
 
 func setupBrokeredRoutePairMatches(plan Plan, inventory runtimeconfig.RouteInventory, policy runtimeconfig.RuntimePolicy, now time.Time) bool {
-	if plan.Profile() != ProfileControlledHybrid && plan.Profile() != ProfileKubernetesHA || plan.Posture().Inference() != InferenceApprovedRemote || plan.Posture().Egress() != EgressAllowlisted || policy.Independence().Level() != gateway.RouteIndependenceDistinctProvider || policy.Publication().MinimumIndependence() != gateway.RouteIndependenceDistinctProvider || len(inventory.Candidates()) != 2 || len(policy.Connections()) != 2 {
+	if plan.Posture().Inference() != InferenceApprovedRemote || plan.Posture().Egress() != EgressAllowlisted || policy.Independence().Level() != gateway.RouteIndependenceDistinctProvider || policy.Publication().MinimumIndependence() != gateway.RouteIndependenceDistinctProvider || len(inventory.Candidates()) != 2 || len(policy.Connections()) != 2 {
 		return false
 	}
 	pinned, hasPin := policy.Ranking().PinnedRoute()

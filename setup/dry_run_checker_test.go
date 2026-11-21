@@ -83,13 +83,13 @@ func TestDryRunFileCheckerReportsConfigurationLoss(t *testing.T) {
 	}
 }
 
-func TestDryRunCheckerSupportsEveryInferencePosture(t *testing.T) {
+func TestDryRunCheckerSupportsLocalInferencePosture(t *testing.T) {
 	tests := []struct {
 		profile   Profile
 		zone      string
 		endpoints []string
 		cost      uint64
-	}{{ProfileLocalSingleNode, "local", []string{"http://127.0.0.1:11434/v1", "http://[::1]:11435/v1"}, 0}, {ProfileAirGapped, "local", []string{"http://127.0.0.1:11434/v1", "http://[::1]:11435/v1"}, 0}, {ProfileControlledHybrid, "private_remote", []string{"https://one.example/v1", "https://two.example/v1"}, 100000}, {ProfileKubernetesHA, "private_remote", []string{"https://one.example/v1", "https://two.example/v1"}, 100000}}
+	}{{ProfileLocalSingleNode, "local", []string{"http://127.0.0.1:11434/v1", "http://[::1]:11435/v1"}, 0}}
 	for _, tt := range tests {
 		t.Run(string(tt.profile), func(t *testing.T) {
 			invDoc, polDoc := setupRuntimeDocuments(t, tt.zone, tt.endpoints, tt.cost, false)

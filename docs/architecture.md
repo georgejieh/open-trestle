@@ -22,7 +22,7 @@ GitHub webhook, CLI daemon submission, MCP plan submission, or the CLI direct re
   -> verification (a different model)
   -> deterministic judgement: dedupe, rank, pre-existing class, advisory (direct path)
   -> result linked to its sources, with a walkthrough (direct path), or abstention
-  -> surface-specific rendering or provider-native publication
+  -> surface-specific rendering
 ```
 
 There are two ways to run this flow.
@@ -99,7 +99,7 @@ This is a narrow confidentiality control, not full secret detection, and the san
 
 Repository files, issue text, CI definitions, logs, analyzer output and model output are treated as data, not instructions (see the [prompt-injection boundary](prompt-injection-boundary.md)). Commands come only from versioned adapters with a narrow argument grammar. Dynamic validation is off by default. It needs authorization, a permitted target, isolated execution, resource limits, default-deny networking and a durable receipt.
 
-Read-only evidence work may share immutable, content-addressed artifacts across analyzers and review workers. Cache keys include the snapshot, adapter version, policy version and request parameters. Candidate generation, verification and publication do not rely on another worker's conversational summary. Restartable execution records capture the state of intake, snapshot capture, evidence acquisition, analysis, candidate generation, verification and publication.
+Read-only evidence work may share immutable, content-addressed artifacts across analyzers and review workers. Cache keys include the snapshot, adapter version, policy version and request parameters. Candidate generation and verification do not rely on another worker's conversational summary. Restartable execution records capture the state of intake, snapshot capture, evidence acquisition, analysis, candidate generation and verification.
 
 All transports use one immutable review-run task graph. The graph fixes the exact inputs, the approved handlers, the dependencies, the attempt limits, the retry delays and the lease durations. The control plane keeps the following guarantees:
 
@@ -109,36 +109,21 @@ All transports use one immutable review-run task graph. The graph fixes the exac
 - It passes terminal dependency failures downstream without running the downstream work.
 - It resumes expired leases after a restart.
 
-External publication stays inside its stricter single-operation idempotency boundary rather than relying on generic task retry. The GitHub adapter adds a durable per-attempt dispatch guard, because the create-review endpoint has no documented native idempotency key.
+Workers acquire task leases that the journal fences. Reconciliation rebuilds notices after a missed signal or a process restart. The same supervisor derives terminal success or failure from the replayed task state and appends one compare-and-append terminal event. A process stop therefore cannot leave a settled run permanently active.
 
-PostgreSQL queue rows and wake-ups from `LISTEN`/`NOTIFY`, which carry no payload, reduce polling latency. Workers still acquire task leases that the journal fences. PostgreSQL metadata mode also replaces the process-local API guards with fixed windows based on the database clock. Existing authority keys serialize by row lock, and new-key cardinality serializes by namespace advisory lock. Only domain-separated key digests, the configuration identity, the count and the time bounds are stored. If the database fails, the request is denied as unavailable.
+### Results
 
-The Kubernetes HA setup probe can use two stores over the verified database. With them it proves shared plan visibility, idempotent notification scheduling, fenced task acquisition, cross-instance completion and one terminal event. It also proves retry-safe fixture cleanup. Reconciliation rebuilds notices after a missed signal or a process restart. The same supervisor derives terminal success or failure from the replayed task state and appends one compare-and-append terminal event. A process stop therefore cannot leave a settled run permanently active.
+Results are rendered from the canonical result, which is the system of record. Publication readiness is advisory and grants no external effect. The daemon does not publish reviews to a forge.
 
-### Publication
-
-A source-control comment or check is a rendering of the canonical result, not the system of record. Before an external write, the publisher validates the current head revision, the evidence links, the finding fingerprint, the policy outcome and the duplicate state.
-
-Publication readiness is advisory and cannot grant an external effect. An external write requires all of the following:
-
-- a live capability authorization;
-- an acquired source and context binding;
-- an exclusive operation claim;
-- an attempt authorization;
-- a fresh reconciliation against the current head;
-- a publisher implementation that guarantees deduplication by the host-issued operation key.
-
-Each successful and each failed attempt is recorded once. Automatic retry is limited to closed transient classifications. A retry keeps the same operation key, honors the bounded delay, reacquires the current head and stops at the configured attempt limit. A stale head always stops the operation and requires a new snapshot and plan.
-
-Results show a human-facing review disposition next to the coverage: verified blocking findings, verified non-blocking findings, cleared gates, incomplete checks and explicit abstentions. A publication must not imply that a clear or passing disposition replaces human approval.
+Results show a human-facing review disposition next to the coverage: verified blocking findings, verified non-blocking findings, cleared gates, incomplete checks and explicit abstentions. A rendered result must not imply that a clear or passing disposition replaces human approval.
 
 ### Guided setup
 
 The setup core turns the deployment posture and readiness checks into a versioned, resumable plan that holds no secrets. The plan comes with an immutable checker catalog and a replayable receipt ledger.
 
-The CLI initializes and inspects protected state, validates local storage and the posture of observer credentials, requires exact runtime policy identities and a named approval, and runs a bounded, provider-neutral dry run with no network or publication authority. A loopback-only guided web service and a keyboard-first terminal workflow use the same plan and receipt contracts.
+The CLI initializes and inspects protected state, validates local storage and the posture of observer credentials, requires exact runtime policy identities and a named approval, and runs a bounded, provider-neutral dry run with no network authority. A loopback-only guided web service and a keyboard-first terminal workflow use the same plan and receipt contracts.
 
-Air-gapped setup can stream one opaque local file and verify its exact SHA-256 digest, byte count and Ed25519 signature. It does this without extraction, import, execution or network access. The setup surfaces use secure defaults, show the consequence of less-safe choices, keep recovery state and remain usable over SSH and in air-gapped environments.
+The setup surfaces use secure defaults, show the consequence of less-safe choices, keep recovery state and remain usable over SSH.
 
 ## Integration model
 
@@ -173,11 +158,9 @@ Keep the historical-packet startup refusal and the prepared-to-success refusal u
 - safe handling of uncertain partial effects;
 - durable recovery, including an interruption after candidate persistence followed by a restart, with no duplicate dispatch and no unverified promotion.
 
-The broader deployment architecture uses a trusted control plane, PostgreSQL ledgers and content-free task notifications, S3-compatible artifact storage, a replaceable notification boundary, policy evaluation and scoped remote workers. The trusted CLI, snapshot, receipt, daemon, control-plane, PostgreSQL, S3-compatible storage and remote-worker boundaries are implemented in Go.
+The deployment architecture uses a trusted control plane with local state, content-free task notifications, policy evaluation and scoped remote workers. The trusted CLI, snapshot, receipt, daemon, control-plane and remote-worker boundaries are implemented in Go.
 
-The following parts are planned design with no code, manifests or charts in the tree: OpenTelemetry observability, isolated sandbox runners, a Docker Compose profile for a single operator, and Helm charts or Kubernetes manifests for larger installations (see the [roadmap](roadmap.md)). The setup planner names a `kubernetes_ha` profile and can probe two stores over one verified PostgreSQL database. That is a setup check, not a Kubernetes deployment. None of this is a released deployment. Today only Linux amd64 has a tested path, and remote model providers work only with the packaged Linux amd64 install (see [platforms](platforms.md)). Support for macOS and Windows is planned for the first release.
-
-The current storage foundation includes a conditional S3-compatible backend and a client-side envelope store. It requires versioned objects and a tenant-aware key provider that the operator supplies. It is not a complete deployed storage profile until it has a production KMS provider, a canonical metadata database, a bucket policy, recovery tooling and deployment conformance tests.
+The following parts are planned design with no code, manifests or charts in the tree: OpenTelemetry observability, isolated sandbox runners, a Docker Compose profile for a single operator, and Helm charts or Kubernetes manifests for larger installations (see the [roadmap](roadmap.md)). None of this is a released deployment. Today only Linux amd64 has a tested path, and remote model providers work only with the packaged Linux amd64 install (see [platforms](platforms.md)). Support for macOS and Windows is planned for the first release.
 
 ## Non-goals
 

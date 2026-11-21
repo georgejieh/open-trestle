@@ -591,24 +591,16 @@ class ReleaseContractTest(unittest.TestCase):
         self.assertIn("\ngo 1.25.0\n", go_mod)
         self.assertIn("\ntoolchain go1.26.11\n", go_mod)
         for dependency in (
-            "github.com/jackc/pgx/v5 v5.9.2",
-            "golang.org/x/sync v0.22.0",
-            "golang.org/x/text v0.41.0",
+            "github.com/tetratelabs/wazero v1.12.0",
+            "golang.org/x/sys v0.44.0",
         ):
             self.assertIn(dependency, go_mod)
-        self.assertNotIn("golang.org/x/crypto", go_mod)
+        for absent in ("golang.org/x/crypto", "github.com/jackc/pgx", "github.com/aws/"):
+            self.assertNotIn(absent, go_mod)
 
         expected_licenses = {
-            "aws-sdk-go-v2-1.45.1-Apache-2.0.txt",
-            "aws-smithy-go-1.28.1-Apache-2.0.txt",
-            "golang-x-sync-v0.22.0-BSD-3-Clause.txt",
             "golang-x-sys-v0.44.0-BSD-3-Clause.txt",
-            "golang-x-text-v0.41.0-BSD-3-Clause.txt",
             "lucide-react-1.39.0-ISC.txt",
-            "pgpassfile-v1.0.0-MIT.txt",
-            "pgservicefile-MIT.txt",
-            "pgx-v5.9.2-MIT.txt",
-            "puddle-v2.2.2-MIT.txt",
             "react-family-19.2.8-MIT.txt",
             "wazero-v1.12.0-Apache-2.0.txt",
         }
@@ -618,17 +610,10 @@ class ReleaseContractTest(unittest.TestCase):
             {path.name for path in license_root.iterdir() if path.is_dir()},
             {"secret-scanner", "syntax-analysis"},
         )
-        expected_license_sha256 = {
-            "golang-x-sync-v0.22.0-BSD-3-Clause.txt": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
-            "golang-x-text-v0.41.0-BSD-3-Clause.txt": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
-            "pgx-v5.9.2-MIT.txt": "467f95e074fe23079a5623ed652619682692041b8551da27e3c2ddb9659a1507",
-        }
-        for filename, expected in expected_license_sha256.items():
-            self.assertEqual(hashlib.sha256((license_root / filename).read_bytes()).hexdigest(), expected)
-
         notice = (REPOSITORY / "NOTICE").read_text()
-        self.assertIn("golang.org/x/sync and golang.org/x/text", notice)
-        self.assertNotIn("golang.org/x/crypto", notice)
+        self.assertIn("golang.org/x/sys, BSD-3-Clause", notice)
+        for absent in ("golang.org/x/crypto", "pgx", "AWS SDK"):
+            self.assertNotIn(absent, notice)
         self.assertNotIn("launcher", notice)
 
     def test_dockerfile_copies_the_root_owned_read_only_scan_helper(self):

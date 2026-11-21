@@ -47,10 +47,4 @@ While a prepared intent exists, reads treat the artifact as deleted, even if an 
 
 The public contracts are `schemas/artifact/artifact-deletion-authorization-v1.schema.json` and `schemas/artifact/artifact-deletion-receipt-v1.schema.json`. Tombstones contain no payload. They remain as deduplication and compliance records, and they need their own ledger compaction policy later.
 
-The local adapter accepts only `process_private`. `artifact.EnvelopeStore` provides envelope-encrypted remote storage through the conditional object backend contract. The included path-style S3 adapter requires versioned objects and single-part requests. A deployment must supply a tenant-aware envelope key provider. See [Envelope-encrypted object storage](remote-artifact-storage.md). Remote artifact upload is not exposed as a general client API.
-
-## Canonical metadata index
-
-The PostgreSQL `ArtifactIndex` stores no artifact payload. It keeps the scope, the artifact and payload identities, metadata labels, the retention time, the lineage of the deletion authorization and the physical deletion receipts.
-
-`IndexedArtifactStore` writes the physical data before it registers the metadata, and records the deletion authority before the physical removal. Each step is idempotent. A crash can therefore leave an expiring orphan or an unindexed completed deletion, but a retry converges without bringing data back or repeating an external effect. Expiry scans return only artifacts without a completed deletion receipt. Policy and legal-hold evaluation are separate prerequisites before an authorization can be created.
+The local adapter accepts only `process_private`. Remote artifact upload is not exposed as a general client API.

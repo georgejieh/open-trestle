@@ -29,15 +29,11 @@ func runSetupGitHubPermissionNativeTest(t *testing.T, name string) {
 	if name == "cli-permission-receipt" || name == "cli-webhook-after-permission" {
 		f.setenv(t)
 		var stdout, stderr bytes.Buffer
-		if code := runSetupWithClock([]string{"init", "--profile", "controlled_hybrid", "--tenant", "tenant-a", "--repository", "repo-a", "--recovery-owner", "owner", "--state", f.state}, &stdout, &stderr, setupBrokerBoundaryClock{f.at}); code != 0 {
+		if code := runSetupWithClock([]string{"init", "--profile", "local_single_node", "--tenant", "tenant-a", "--repository", "repo-a", "--recovery-owner", "owner", "--state", f.state}, &stdout, &stderr, setupBrokerBoundaryClock{f.at}); code != 0 {
 			t.Fatal("actual CLI current initialization failed")
 		}
 		plan := f.current(t)
 		inference, err := newSetupLocalInferenceFactory(func(string) string { return "" })
-		if err != nil {
-			t.Fatal(err)
-		}
-		postgres, err := newSetupPostgresStorageProbe(func(string) string { return "" }, executeSetupPostgresStorage)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -48,7 +44,7 @@ func runSetupGitHubPermissionNativeTest(t *testing.T, name string) {
 		}
 		stdout.Reset()
 		stderr.Reset()
-		code := runSetupWithDependencies(f.cliArgs(t), &stdout, &stderr, setupBrokerBoundaryClock{f.at.Add(time.Second)}, inference, postgres, executeSetupKMS, executeSetupEnvelopeStorage, permissionExecutor, executeSetupGitHubWebhook, executeSetupSharedRateLimit, executeSetupReplicaReconciliation, executeSetupSignedBundle)
+		code := runSetupWithDependencies(f.cliArgs(t), &stdout, &stderr, setupBrokerBoundaryClock{f.at.Add(time.Second)}, inference, permissionExecutor, executeSetupGitHubWebhook)
 		if code != 0 || stderr.Len() != 0 || calls != 1 || !strings.Contains(stdout.String(), `"key":"integration_permissions_validated"`) || !strings.Contains(stdout.String(), `"state":"passed"`) {
 			t.Fatal("actual CLI native integration receipt or exact executor count failed")
 		}
@@ -80,7 +76,7 @@ func runSetupGitHubPermissionNativeTest(t *testing.T, name string) {
 		}
 		stdout.Reset()
 		stderr.Reset()
-		code = runSetupWithDependencies([]string{"check", "webhook", "--state", f.state, "--approve-webhook-authority-identity", authority, "--github-webhook-key-id", configuration.keyID, "--approved-by", "owner"}, &stdout, &stderr, setupBrokerBoundaryClock{f.at.Add(2 * time.Second)}, inference, postgres, executeSetupKMS, executeSetupEnvelopeStorage, executeSetupGitHubPermission, webhookExecutor, executeSetupSharedRateLimit, executeSetupReplicaReconciliation, executeSetupSignedBundle)
+		code = runSetupWithDependencies([]string{"check", "webhook", "--state", f.state, "--approve-webhook-authority-identity", authority, "--github-webhook-key-id", configuration.keyID, "--approved-by", "owner"}, &stdout, &stderr, setupBrokerBoundaryClock{f.at.Add(2 * time.Second)}, inference, executeSetupGitHubPermission, webhookExecutor)
 		if code != 0 || stderr.Len() != 0 || webhookCalls != 1 || !strings.Contains(stdout.String(), `"key":"webhook_validated"`) || !strings.Contains(stdout.String(), `"state":"passed"`) {
 			t.Fatal("webhook command lost native permission prerequisite or conformance wiring")
 		}

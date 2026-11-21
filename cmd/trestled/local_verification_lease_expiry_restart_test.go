@@ -52,7 +52,7 @@ func TestDaemonLocalModelWorkersVerificationLeaseExpiryRestarts(t *testing.T) {
 				defer snapshot.Unlock()
 				snapshot.taken, snapshot.err = true, copyDaemonState(statePath, crashed)
 			}
-			clock := &daemonBudgetedHandlerClock{at: time.Now().UTC().Truncate(time.Millisecond)}
+			clock := &daemonFakeHandlerClock{at: time.Now().UTC().Truncate(time.Millisecond)}
 			d, api, server := startContextRefusalDaemon(t, args, getenv, clock)
 			scope, err := audit.NewReviewScope("tenant-a", "repo-a", fmt.Sprintf("run-verification-expiry-%d", rateLimits))
 			if err != nil {

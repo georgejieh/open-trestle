@@ -34,10 +34,7 @@ var (
 type Profile string
 
 const (
-	ProfileLocalSingleNode  Profile = "local_single_node"
-	ProfileControlledHybrid Profile = "controlled_hybrid"
-	ProfileKubernetesHA     Profile = "kubernetes_ha"
-	ProfileAirGapped        Profile = "air_gapped"
+	ProfileLocalSingleNode Profile = "local_single_node"
 )
 
 // ParseProfile parses one closed deployment profile name.
@@ -53,8 +50,7 @@ func ParseProfile(value string) (Profile, error) {
 type MetadataBackend string
 
 const (
-	MetadataLocal    MetadataBackend = "local"
-	MetadataPostgres MetadataBackend = "postgres"
+	MetadataLocal MetadataBackend = "local"
 )
 
 // ArtifactBackend is a closed setup artifact posture.
@@ -62,15 +58,13 @@ type ArtifactBackend string
 
 const (
 	ArtifactLocal ArtifactBackend = "local"
-	ArtifactS3    ArtifactBackend = "s3"
 )
 
 // Protection is a closed setup artifact-protection posture.
 type Protection string
 
 const (
-	ProtectionProcessPrivate    Protection = "process_private"
-	ProtectionEnvelopeEncrypted Protection = "envelope_encrypted"
+	ProtectionProcessPrivate Protection = "process_private"
 )
 
 // NotificationBackend is a closed setup notification posture.
@@ -78,7 +72,6 @@ type NotificationBackend string
 
 const (
 	NotificationProcessLocal NotificationBackend = "process_local"
-	NotificationPostgres     NotificationBackend = "postgres"
 )
 
 // InferencePosture is a closed setup inference boundary.
@@ -103,7 +96,6 @@ type IntegrationPosture string
 const (
 	IntegrationLocal             IntegrationPosture = "local"
 	IntegrationLeastPrivilegeSCM IntegrationPosture = "least_privilege_scm"
-	IntegrationOfflineBundle     IntegrationPosture = "offline_bundle"
 )
 
 // Status is the replay-derived setup readiness state.
@@ -147,8 +139,6 @@ const (
 	RecoveryApproveProvider     RecoveryAction = "approve_provider"
 	RecoveryCorrectPermissions  RecoveryAction = "correct_permissions"
 	RecoveryVerifyWebhook       RecoveryAction = "verify_webhook"
-	RecoveryImportSignedBundle  RecoveryAction = "import_signed_bundle"
-	RecoveryRestoreNoEgress     RecoveryAction = "restore_no_egress"
 	RecoveryRunDryRun           RecoveryAction = "run_dry_run"
 	RecoveryCorrectPolicy       RecoveryAction = "correct_policy"
 )
@@ -163,19 +153,12 @@ const (
 	CheckRecoveryOwnerNamed                 CheckKey = "recovery_owner_named"
 	CheckLocalAdministratorValidated        CheckKey = "local_administrator_validated"
 	CheckStateStoragePostureValidated       CheckKey = "state_storage_posture_validated"
-	CheckPostgresStorageValidated           CheckKey = "postgres_storage_validated"
-	CheckEnvelopeStorageValidated           CheckKey = "envelope_storage_validated"
 	CheckBackupValidated                    CheckKey = "backup_validated"
 	CheckObserverCredentialPostureValidated CheckKey = "observer_credential_posture_validated"
-	CheckSecretBackendValidated             CheckKey = "secret_backend_validated"
 	CheckLocalInferenceValidated            CheckKey = "local_inference_validated"
 	CheckRemoteProviderAuthorized           CheckKey = "remote_provider_authorized"
 	CheckIntegrationPermissionsValidated    CheckKey = "integration_permissions_validated"
 	CheckWebhookValidated                   CheckKey = "webhook_validated"
-	CheckSharedRateLimitValidated           CheckKey = "shared_rate_limit_validated"
-	CheckReplicaReconciliationValidated     CheckKey = "replica_reconciliation_validated"
-	CheckSignedBundleValidated              CheckKey = "signed_bundle_validated"
-	CheckNoEgressValidated                  CheckKey = "no_egress_validated"
 	CheckPolicyValidated                    CheckKey = "policy_validated"
 	CheckDryRunValidated                    CheckKey = "dry_run_validated"
 )
@@ -348,8 +331,6 @@ func resetDependentRequirements(requirements []Requirement, prerequisite CheckKe
 	switch prerequisite {
 	case CheckPolicyValidated:
 		dependents = []CheckKey{CheckLocalInferenceValidated, CheckDryRunValidated}
-	case CheckPostgresStorageValidated:
-		dependents = []CheckKey{CheckSharedRateLimitValidated, CheckReplicaReconciliationValidated}
 	case CheckIntegrationPermissionsValidated:
 		dependents = []CheckKey{CheckWebhookValidated}
 	}
@@ -383,21 +364,6 @@ func profileDefaults(profile Profile) (Posture, []requirementSpec, bool) {
 		checks = append(checks, localIdentity...)
 		checks = append(checks, requirementSpec{CheckPolicyValidated, CheckAuthorization}, requirementSpec{CheckLocalInferenceValidated, CheckProbe}, requirementSpec{CheckDryRunValidated, CheckDryRun})
 		return Posture{metadata: MetadataLocal, artifacts: ArtifactLocal, protection: ProtectionProcessPrivate, notifications: NotificationProcessLocal, inference: InferenceLocalOnly, egress: EgressDenied, integration: IntegrationLocal, maxModelRequestCostMicroUSD: 0, retentionDays: 30}, checks, true
-	case ProfileControlledHybrid:
-		checks := []requirementSpec{{CheckPostgresStorageValidated, CheckProbe}, {CheckEnvelopeStorageValidated, CheckProbe}, {CheckBackupValidated, CheckProbe}, {CheckSecretBackendValidated, CheckProbe}}
-		checks = append(checks, localIdentity...)
-		checks = append(checks, requirementSpec{CheckRemoteProviderAuthorized, CheckAuthorization}, requirementSpec{CheckIntegrationPermissionsValidated, CheckAuthorization}, requirementSpec{CheckWebhookValidated, CheckProbe}, requirementSpec{CheckPolicyValidated, CheckAuthorization}, requirementSpec{CheckDryRunValidated, CheckDryRun})
-		return Posture{metadata: MetadataPostgres, artifacts: ArtifactS3, protection: ProtectionEnvelopeEncrypted, notifications: NotificationPostgres, inference: InferenceApprovedRemote, egress: EgressAllowlisted, integration: IntegrationLeastPrivilegeSCM, maxModelRequestCostMicroUSD: 100_000, retentionDays: 30}, checks, true
-	case ProfileKubernetesHA:
-		checks := []requirementSpec{{CheckPostgresStorageValidated, CheckProbe}, {CheckEnvelopeStorageValidated, CheckProbe}, {CheckBackupValidated, CheckProbe}, {CheckSecretBackendValidated, CheckProbe}, {CheckSharedRateLimitValidated, CheckProbe}, {CheckReplicaReconciliationValidated, CheckProbe}}
-		checks = append(checks, localIdentity...)
-		checks = append(checks, requirementSpec{CheckRemoteProviderAuthorized, CheckAuthorization}, requirementSpec{CheckIntegrationPermissionsValidated, CheckAuthorization}, requirementSpec{CheckWebhookValidated, CheckProbe}, requirementSpec{CheckPolicyValidated, CheckAuthorization}, requirementSpec{CheckDryRunValidated, CheckDryRun})
-		return Posture{metadata: MetadataPostgres, artifacts: ArtifactS3, protection: ProtectionEnvelopeEncrypted, notifications: NotificationPostgres, inference: InferenceApprovedRemote, egress: EgressAllowlisted, integration: IntegrationLeastPrivilegeSCM, maxModelRequestCostMicroUSD: 100_000, retentionDays: 30}, checks, true
-	case ProfileAirGapped:
-		checks := []requirementSpec{{CheckStateStoragePostureValidated, CheckProbe}, {CheckBackupValidated, CheckProbe}}
-		checks = append(checks, localIdentity...)
-		checks = append(checks, requirementSpec{CheckSignedBundleValidated, CheckProbe}, requirementSpec{CheckNoEgressValidated, CheckProbe}, requirementSpec{CheckPolicyValidated, CheckAuthorization}, requirementSpec{CheckLocalInferenceValidated, CheckProbe}, requirementSpec{CheckDryRunValidated, CheckDryRun})
-		return Posture{metadata: MetadataLocal, artifacts: ArtifactLocal, protection: ProtectionProcessPrivate, notifications: NotificationProcessLocal, inference: InferenceLocalOnly, egress: EgressDenied, integration: IntegrationOfflineBundle, maxModelRequestCostMicroUSD: 0, retentionDays: 30}, checks, true
 	default:
 		return Posture{}, nil, false
 	}

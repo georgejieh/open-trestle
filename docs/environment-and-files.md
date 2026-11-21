@@ -30,16 +30,11 @@ Other variables that change behavior:
 | `OPEN_TRESTLE_API_TOKEN` | yes | `trestled`, `trestle runs`, `trestle admin runtime status`, `trestle mcp`, `trestle lsp`, `trestle acp`, `trestle tui` | The operator bearer token of the daemon API (at least 32 bytes). Pass the observer token here for a read-only client. See [daemon API](daemon-api.md). |
 | `OPEN_TRESTLE_OBSERVER_TOKEN` | yes | `trestled`, `setup check observer` | The separate, read-only observer token. |
 | `OPEN_TRESTLE_API_URL` | no | `trestle runs`, `admin runtime status`, `mcp`, `lsp`, `acp`, `tui` | The daemon address. Default `http://127.0.0.1:8741`. `--server` overrides it. |
-| `OPEN_TRESTLE_POSTGRES_URL` | yes | `trestled`, `setup check postgres`, `admin postgres` | The runtime-role PostgreSQL connection string. See [PostgreSQL storage](postgresql-storage.md). |
-| `OPEN_TRESTLE_POSTGRES_MIGRATION_URL` | yes | `admin postgres migrate`, `trestled --apply-migrations` | The migration-role connection string. |
-| `OPEN_TRESTLE_S3_ACCESS_KEY_ID`, `OPEN_TRESTLE_S3_SECRET_ACCESS_KEY`, `OPEN_TRESTLE_S3_SESSION_TOKEN` | yes | `trestled`, `setup check envelope` | Credentials for the object-storage bucket prefix. The session token is optional. See [remote artifact storage](remote-artifact-storage.md). |
-| `OPEN_TRESTLE_AWS_ACCESS_KEY_ID`, `OPEN_TRESTLE_AWS_SECRET_ACCESS_KEY`, `OPEN_TRESTLE_AWS_SESSION_TOKEN` | yes | `trestled`, `setup check secret`, `setup check envelope` | Credentials for the KMS key. The session token is optional. |
 | `OPEN_TRESTLE_GITHUB_WEBHOOK_SECRET` | yes | `trestled`, `setup check webhook` | The GitHub webhook HMAC secret. See [webhook ingress](webhook-ingress.md). |
 | `OPEN_TRESTLE_GITHUB_API_TOKEN` | yes | `trestled` | The legacy source-acquisition token. Unset selects anonymous acquisition. See [GitHub source acquisition](github-source-acquisition.md). |
 | `OPEN_TRESTLE_GITHUB_SOURCE_BROKER_CONFIG` | no | `trestled`, `setup web`, `setup check integration` | The path of the protected source-broker descriptor. |
 | `OPEN_TRESTLE_GITHUB_SETUP_TOKEN` | yes | `setup check integration` | A short-lived GitHub App user access token for the permission check. |
 | `OPEN_TRESTLE_GITHUB_APP_PRIVATE_KEY` | yes | the GitHub source broker | The pinned GitHub App private key, held on the host. See [integration permissions](github-integration-permissions.md). |
-| `OPEN_TRESTLE_GITHUB_PUBLICATION_TOKEN` | yes | `trestled` | The static token used to publish one `COMMENT` review. See [GitHub publication](github-publication.md). |
 | `OPEN_TRESTLE_SETUP_TOKEN` | yes | `trestle setup web` | The bearer token of the setup API. |
 
 The GitHub Actions example also uses `OPEN_TRESTLE_REF` and
