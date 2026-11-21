@@ -189,9 +189,7 @@ type investigationTurnWire struct {
 	Selection               investigationTurnSelectionWire `json:"selection"`
 	SessionIdentity         string                         `json:"session_identity"`
 	StartedMilliseconds     int64                          `json:"started_milliseconds"`
-	// SystemChannelBytes is present exactly for estimate version 2; version 1
-	// bytes omit it and keep their original encoding.
-	SystemChannelBytes *uint32 `json:"system_channel_bytes,omitempty"`
+	SystemChannelBytes      *uint32                        `json:"system_channel_bytes,omitempty"`
 }
 
 // The schema is built from fixed host types, never from untrusted JSON.
@@ -618,13 +616,9 @@ func investigationTurnResponseValue(response provider.Response) investigationTur
 func investigationTurnWireValue(record InvestigationTurnRecord) investigationTurnWire {
 	dispatch, outcome, cost := record.dispatch, record.outcome, record.reconciliation
 	actual := cost.ActualCost()
-	var systemBytes *uint32
-	if record.estimateVersion != investigationBudgetEstimateVersionV1 {
-		value := record.systemBytes
-		systemBytes = &value
-	}
-	// The response_format count is present exactly for an estimate version 2
-	// structured-output turn; other bytes omit it and keep their encoding.
+	systemBytes := record.systemBytes
+	// The response_format count is present exactly for a structured-output
+	// turn; other bytes omit it.
 	var responseFormatBytes *uint32
 	if record.structuredOutput {
 		value := record.responseFormatBytes
@@ -657,7 +651,7 @@ func investigationTurnWireValue(record InvestigationTurnRecord) investigationTur
 		Request:          investigationTurnRequestWire{Capability: record.request.Capability().String(), Identity: record.request.Identity(), MediaType: record.request.MediaType(), PayloadBase64: base64.StdEncoding.EncodeToString(record.request.Payload())},
 		ReservedMicroUSD: record.authorization.ReservedCostMicroUSD(), ResponseFormatBytes: responseFormatBytes, Role: record.role.String(), SchemaVersion: 1, ScopeIdentity: record.scopeIdentity,
 		Selection: investigationTurnSelectionValue(record.selection), SessionIdentity: record.sessionIdentity, StartedMilliseconds: record.startedMillis,
-		SystemChannelBytes: systemBytes,
+		SystemChannelBytes: &systemBytes,
 	}
 }
 
@@ -983,16 +977,11 @@ func parseInvestigationTurnWire(wire investigationTurnWire) (InvestigationTurnRe
 	if wire.ActualCostMicroUSD != cost.ActualCost().TotalCostMicroUSD() || wire.RemainingBeforeMicroUSD != authorization.RemainingCostBeforeMicroUSD() || wire.RemainingMicroUSD != cost.RemainingCostMicroUSD() || wire.ReservedMicroUSD != authorization.ReservedCostMicroUSD() {
 		return InvestigationTurnRecord{}, errInvestigationTurnEncoding
 	}
-	// Version 1 bytes never carry a system channel count; version 2 bytes always do.
-	var systemBytes uint32
-	switch {
-	case wire.EstimateVersion == investigationBudgetEstimateVersionV1 && wire.SystemChannelBytes == nil:
-	case wire.EstimateVersion == InvestigationBudgetEstimateVersion && wire.SystemChannelBytes != nil:
-		systemBytes = *wire.SystemChannelBytes
-	default:
+	if wire.EstimateVersion != InvestigationBudgetEstimateVersion || wire.SystemChannelBytes == nil {
 		return InvestigationTurnRecord{}, errInvestigationTurnEncoding
 	}
-	// Only a version 2 structured-output turn carries a response_format count.
+	systemBytes := *wire.SystemChannelBytes
+	// Only a structured-output turn carries a response_format count.
 	var responseFormatBytes uint32
 	structured := wire.ResponseFormatBytes != nil
 	if structured {

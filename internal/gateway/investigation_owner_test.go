@@ -650,7 +650,7 @@ func TestInvestigationTurnRecordRejectsRehashedCrossWiredComponents(t *testing.T
 			case "estimate version":
 				changed.estimateVersion = InvestigationBudgetEstimateVersion + 1
 			case "estimate version 1 relabel":
-				changed.estimateVersion = investigationBudgetEstimateVersionV1
+				changed.estimateVersion = 1
 			case "system channel bytes":
 				changed.systemBytes++
 			case "ordinal":

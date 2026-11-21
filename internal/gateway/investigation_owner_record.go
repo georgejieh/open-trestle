@@ -56,13 +56,12 @@ func (r InvestigationTurnRecord) Role() InvestigationTurnRole { return r.role }
 func (r InvestigationTurnRecord) EstimateVersion() uint8 { return r.estimateVersion }
 
 // SystemChannelBytes returns the trusted system channel bytes the turn reserved
-// for, recorded from estimate version 2. Estimate version 1 turns did not count
-// the system channel and return 0.
+// for.
 func (r InvestigationTurnRecord) SystemChannelBytes() uint32 { return r.systemBytes }
 
 // ResponseFormatBytes returns the serialized response_format bytes the turn
 // reserved for and true when its routes used the local structured-output
-// transport, recorded from estimate version 2. Other turns return 0 and false.
+// transport. Other turns return 0 and false.
 func (r InvestigationTurnRecord) ResponseFormatBytes() (uint32, bool) {
 	return r.responseFormatBytes, r.structuredOutput
 }
@@ -82,10 +81,9 @@ func (r InvestigationTurnRecord) Validate() error {
 	if r.request.Validate() != nil || r.selection.Validate() != nil || r.ranking.Validate() != nil || r.authorization.Validate() != nil || r.dispatch.Validate() != nil || r.outcome.Validate() != nil || r.reconciliation.Validate() != nil {
 		return ErrInvestigationRouteOwner
 	}
-	// The recorded estimate version selects the formula; it rejects any other version.
-	// Only a structured-output turn counts response_format bytes, and only from
-	// estimate version 2.
-	if !r.structuredOutput && r.responseFormatBytes != 0 || r.structuredOutput && r.estimateVersion == investigationBudgetEstimateVersionV1 {
+	// The estimate formula rejects any other estimate version. Only a
+	// structured-output turn counts response_format bytes.
+	if !r.structuredOutput && r.responseFormatBytes != 0 {
 		return ErrInvestigationRouteOwner
 	}
 	budget, err := investigationTurnEstimate(r.estimateVersion, r.declaredInput, r.maxOutput, r.request, r.systemBytes, r.responseFormatBytes, r.authorization.RemainingCostBeforeMicroUSD())
@@ -116,11 +114,9 @@ func (r InvestigationTurnRecord) Validate() error {
 	return nil
 }
 
-// deriveIdentity hashes the 26-element version 1 preimage. From estimate
-// version 2 the recorded system channel bytes are appended as a 27th element,
-// so version 1 identities are unchanged, and a structured-output turn appends
-// its response_format bytes as a 28th, so standard version 2 identities are
-// unchanged.
+// deriveIdentity hashes the turn preimage: 26 elements, the recorded system
+// channel bytes as a 27th, and for a structured-output turn its
+// response_format bytes as a 28th.
 func (r InvestigationTurnRecord) deriveIdentity() string {
 	preimage := []any{
 		"open-trestle/investigation-turn", 1,
@@ -133,9 +129,7 @@ func (r InvestigationTurnRecord) deriveIdentity() string {
 		r.authorization.RemainingCostBeforeMicroUSD(), r.authorization.ReservedCostMicroUSD(),
 		r.reconciliation.ActualCost().TotalCostMicroUSD(), r.reconciliation.RemainingCostMicroUSD(),
 	}
-	if r.estimateVersion != investigationBudgetEstimateVersionV1 {
-		preimage = append(preimage, r.systemBytes)
-	}
+	preimage = append(preimage, r.systemBytes)
 	if r.structuredOutput {
 		preimage = append(preimage, r.responseFormatBytes)
 	}
