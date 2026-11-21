@@ -283,6 +283,7 @@ func writeUsage(w io.Writer) {
 	writeLocalGitReviewUsage(w)
 	writeLocalGitRetainedMemoryInputUsage(w)
 	writeIndexUsage(w)
+	writeProfileUsage(w)
 	fmt.Fprintln(w, "usage: trestle build-info")
 
 	writeUsageGroup(w, "Evaluation")
