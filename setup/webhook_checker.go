@@ -98,7 +98,7 @@ func (c *WebhookChecker) Check(ctx context.Context, plan Plan) CheckResult {
 	if c != nil && ctx != nil && ctx.Err() == nil && plan.Validate() == nil {
 		dependency := passedRequirementReceiptIdentity(plan, CheckIntegrationPermissionsValidated)
 		switch {
-		case plan.Profile() != ProfileControlledHybrid && plan.Profile() != ProfileKubernetesHA || plan.Posture().Integration() != IntegrationLeastPrivilegeSCM || plan.Posture().PublicationEnabled():
+		case plan.Posture().Integration() != IntegrationLeastPrivilegeSCM || plan.Posture().PublicationEnabled():
 			outcome = "profile_mismatch"
 		case plan.RootIdentity() != c.rootIdentity || plan.TenantID() != c.tenantID || plan.RepositoryID() != c.repositoryID || plan.RecoveryOwner() != c.recoveryOwner:
 			outcome = "scope_mismatch"

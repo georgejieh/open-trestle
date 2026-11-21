@@ -398,7 +398,6 @@ func TestPlannerBrokerBoundaryMountedPreparedSource(t *testing.T) {
 		if !reflect.DeepEqual(after, baseline) {
 			t.Fatal("source requests read an unrelated environment credential")
 		}
-		publicationBrokerBoundaryCheckConfiguredProvider(t, environment, owner, inputs[1].Repository(), inputs[1].Revision())
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		if len(f.failures) != 0 {

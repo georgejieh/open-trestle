@@ -95,53 +95,6 @@ func setupOpenCodeConsoleDocuments(t *testing.T, verifierLogging bool) ([]byte, 
 	return invDoc, polDoc
 }
 
-func TestSetupOpenCodeConsoleExactPairPassesRuntimePolicyChecker(t *testing.T) {
-	invDoc, polDoc := setupOpenCodeConsoleDocuments(t, false)
-	inventory, policy := parseSetupRuntimeDocuments(t, invDoc, polDoc)
-	plan, err := NewPlan(ProfileControlledHybrid, "tenant-a", "repo-a", "owner", setupTime(1))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if plan.Posture().Inference() != InferenceApprovedRemote || plan.Posture().Egress() != EgressAllowlisted || plan.Posture().PublicationEnabled() {
-		t.Fatal("wrong controlled-hybrid fixture posture")
-	}
-	clock := &brokeredSetupClock{at: time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)}
-	checker, err := NewRuntimePolicyCheckerWithClock(inventory, policy, setupRuntimeApproval(t, plan, inventory, policy), clock)
-	if err != nil {
-		t.Fatal("valid immutable Console fixture refused before check", err)
-	}
-	if result := checker.Check(context.Background(), plan); result.State() != CheckPassed {
-		t.Fatalf("Console exact approved pair blocked by setup: state=%s", result.State())
-	}
-	remote, err := NewRemoteProviderAuthorizationChecker(checker)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result := remote.Check(context.Background(), plan); result.State() != CheckPassed {
-		t.Fatal("Console remote authority blocked", result.State())
-	}
-}
-
-func TestSetupOpenCodeConsoleVerifierLoggingUsesSharedGuard(t *testing.T) {
-	invDoc, polDoc := setupOpenCodeConsoleDocuments(t, true)
-	inventory, policy := parseSetupRuntimeDocuments(t, invDoc, polDoc)
-	plan, err := NewPlan(ProfileControlledHybrid, "tenant-a", "repo-a", "owner", setupTime(1))
-	if err != nil {
-		t.Fatal(err)
-	}
-	checker, err := NewRuntimePolicyCheckerWithClock(inventory, policy, setupRuntimeApproval(t, plan, inventory, policy), &brokeredSetupClock{at: time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	remote, err := NewRemoteProviderAuthorizationChecker(checker)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if checker.Check(context.Background(), plan).State() != CheckBlocked || remote.Check(context.Background(), plan).State() != CheckBlocked {
-		t.Fatal("shared verifier logging guard bypassed")
-	}
-}
-
 func TestSetupOpenCodeConsoleLocalOnlyNeverBuildsInferenceCatalog(t *testing.T) {
 	invDoc, polDoc := setupOpenCodeConsoleDocuments(t, false)
 	inventory, policy := parseSetupRuntimeDocuments(t, invDoc, polDoc)

@@ -1,6 +1,6 @@
 # Daemon API and client
 
-`trestled` is the Open Trestle daemon. It keeps review runs in durable storage and exposes them through a versioned HTTP API. The Go client and the `trestle runs` commands use the same contracts. The daemon does not perform provider or forge effects by itself: workers must still pass the narrower provider and publication authorization gates.
+`trestled` is the Open Trestle daemon. It keeps review runs in durable storage and exposes them through a versioned HTTP API. The Go client and the `trestle runs` commands use the same contracts. The daemon does not publish reviews to a forge, and workers must pass the provider authorization gates.
 
 ## Start a local daemon
 
@@ -113,12 +113,11 @@ The plan input must be a regular file that does not change while it is read, and
 - Storage posture.
 - Review mode.
 - Configured ingress and workers.
-- Verification of the publication fence.
 - Route and policy identities.
 - Exact handler bindings.
 - Startup state of the supervisors.
 
-The snapshot does not include source, prompts, model or provider bodies, credentials, bearer leases, database names, bucket names, endpoints, queue contents or other repository identifiers. The configuration identity is derived from the projection for the one repository, so the membership of unrelated repositories does not change it. 
+The snapshot does not include source, prompts, model or provider bodies, credentials, bearer leases, endpoints, queue contents or other repository identifiers. The configuration identity is derived from the projection for the one repository, so the membership of unrelated repositories does not change it. 
 
 Use the optional observer credential for read-only inspection:
 
@@ -127,11 +126,7 @@ OPEN_TRESTLE_API_TOKEN="$OPEN_TRESTLE_OBSERVER_TOKEN" \
   trestle admin runtime status --tenant example --repository example-repository
 ```
 
-`trestle admin runtime status` prints one canonical `RuntimeStatus` snapshot. PostgreSQL configurations include the verified database authority identity, so the status identity changes if the storage authority changes. Failure output contains no content. A status of `starting` means that at least one configured supervisor has not yet completed its initial durable reconciliation. If a supervisor fails, the daemon stops instead of staying up as a stale `ready` process.
-
-Budgeted artifact erasure does not add a field to `RuntimeStatus` v1. When startup builds the budgeted artifact store successfully, the status component list can include `artifact_erasure_budgeted` with state `ready`. That component means that startup built the protected policy, the explicit S3 erasure backend, the KMS provider, the verified PostgreSQL index and the budgeted envelope store. It is not a current health check for S3, KMS, bucket versioning, physical erasure, erasure authorization, policy freshness after startup, backups or provider availability. The v1 configuration identity binds the existing status fields only, not the erasure mode.
-
-In budgeted mode, artifact callers that the daemon owns use UTC millisecond timestamps before they call the store. The public store and erasure APIs still reject invalid or sub-millisecond times from callers instead of repairing them.
+`trestle admin runtime status` prints one canonical `RuntimeStatus` snapshot. Failure output contains no content. A status of `starting` means that at least one configured supervisor has not yet completed its initial durable reconciliation. If a supervisor fails, the daemon stops instead of staying up as a stale `ready` process.
 
 ## Health probes
 
@@ -144,8 +139,6 @@ Every endpoint requires exactly one `Authorization: Bearer <credential>` header.
 ### Administration endpoint
 
 `GET /api/v1/tenants/{tenant}/repositories/{repository}/runtime` returns a canonical `RuntimeStatus`, only to a principal that is authorized for the repository and has `runtime_read`.
-
-The daemon has no HTTP route for budgeted artifact erasure. Preparing, resuming and reading back erasure are Go library APIs.
 
 ### Run endpoints
 
@@ -209,10 +202,9 @@ A lease document is a bearer capability. It contains the random lease token. Do 
 
 The daemon applies rate limits before authentication and per principal.
 
-- Local metadata mode uses fixed windows within the process, and reports that limitation in the runtime status.
-- PostgreSQL metadata mode uses fixed windows that follow the database clock, shared by every daemon with the same rate-limit authority. It stores only digests of the keys, separated by domain.
+- The limiter uses fixed windows within the process, and reports that limitation in the runtime status.
 - Keys before authentication use the canonical, unmapped IP address of the direct TCP peer. The daemon does not accept forwarded-address headers, so a reverse proxy must add its own limit that knows the client where that is needed.
-- A database failure, a conflict over the live limiter authority, or exhaustion of the namespace cardinality returns 503 and grants no request.
+- Exhaustion of the limiter's key cardinality returns 503 and grants no request.
 - Exhausting the request quota of an established key returns 429.
 
 An external ingress may add a stricter limit.
@@ -221,121 +213,19 @@ An external ingress may add a stricter limit.
 
 `trestle setup web` serves a separate setup API with its own dedicated setup bearer token. The API listens on a numeric loopback address only, and it checks the Host. It is not an endpoint that issues credentials for the daemon.
 
-For integration effects, the host must capture `OPEN_TRESTLE_GITHUB_SOURCE_BROKER_CONFIG` and an `--approve-github-source-broker-authority-identity` cap at startup. The protected descriptor remains `open-trestle/github-source-broker` schema 1 with exactly 20 fields; see [Setup planning](setup.md#github-integration-permissions). No request can provide configuration paths, PEM data, tokens, overrides of the owner generation, or the old endpoint, version, installation and repository quartet.
+The `integration_permissions_validated` check and `trestle admin github permissions identity` remain in the code, but no current profile requires them.
 
-`POST /api/v1/setup/check` uses `open-trestle/setup-check-request` schema 2 for the integration check only. These are the nine required fields, in encoder order:
-
-| Field | Value |
-|---|---|
-| `contract` | `open-trestle/setup-check-request` |
-| `schema_version` | integer `2` |
-| `plan_identity` | current nonzero lowercase HEX64 |
-| `key` | `integration_permissions_validated` |
-| `confirmation` | `create GitHub installation token and run integration_permissions_validated` |
-| `approve_integration_permission_authority_identity` | independently approved nonzero lowercase HEX64 |
-| `approve_github_source_broker_authority_identity` | exact host common cap, nonzero lowercase HEX64 |
-| `allow_github_installation_token_creation` | boolean `true` |
-| `approved_by` | exact recovery owner, ASCII setup label of 1..128 bytes |
-
-The order of the members in the input does not matter. All fields are required, and extra members are rejected. These cases all get `400 invalid_request` before state is accessed:
-
-- Missing, false, null or string consent.
-- Duplicate or case-folded keys.
-- Mixed fields.
-- The old confirmation.
-- A v2 request for another check.
-
-An unsupported content type gets 415, and a body above 64 KiB gets 413. Host fencing and bearer authentication come before decoding, and a bearer token alone does not approve creation.
-
-A legacy v1 integration request that is well formed returns `422 check_unavailable` before any state is accessed or any builder runs. A malformed v1 integration request gets 400. Unrelated v1 requests keep their wire format and response behavior. A valid v2 request then opens the protected state: invalid state gets `409 state_conflict`, and an expected plan that does not match gets `409 stale_plan`.
-
-Only after the plans are equal may the captured host and session builder check the common approval and the scope. If there is no host, or the common approval or scope does not match, the result is `422 check_unavailable`, with no work on the owner, key or HTTP. The Runner rejects historical integration and webhook authority before it recovers anything pending or runs a check (`422 check_failed`). A wrong actor or permission approval uses the existing blocked-receipt behavior, without probing.
-
-A current success still uses the setup-check-result and setup-check-receipt schema 1, with the current integration checker identity. Parsing of historical plans and receipts is unchanged. A Ready result from before is historical and is not an active approval. Initialize a fresh protected state and a current plan, and rerun every check that is not deterministic. Do not import or relabel old receipts. The marker in the browser is only a diagnostic.
-
-Native effects require all of these: the host cap, consent in the request, both authorities, scope, actor, the expected current plan, user visibility and an actual native setup-purpose grant. Approvals for runtime and for publication remain separate.
-
-`trestle admin github permissions identity --broker-config PATH` prints a schema 2 `open-trestle/github-permission-admin-result`. It has exactly these members: contract, schema version, `status: configuration_only`, `operation: identity`, `broker_authority_identity`, `setup_issuance_authority_identity` and `permission_authority_identity`. It reads protected configuration and derives the identities natively, and does nothing else: no approval, no owner creation, no credential reads and no issuance. The legacy admin quartet is mutually exclusive with it. It remains schema 1, can still be read, and cannot execute for current setup.
-
-### Credential session and shutdown
-
-One lazy credential session belongs to the lifetime of the web handler, not to each request. Records of the owner and of attempts, which contain no content, remain. Tokens are not saved. Renewal happens only on foreground demand. After a restart you need an explicit new generation and a new approval. Open Trestle does not delete the owner or rebuild it automatically. `single_host_exclusive` ownership excludes ownership of credentials on a shared volume or in HA, even when a plan names `kubernetes_ha`.
-
-On shutdown, the handler first cancels the owner's lifetime, allows HTTP Shutdown five seconds, and forces a server Close if that fails. It then closes the lifetime of the broker, with a separate bounded five-second drain. It reports both failures without internal details. An incomplete Close result is cached. The two five-second budgets run in sequence; they are not a single limit or a ten-second guarantee. A cleanup failure does not roll back a saved receipt or a provider effect that was accepted. Recovering a pending receipt that is stored durably does not need a broker to be open.
+On shutdown, the handler allows HTTP Shutdown five seconds and forces a server Close if that fails.
 
 ## Go client
 
 The public `client`, `controlplane` and `runtimeadmin` packages expose types for plans, receipts, leases, completions, and runtime status without content. The client supports runtime inspection, submission, observation, cancellation, waiting for and acknowledging notifications, task claims, renewal, completion and finalization. It limits responses to 1 MiB, requires JSON media types, rejects unknown response fields, applies a request timeout and disables redirects.
 
-## Metadata storage selection
+## Storage
 
-The daemon defaults to private local file journals. `--metadata-store postgres` selects the PostgreSQL run journal, the protected diagnostic metadata, the protected webhook metadata and the artifact index. It still uses the private local artifact directory, so this combination is a durability profile for a single node, not an HA profile.
+The daemon keeps all state under `--state-dir`: the run journal, the audit ledger, the diagnostics store and the webhook inbox are local files. Task notifications use an in-process queue, and API rate limits apply within the process. The daemon runs as one process and does not support several replicas.
 
-Set `OPEN_TRESTLE_POSTGRES_URL` to the data source for the application role, and pass the runtime role's retained identity as `--postgres-database-authority-identity`. Before it serves requests, the daemon does the following:
-
-1. Verifies that both authority relations resolve to the active schema.
-2. Verifies the checksum of every embedded migration.
-3. Derives the identity of the connected database, schema, role and namespace in the same repeatable-read snapshot.
-4. Requires that this identity matches.
-
-By default, schema changes are not applied through the application role. To run them at startup, add `--apply-migrations` and set `OPEN_TRESTLE_POSTGRES_MIGRATION_URL` for the separate migration role. The daemon rejects an unused database URL, a migration URL without the flag, and the flag without a migration URL. The application role must not be a superuser, must not have `BYPASSRLS`, and needs no authority to create schemas.
-
-### Shared S3 artifact storage
-
-`--artifact-store s3` enables the shared profile with envelope storage, and it requires `--metadata-store postgres`. It also requires `--s3-endpoint`, `--s3-region`, `--s3-bucket`, `--kms-region` and `--kms-key-arn`. S3 signing uses `OPEN_TRESTLE_S3_ACCESS_KEY_ID`, `OPEN_TRESTLE_S3_SECRET_ACCESS_KEY` and the optional `OPEN_TRESTLE_S3_SESSION_TOKEN`. KMS uses the separate `OPEN_TRESTLE_AWS_ACCESS_KEY_ID`, `OPEN_TRESTLE_AWS_SECRET_ACCESS_KEY` and the optional `OPEN_TRESTLE_AWS_SESSION_TOKEN`. A secure `--kms-endpoint` is optional.
-
-The daemon builds one registry that maps each tenant to its key, uses the version-required S3 backend, and records artifact metadata through `IndexedArtifactStore`. It rejects remote-storage configuration that is unused or incomplete.
-
-Separate explicit S3 and KMS credentials sign their own requests, and the daemon rejects an access-key ID that is identical in both roles. Scope each production principal to the configured bucket prefix or the tenant's KMS key only. This daemon entry point accepts explicit credentials from the environment. A deployment that needs workload identity must provide its own credential adapter.
-
-Both remote-storage clients disable environment proxies, reject redirects, bound the size of response headers, and close idle connections on shutdown. KMS bodies are capped at 1 MiB. S3 object reads keep the adapter's 32 MiB bound. HTTPS requires TLS 1.2 or newer, and plain HTTP is accepted only for an IP-literal loopback test endpoint. The daemon does not accept a local wrapping key as envelope protection for production.
-
-### Artifact erasure mode
-
-`--artifact-erasure-mode` selects how artifact erasure is wired at runtime. It accepts `legacy` and `budgeted`, and `legacy` is the default. Existing local artifact storage and legacy S3 envelope storage keep their current defaults and startup behavior. `--erasure-policy` and `--s3-erasure-trusted-ca` are accepted only with `--artifact-erasure-mode budgeted`.
-
-Budgeted erasure is valid only with PostgreSQL metadata and S3 artifacts. It requires all of these:
-
-- `--metadata-store postgres`.
-- `--artifact-store s3`.
-- `OPEN_TRESTLE_POSTGRES_URL`.
-- `--postgres-database-authority-identity`.
-- The existing S3 and KMS flags.
-- The existing, separate environments for S3 and KMS credentials.
-- `--erasure-policy`.
-- `--s3-erasure-trusted-ca`.
-
-It rejects `--apply-migrations` and any `OPEN_TRESTLE_POSTGRES_MIGRATION_URL`. An authorized migration administrator must manage schema changes separately, before this daemon starts.
-
-```sh
-trestled \
-  --listen 127.0.0.1:8741 \
-  --state-dir "$HOME/.local/state/open-trestle" \
-  --tenant example \
-  --repository example-repository \
-  --metadata-store postgres \
-  --postgres-database-authority-identity "$POSTGRES_DATABASE_AUTHORITY_IDENTITY" \
-  --artifact-store s3 \
-  --artifact-erasure-mode budgeted \
-  --erasure-policy /etc/open-trestle/artifact-erasure-policy.json \
-  --s3-erasure-trusted-ca /etc/open-trestle/s3-erasure-ca.pem \
-  --s3-endpoint https://s3.example.invalid \
-  --s3-region us-east-1 \
-  --s3-bucket open-trestle-artifacts \
-  --s3-prefix reviews \
-  --kms-region us-east-1 \
-  --kms-key-arn arn:aws:kms:us-east-1:123456789012:key/KEY-ID
-```
-
-The protected erasure policy must be current at the startup sample that the daemon takes itself. It must bind the configured PostgreSQL database authority, the identity of the S3 backend configuration, the configured S3 prefix and the expected storage namespace.
-
-The S3 erasure CA is an explicit, protected trust file. It must be an absolute clean path to a regular file with a trusted owner. The daemon reads it twice to check that it is stable, and it must not be empty and must be at most 256 KiB. The budgeted erasure backend uses HTTPS with those explicit roots only. Through these flags it does not use ambient S3 trust roots, injected transports, hidden credentials or workload identity.
-
-At startup in budgeted mode, the daemon builds the local state of the S3 erasure and KMS clients, loads the policy and CA files, and verifies the PostgreSQL authority and the budgeted erasure index. It makes no S3 or KMS requests before it serves, and it does not check live S3 or KMS health, bucket versioning, physical erasure, authorization of erasure or backup recovery.
-
-### Task notifications in PostgreSQL
-
-PostgreSQL also stores task notifications that contain no content. A transaction trigger sends a `NOTIFY` with an empty payload after inserts into the run events and the queue. Long-poll API requests and the notification supervisor use `LISTEN` as a signal to wake up. If a notification is duplicated or missed, the durable queue and the canonical journal remain the source of truth. The daemon exposes liveness probes without content and readiness probes that the supervisors back. Open Trestle does not yet support HA: it still needs webhook supervision that does not depend on a leader, and tested database failover.
+Long-poll API requests and the notification supervisor wake up on a signal. If a notification is missed, the durable journal remains the source of truth. The daemon exposes liveness probes without content and readiness probes that the supervisors back.
 
 ## GitHub run opening
 
@@ -348,15 +238,15 @@ GitHub ingress durably acknowledges deliveries without requiring runs to be crea
 - `--github-publisher-id`.
 - One `--github-handler KIND=IDENTITY` for each required task kind.
 
-Advisory and local plans require handlers from `acquire_source` through `evaluate_publication`. Required plans also require `publish_result`. The daemon rejects bindings that are missing, duplicated, unknown or malformed before the listener starts.
+The plans require handlers from `acquire_source` through `evaluate_publication`. The `--github-review-mode` flag accepts `local` and `advisory`, and the daemon rejects `required` at startup. The daemon rejects bindings that are missing, duplicated, unknown or malformed before the listener starts.
 
 ## Daemon-owned deterministic workers
 
-Add `--github-local-deterministic-workers` to execute the built-in handlers for GitHub source acquisition, the change model, deterministic evidence and memory retrieval inside the daemon process. The option requires `--github-open-runs`. The handler identities for those four task kinds are derived from the configured built-ins and merged into the planner, and a conflicting explicit `--github-handler` is rejected. The handlers for context, the model, readiness and the optional publication are configured separately.
+Add `--github-local-deterministic-workers` to execute the built-in handlers for GitHub source acquisition, the change model, deterministic evidence and memory retrieval inside the daemon process. The option requires `--github-open-runs`. The handler identities for those four task kinds are derived from the configured built-ins and merged into the planner, and a conflicting explicit `--github-handler` is rejected. The handlers for context, the model and readiness are configured separately.
 
 Without a broker descriptor, `OPEN_TRESTLE_GITHUB_API_TOKEN` keeps the legacy configuration for source acquisition. If it is not set, acquisition is anonymous. If it is set, the value must be safe for an HTTP header. This static token is not current evidence of setup permissions. The daemon rejects it, rather than ignoring it, when local deterministic workers are disabled.
 
-Broker mode uses the protected `OPEN_TRESTLE_GITHUB_SOURCE_BROKER_CONFIG` descriptor and a common approval, `--approve-github-source-broker-authority-identity`. The daemon rejects static credentials mixed in. Runtime source acquisition owns a separate broker for the runtime purpose, and grants and receipts from setup cannot authorize it. The descriptor remains schema 1, with `single_host_exclusive` ownership and explicit consent to create tokens and to renew them on demand. It does not provide ownership of credentials in HA, recovery after an automatic restart or authority to publish.
+Broker mode uses the protected `OPEN_TRESTLE_GITHUB_SOURCE_BROKER_CONFIG` descriptor and a common approval, `--approve-github-source-broker-authority-identity`. The daemon rejects static credentials mixed in. Runtime source acquisition owns a separate broker for the runtime purpose, and grants and receipts from setup cannot authorize it. The descriptor remains schema 1, with `single_host_exclusive` ownership and explicit consent to create tokens and to renew them on demand. It does not provide recovery after an automatic restart or authority to publish.
 
 ## Policy-bound model pipeline
 
@@ -364,29 +254,9 @@ To run the complete advisory pipeline in `trestled`, set both `--runtime-route-i
 
 Every ancestor must have trusted ownership and must prevent another local principal from replacing it. Writable ancestors are allowed only with sticky-directory protection for a child with a trusted owner. The daemon rejects symlinks, files with a foreign owner, unsafe ancestry, and replacement during the open. On platforms where the ownership checks are not implemented, runtime configuration is rejected. These checks do not replace a setup approval of the runtime policy digest.
 
-The runtime policy must name the same review-policy identity that is supplied to GitHub planning, and it must bind the decoded identity of the inventory. The daemon rejects partial configuration, identities that are cross-wired, required publication mode without the separate publication authority described below, and explicit handler identities that conflict.
+The runtime policy must name the same review-policy identity that is supplied to GitHub planning, and it must bind the decoded identity of the inventory. The daemon rejects partial configuration, identities that are cross-wired, and explicit handler identities that conflict.
 
 At startup the daemon builds one catalog of the pipeline. It contains source acquisition, change construction, deterministic evidence, memory retrieval, context assembly, candidate generation, verification and publication readiness. The same snapshot of the inventory drives the policy for generation and for verification. The policy refers to OpenAI credentials by the name of an environment variable, and the daemon reads them only when an authorized provider request is dispatched. A credential that is missing or invalid at request time produces a closed provider failure, without changing the catalog identity or exposing the value.
-
-External publication in required mode is not available through these two files alone. It needs a separately configured effect authorizer, a publisher catalog and a current-head resolver.
-
-## Required-mode GitHub publication
-
-Publication by the daemon in required mode needs all of the following, in addition to the policy-bound model pipeline:
-
-- PostgreSQL metadata storage, which supplies the durable publication fence on the operation key.
-- `--postgres-database-authority-identity`, the identity of the runtime-role database, as reported by `trestle admin postgres identity`.
-- `--postgres-authority-identity`, a stable digest that is not secret, verified against the fence namespace that the database generated.
-- `--github-enable-publication`.
-- `--github-publication-policy-identity` and `--github-publication-principal-identity`, both as nonzero canonical digests.
-- `--github-publication-authorization-ttl`, between one minute and 24 hours.
-- `OPEN_TRESTLE_GITHUB_PUBLICATION_TOKEN`, available when a publication request is dispatched.
-
-The enable flag is an explicit policy grant for the whole repository, for the configured tenant and repository. When a task runs, the authorizer creates a short-lived `publication` grant for the review scope. It cannot authorize another tenant, repository, capability, readiness plan or target. Before it dispatches, the publication handler still requires protected lineage, a match with the fresh head, an exclusive claim on the operation, and the catalogs of publishers and resolvers.
-
-The publication token is separate from the credentials for webhooks, source reads, the API, the database, object storage, KMS and the model provider. The daemon does not read its presence or value at startup. It reads the token only after the scope and the immutable repository target match. The daemon rejects any part of the publication configuration that is supplied without the explicit enable flag.
-
-Local metadata mode rejects required publication, because it does not yet supply the durable fence across processes for the operation. A PostgreSQL store that is unbound or unverified also exposes no identity for the publication attempt guard. Initialize a new authority row only with `trestle admin postgres initialize`. Daemon startup does not initialize publication authority. If the PostgreSQL authority digest, the database name, the active schema or the generated namespace UUID changes, the identities of the GitHub publisher and the publication handler change. A restored or replaced database therefore does not stand in for the original fence namespace.
 
 ## Local deterministic admission on the runs endpoint
 

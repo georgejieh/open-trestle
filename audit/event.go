@@ -138,7 +138,7 @@ const (
 	EventRouteAttemptClaimed
 	EventRouteDispatchCompleted
 	EventRouteCostReconciled
-	EventRouteContinuationPlanned
+	_ // retired, never recorded
 	EventContextSourcesSelected
 	EventContextPacketAssembled
 	EventCandidateBatchAdmitted
@@ -150,7 +150,7 @@ const (
 	EventPublicationClaimed
 	EventPublicationHeadReconciled
 	EventPublicationCompleted
-	EventPublicationRetryAuthorized
+	_ // retired, never recorded
 	EventReviewSnapshotBound
 	EventContextAcquisitionBound
 	EventArtifactDeleted
@@ -169,8 +169,6 @@ func (k EventKind) String() string {
 		return "route_dispatch_completed"
 	case EventRouteCostReconciled:
 		return "route_cost_reconciled"
-	case EventRouteContinuationPlanned:
-		return "route_continuation_planned"
 	case EventContextSourcesSelected:
 		return "context_sources_selected"
 	case EventContextPacketAssembled:
@@ -193,8 +191,6 @@ func (k EventKind) String() string {
 		return "publication_head_reconciled"
 	case EventPublicationCompleted:
 		return "publication_completed"
-	case EventPublicationRetryAuthorized:
-		return "publication_retry_authorized"
 	case EventReviewSnapshotBound:
 		return "review_snapshot_bound"
 	case EventContextAcquisitionBound:
@@ -214,7 +210,7 @@ func (k EventKind) String() string {
 
 func ParseEventKind(value string) (EventKind, error) {
 	for kind := EventRouteSelected; kind <= EventGenerationRejected; kind++ {
-		if kind.String() == value {
+		if value != "" && kind.String() == value {
 			return kind, nil
 		}
 	}

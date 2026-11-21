@@ -1,5 +1,0 @@
-//go:build !race
-
-package postgres
-
-const raceDetectorEnabled = false

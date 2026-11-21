@@ -128,40 +128,6 @@ func RecordRouteCostReconciliation(ctx context.Context, ledger audit.Ledger, sco
 	return event, err
 }
 
-// RecordRouteContinuationPlan appends the deterministic next action after cost settlement.
-func RecordRouteContinuationPlan(ctx context.Context, ledger audit.Ledger, scope audit.ReviewScope, authorization RouteAttemptAuthorization, outcome RouteAttemptOutcome, reconciliation RouteCostReconciliation, plan RouteContinuationPlan, occurredAt time.Time) (audit.Event, error) {
-	if err := validateRouteAuditInputs(ledger, scope); err != nil {
-		return audit.Event{}, err
-	}
-	if err := authorization.Validate(); err != nil {
-		return audit.Event{}, err
-	}
-	if err := outcome.Validate(); err != nil {
-		return audit.Event{}, err
-	}
-	if err := reconciliation.Validate(); err != nil {
-		return audit.Event{}, err
-	}
-	if err := plan.Validate(); err != nil {
-		return audit.Event{}, err
-	}
-	if authorization.ReviewScopeIdentity() != scope.Identity() {
-		return audit.Event{}, ErrRouteAuditScopeMismatch
-	}
-	if outcome.AuthorizationIdentity() != authorization.Identity() || reconciliation.AttemptAuthorizationIdentity() != authorization.Identity() || reconciliation.AttemptOutcomeIdentity() != outcome.Identity() || plan.AuthorizationIdentity() != authorization.Identity() || plan.OutcomeIdentity() != outcome.Identity() || plan.ReconciliationIdentity() != reconciliation.Identity() {
-		return audit.Event{}, ErrRouteAuditRecordMismatch
-	}
-	if err := requireRouteAuditEvent(ctx, ledger, scope, audit.EventRouteCostReconciled, reconciliation.Identity()); err != nil {
-		return audit.Event{}, err
-	}
-	parents := []string{authorization.Identity(), outcome.Identity(), reconciliation.Identity()}
-	if next := plan.NextAuthorization(); next.Identity() != "" {
-		parents = append(parents, next.Identity())
-	}
-	event, _, err := appendUniqueRouteAuditEvent(ctx, ledger, scope, audit.EventRouteContinuationPlanned, plan.Identity(), parents, reconciliation.Identity(), occurredAt)
-	return event, err
-}
-
 func validateRouteAuditInputs(ledger audit.Ledger, scope audit.ReviewScope) error {
 	if isNilAuditLedger(ledger) {
 		return ErrInvalidRouteAuditLedger
@@ -287,8 +253,7 @@ func requireRouteSelectionForClaim(ctx context.Context, ledger audit.Ledger, sco
 				continue
 			}
 			parents := event.CausalParentIdentities()
-			// Fallback keeps the first selection but authorizes a different route record.
-			if found || len(parents) != 3 || (authorization.Kind() != RouteAttemptFallback && !auditEventReferences(event, authorization.RouteRecordIdentity())) {
+			if found || len(parents) != 3 || !auditEventReferences(event, authorization.RouteRecordIdentity()) {
 				return ErrRouteAuditRecordMismatch
 			}
 			found = true

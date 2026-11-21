@@ -10,11 +10,11 @@ import (
 	"github.com/georgejieh/open-trestle/internal/provider"
 )
 
-func newInitialAttemptFixture(t *testing.T) (provider.Request, fallbackFixture, ObservedRouteCandidate) {
+func newInitialAttemptFixture(t *testing.T) (provider.Request, routeFixture, ObservedRouteCandidate) {
 	t.Helper()
 	pricing, _ := provider.NewRoutePricing(1_000_000, 1_000_000)
-	route := newFallbackRoute(t, 140_000, provider.ProviderZoneLocal, provider.ContentLoggingDisabled, provider.RouteQualityTier4, pricing)
-	fixture := newFallbackFixture(t, 20_000, route)
+	route := newFixtureRoute(t, 140_000, provider.ProviderZoneLocal, provider.ContentLoggingDisabled, provider.RouteQualityTier4, pricing)
+	fixture := newRouteFixture(t, 20_000, route)
 	request, err := provider.NewRequest(provider.CapabilityReviewV1, "application/json", []byte("fallback payload"))
 	if err != nil {
 		t.Fatal(err)
@@ -29,7 +29,6 @@ func TestRouteAttemptKindRoundTrips(t *testing.T) {
 	}{
 		{RouteAttemptInitial, "initial"},
 		{RouteAttemptRetry, "retry"},
-		{RouteAttemptFallback, "fallback"},
 	}
 	for _, test := range values {
 		parsed, err := ParseRouteAttemptKind(test.token)

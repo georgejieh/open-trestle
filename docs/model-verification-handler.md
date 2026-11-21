@@ -72,8 +72,6 @@ The fix is unverified model text. It is not part of `PublishableFinding`, so for
 
 Rejected and inconclusive counts remain in the finding set. `ParseVerificationResultArtifact` reconstructs the verification context and all derived receipts, reruns the independence check and promotion, and compares every identity before it returns data.
 
-`artifactvalidation.ValidatedTaskHandler` can wrap the handler with `candidate_batch` as input and `verified_finding_set` as output.
-
 ## Published schemas
 
 - `schemas/artifact/verification-batch-v1.schema.json` and `schemas/artifact/verification-batch-v2.schema.json` (verdicts that record removed base lines)

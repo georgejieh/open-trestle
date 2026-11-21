@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	setupcore "github.com/georgejieh/open-trestle/setup"
 	"os"
 	"path/filepath"
@@ -199,7 +200,7 @@ func TestSetupTUIServiceRunsConfiguredLocalInferenceChecker(t *testing.T) {
 	}
 }
 
-func TestSetupTUIRejectsPartialPostgresApprovalBeforeOpeningState(t *testing.T) {
+func TestSetupTUIRejectsRemovedPostgresFlagBeforeOpeningState(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "missing.json")
 	var stdout, stderr bytes.Buffer
 	code := runSetupTUIWithClock([]string{"--state", missing, "--approve-postgres-authority-identity", strings.Repeat("a", 64)}, strings.NewReader(""), &stdout, &stderr, fixedSetupClock{setupTimeCLI()}, os.Getenv)
@@ -213,10 +214,10 @@ func TestSetupTUIRejectsPartialPostgresApprovalBeforeOpeningState(t *testing.T) 
 	}
 }
 
-func TestSetupTUIServiceRunsRemoteProviderAuthorization(t *testing.T) {
+func TestSetupTUIServiceRefusesRemoteProviderAuthorizationForLocalProfile(t *testing.T) {
 	root := t.TempDir()
 	_ = os.Chmod(root, 0o700)
-	statePath := initializedSetupTUIStateForProfile(t, root, setupcore.ProfileControlledHybrid)
+	statePath := initializedSetupTUIState(t, root)
 	inventory, policy, inventoryID, runtimeID, reviewID := setupPolicyCLIPaths(t, root, "private_remote")
 	state, err := setupcore.OpenStateFile(statePath)
 	if err != nil {
@@ -225,13 +226,12 @@ func TestSetupTUIServiceRunsRemoteProviderAuthorization(t *testing.T) {
 	defer state.Close()
 	service := &setupTUIService{state: state, clock: fixedSetupClock{setupTimeCLI().Add(time.Second)}, getenv: func(string) string { t.Fatal("credential environment read"); return "" }, statePath: statePath, routeInventory: inventory, runtimePolicy: policy, inventoryIdentity: inventoryID, runtimePolicyIdentity: runtimeID, reviewPolicyIdentity: reviewID, approvedBy: "owner"}
 	plan, _ := service.Current(context.Background())
-	_, receipt, err := service.RunCheck(context.Background(), setupcore.CheckRemoteProviderAuthorized, plan.Identity())
-	if err != nil || receipt.State() != setupcore.CheckPassed {
-		t.Fatalf("receipt=%s err=%v", receipt.State(), err)
+	if _, _, err := service.RunCheck(context.Background(), setupcore.CheckRemoteProviderAuthorized, plan.Identity()); !errors.Is(err, setupcore.ErrCheckNotAuthorized) {
+		t.Fatalf("err=%v", err)
 	}
 }
 
-func TestSetupTUIRejectsPartialReplicaReconciliationBeforeOpeningState(t *testing.T) {
+func TestSetupTUIRejectsRemovedReplicaReconciliationFlagsBeforeOpeningState(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "missing.json")
 	var stdout, stderr bytes.Buffer
 	code := runSetupTUIWithClock([]string{"--state", missing, "--approve-replica-reconciliation-authority-identity", strings.Repeat("a", 64), "--replica-reconciliation-approved-by", "owner"}, strings.NewReader(""), &stdout, &stderr, fixedSetupClock{setupTimeCLI()}, os.Getenv)
@@ -245,7 +245,7 @@ func TestSetupTUIRejectsPartialReplicaReconciliationBeforeOpeningState(t *testin
 	}
 }
 
-func TestSetupTUIRejectsPartialSignedBundleBeforeOpeningState(t *testing.T) {
+func TestSetupTUIRejectsRemovedSignedBundleFlagsBeforeOpeningState(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "missing.json")
 	var stdout, stderr bytes.Buffer
 	code := runSetupTUIWithClock([]string{"--state", missing, "--approve-signed-bundle-authority-identity", strings.Repeat("a", 64), "--signed-bundle-approved-by", "owner"}, strings.NewReader(""), &stdout, &stderr, fixedSetupClock{setupTimeCLI()}, os.Getenv)

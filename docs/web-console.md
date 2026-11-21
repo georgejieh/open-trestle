@@ -112,12 +112,6 @@ The guided checker covers the following:
 
 - Local-administrator approval.
 - Validation of a protected backup snapshot.
-- PostgreSQL authority.
-- KMS secret-backend and envelope-storage checks.
-- Remote-provider authorization.
-- GitHub integration-permission inspection.
-- Local GitHub webhook conformance.
-- PostgreSQL shared API rate-limit conformance. - Replica reconciliation. - Signed offline bundle.
 - Storage and observer credentials.
 - Runtime policy.
 - Explicit local inference.
@@ -127,21 +121,7 @@ Creating and restoring a snapshot remain explicit CLI operations. Local inferenc
 
 The backup result covers setup state only. It does not claim that the media is independent, or that disaster recovery works.
 
-### What each check does
-
-The envelope-storage check keeps its S3 and KMS configuration and its approval values in browser memory only. Its separate confirmation lets the server create, read, exactly delete, and verify the absence of one fixed public object that has envelope encryption. If a failure is partial, the deterministic encrypted object can remain, so that you can retry with exactly the same authority. A pass requires the object to be absent. 
-
-The GitHub integration-permission check keeps only non-secret fields in browser memory: endpoint, version, installation, repository and approval. The dedicated GitHub setup token and the separate runtime installation token stay in the server environment. After confirmation, the server makes read-only GET requests for the installation and the repository. It cannot modify the integration.
-
-The GitHub webhook conformance check keeps only a non-secret authority identity, key ID and approver in browser memory, and it renders no secret field. It requires the passing integration receipt. After confirmation and the stale-plan fence, the server reads the webhook secret. It runs five direct requests inside the process against the production handler and a disposable private file inbox, clears the verifier, and removes the inbox before it passes. It opens no listener and makes no GitHub request.
-
-The Kubernetes HA shared-rate-limit check shows only the approved conformance and database identities and the name of the approver. After the PostgreSQL and stale-plan fences, the server reads the database URL and runs the quota cycle across instances. A pass requires cleanup of the namespace. Replica reconciliation uses the same credential boundary to check that both stores see the plan, that notifications and task leases are fenced, that completion works across instances, that the run converges to a terminal state, and that the disposable scope is cleaned up. No database credential enters the browser or the setup state.
-
-The air-gapped signed-bundle check keeps only these values in browser memory: the absolute path, and the public digest, size, Ed25519 key, signature, authority and approver. It streams one opaque file. It does not extract, import or execute the bundle.
-
-The remote-provider authorization check reuses the protected runtime configuration paths and three approval identities. It reads no provider credential value and makes no provider request. 
-
-The KMS check keeps its region, key ARN, optional endpoint and approval values in browser memory only. After confirmation, the server reads AWS credentials from its environment and performs one generate and unwrap sequence. It stores no key material and makes no S3 request. It does not show that envelope storage is ready.
+Checks that this page does not list stay pending.
 
 ### Confirmation and validation
 

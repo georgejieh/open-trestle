@@ -134,7 +134,7 @@ The representative price table on October 31 lists $0.15 per million input token
 ### Failure handling
 
 - 401 and 403 use the existing authentication and authorization failures.
-- 402 maps to `payment_required` with no replay side effect, the class every profile uses for 402. Like a spent budget, it is neither retried nor eligible for fallback. The task is refused as `policy`, and the local review reports `provider_payment_required`.
+- 402 maps to `payment_required` with no replay side effect, the class every profile uses for 402. Like a spent budget, it is not retried. The task is refused as `policy`, and the local review reports `provider_payment_required`.
 - 404 and 410 map to `model_unavailable` and `model_retired`, as for every profile.
 - 429 includes a refusal because of a policy budget, so it is not always temporary RPM throttling. Like every profile's 429, and like a 503 that names a `Retry-After`, it records known zero usage. Open Trestle retries it on the same route at most twice inside the task attempt, after its `Retry-After` or the task's fixed delay, and each retry takes over the refused attempt's reservation. Budgets are checked at request start, so requests that are already running may exceed them slightly.
 - 400, 405, 415 and 422 reject the request as invalid, for example for an unknown model ID or an unsupported parameter. They map to `request_rejected`, as for every profile. The request is not retried, the task is refused as `policy`, and the local review reports `provider_request_rejected`.

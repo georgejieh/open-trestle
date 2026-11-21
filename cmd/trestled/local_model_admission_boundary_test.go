@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	postgresstore "github.com/georgejieh/open-trestle/adapters/storage/postgres"
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/client"
 	"github.com/georgejieh/open-trestle/controlplane/httpapi"
@@ -28,7 +27,7 @@ func TestDaemonLocalModelAdmissionRefusalsAndRestartReplay(t *testing.T) {
 	args = append(args, "--local-model-workers")
 	build := func() *daemon {
 		t.Helper()
-		d, err := buildDaemonWithDependencies(ctx, args, getenv, &bytes.Buffer{}, daemonDependencies{openPostgres: postgresstore.Open, clock: httpapi.SystemClock{}, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()})
+		d, err := buildDaemonWithDependencies(ctx, args, getenv, &bytes.Buffer{}, daemonDependencies{clock: httpapi.SystemClock{}, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()})
 		if err != nil {
 			t.Fatal(err)
 		}

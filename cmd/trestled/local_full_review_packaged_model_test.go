@@ -37,7 +37,7 @@ type packagedVerifierBarrier struct {
 	release chan struct{}
 }
 
-func newPackagedVerifierBarrier(t *testing.T, endpoint *daemonBudgetedModelEndpoint) *packagedVerifierBarrier {
+func newPackagedVerifierBarrier(t *testing.T, endpoint *daemonFakeModelEndpoint) *packagedVerifierBarrier {
 	t.Helper()
 	barrier := &packagedVerifierBarrier{entered: make(chan struct{}, 1), release: make(chan struct{})}
 	barrier.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -63,7 +63,7 @@ func newPackagedVerifierBarrier(t *testing.T, endpoint *daemonBudgetedModelEndpo
 
 type packagedModelWorkerRun struct {
 	api                      *client.Client
-	model                    *daemonBudgetedModelFixture
+	model                    *daemonFakeModelFixture
 	barrier                  *packagedVerifierBarrier
 	scope                    audit.ReviewScope
 	cli, daemon              string
@@ -119,7 +119,7 @@ func testPackagedModelWorkerLifecycle(t *testing.T, run packagedModelWorkerRun) 
 	assertCalls := func(generation, verification int) {
 		t.Helper()
 		for _, item := range []struct {
-			endpoint *daemonBudgetedModelEndpoint
+			endpoint *daemonFakeModelEndpoint
 			count    int
 		}{{run.model.generation, generation}, {run.model.verification, verification}} {
 			calls, _, captures, failures := item.endpoint.snapshot()

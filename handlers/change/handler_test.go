@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/georgejieh/open-trestle/artifact"
-	"github.com/georgejieh/open-trestle/artifactvalidation"
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/controlplane"
 	sourcehandler "github.com/georgejieh/open-trestle/handlers/source"
@@ -109,11 +108,7 @@ func TestHandlerBuildsBoundedChangeModelFromExactSourceDependencies(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	validated, err := artifactvalidation.NewValidatedTaskHandler(changeHandler, store, fixedClock{time.UnixMilli(211)}, []artifact.Kind{artifact.KindSourceSnapshot}, []artifact.Kind{artifact.KindChangeModel})
-	if err != nil {
-		t.Fatal(err)
-	}
-	completion := validated.Execute(context.Background(), request)
+	completion := changeHandler.Execute(context.Background(), request)
 	if completion.Status() != controlplane.TaskCompletionSucceeded {
 		t.Fatalf("completion=%#v", completion)
 	}
@@ -223,11 +218,7 @@ func deletionChangeFixture(t *testing.T, before, after string) (artifact.Artifac
 	if err != nil {
 		t.Fatal(err)
 	}
-	validated, err := artifactvalidation.NewValidatedTaskHandler(changeHandler, store, fixedClock{time.UnixMilli(211)}, []artifact.Kind{artifact.KindSourceSnapshot}, []artifact.Kind{artifact.KindChangeModel})
-	if err != nil {
-		t.Fatal(err)
-	}
-	completion := validated.Execute(context.Background(), request)
+	completion := changeHandler.Execute(context.Background(), request)
 	if completion.Status() != controlplane.TaskCompletionSucceeded {
 		t.Fatalf("completion=%#v", completion)
 	}

@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	postgresstore "github.com/georgejieh/open-trestle/adapters/storage/postgres"
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/controlplane/httpapi"
 	"github.com/georgejieh/open-trestle/internal/review"
@@ -72,7 +71,7 @@ func testGenerationRejectionStartupRefusals(t *testing.T, args []string, getenv 
 		}
 	}
 	deps := func() daemonDependencies {
-		return daemonDependencies{openPostgres: postgresstore.Open, clock: httpapi.SystemClock{}, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()}
+		return daemonDependencies{clock: httpapi.SystemClock{}, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()}
 	}
 	for _, path := range []string{auditPath, rejectionPath} {
 		saved, err := os.ReadFile(path)
@@ -109,7 +108,7 @@ func testGenerationRejectionStartupRefusals(t *testing.T, args []string, getenv 
 	if err := os.WriteFile(auditPath, raw, 0600); err != nil {
 		t.Fatal(err)
 	}
-	for _, kind := range []audit.EventKind{audit.EventRouteContinuationPlanned, audit.EventPublicationClaimed} {
+	for _, kind := range []audit.EventKind{audit.EventPublicationClaimed} {
 		extraEvent, err := audit.NewEvent(scope, events.Sequence()+1, events.Identity(), kind, strings.Repeat("a", 64), []string{events.SubjectIdentity()}, time.UnixMilli(events.OccurredAtUnixMilliseconds()))
 		if err != nil {
 			t.Fatal(err)

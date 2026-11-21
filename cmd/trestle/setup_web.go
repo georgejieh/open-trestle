@@ -75,19 +75,6 @@ func newSetupWebHandler(lifetime context.Context, statePath, token string, envir
 	if factoryErr != nil {
 		return nil, factoryErr
 	}
-	postgresProbe, probeErr := newSetupPostgresStorageProbe(environment, executeSetupPostgresStorage)
-	if probeErr != nil {
-		return nil, probeErr
-	}
-	secretBuilder := setuphttp.SecretBackendProbeBuilder(func(tenant, region, keyARN, endpoint string) (setupcore.SecretBackendProbe, error) {
-		probe, _, err := newSetupKMSProbe(environment, tenant, region, keyARN, endpoint, executeSetupKMS)
-		return probe, err
-	})
-	envelopeBuilder := setuphttp.EnvelopeStorageProbeBuilder(func(plan setupcore.Plan, s3Endpoint, s3Region, s3Bucket, s3Prefix, kmsRegion, kmsKeyARN, kmsEndpoint string) (setupcore.EnvelopeStorageProbe, error) {
-		configuration := setupEnvelopeConfiguration{tenantID: plan.TenantID(), s3Endpoint: s3Endpoint, s3Region: s3Region, s3Bucket: s3Bucket, s3Prefix: s3Prefix, kmsRegion: kmsRegion, kmsKeyARN: kmsKeyARN, kmsEndpoint: kmsEndpoint}
-		probe, _, err := newSetupEnvelopeStorageProbe(environment, plan, configuration, executeSetupEnvelopeStorage)
-		return probe, err
-	})
 	integrationBuilder := setuphttp.IntegrationPermissionProbeBuilder(func(plan setupcore.Plan, expectedBrokerAuthority string, allowTokenCreation bool) (setupcore.IntegrationPermissionProbe, error) {
 		configuration := setupGitHubPermissionConfiguration{host: githubConfiguration, session: h.permissions, expectedBrokerAuthority: expectedBrokerAuthority, allowTokenCreation: allowTokenCreation}
 		probe, _, err := newSetupGitHubPermissionProbe(environment, plan, configuration, executeSetupGitHubPermission)
@@ -97,20 +84,7 @@ func newSetupWebHandler(lifetime context.Context, statePath, token string, envir
 		probe, _, err := newSetupGitHubWebhookProbe(environment, plan, keyID, executeSetupGitHubWebhook)
 		return probe, err
 	})
-	sharedRateLimitBuilder := setuphttp.SharedRateLimitProbeBuilder(func(plan setupcore.Plan, databaseAuthorityIdentity string) (setupcore.SharedRateLimitProbe, error) {
-		probe, _, err := newSetupSharedRateLimitProbe(environment, plan, databaseAuthorityIdentity, executeSetupSharedRateLimit)
-		return probe, err
-	})
-	replicaReconciliationBuilder := setuphttp.ReplicaReconciliationProbeBuilder(func(plan setupcore.Plan, databaseAuthorityIdentity string) (setupcore.ReplicaReconciliationProbe, error) {
-		probe, _, err := newSetupReplicaReconciliationProbe(environment, plan, databaseAuthorityIdentity, executeSetupReplicaReconciliation)
-		return probe, err
-	})
-	signedBundleBuilder := setuphttp.SignedBundleProbeBuilder(func(plan setupcore.Plan, path, digest string, bytes uint64, publicKey, signature string) (setupcore.SignedBundleProbe, error) {
-		configuration := setupSignedBundleConfiguration{bundlePath: path, bundleDigest: digest, bundleBytes: bytes, publicKeyHex: publicKey, signatureHex: signature}
-		probe, _, err := newSetupSignedBundleProbe(plan, configuration, executeSetupSignedBundle)
-		return probe, err
-	})
-	api, err := setuphttp.New(setuphttp.Options{StatePath: statePath, Token: token, Environment: environment, LocalInferenceFactory: inferenceFactory, PostgresProbe: postgresProbe, SecretBackendProbeBuilder: secretBuilder, EnvelopeStorageProbeBuilder: envelopeBuilder, IntegrationPermissionProbeBuilder: integrationBuilder, WebhookProbeBuilder: webhookBuilder, SharedRateLimitProbeBuilder: sharedRateLimitBuilder, ReplicaReconciliationProbeBuilder: replicaReconciliationBuilder, SignedBundleProbeBuilder: signedBundleBuilder, Clock: clock})
+	api, err := setuphttp.New(setuphttp.Options{StatePath: statePath, Token: token, Environment: environment, LocalInferenceFactory: inferenceFactory, IntegrationPermissionProbeBuilder: integrationBuilder, WebhookProbeBuilder: webhookBuilder, Clock: clock})
 	if err != nil {
 		return nil, err
 	}

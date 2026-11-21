@@ -3,7 +3,7 @@
 This page says what leaves your machine, when it leaves, and where it goes. It
 covers the command-line paths that a person runs: `trestle init`,
 `trestle review`, `trestle update` and `trestle keys`. A deployed daemon, the
-GitHub webhook and publication make further requests. These are described in
+GitHub webhook ingress makes further requests. These are described in
 [operations](operations.md) and in the GitHub pages linked from the
 [docs index](README.md#operate).
 

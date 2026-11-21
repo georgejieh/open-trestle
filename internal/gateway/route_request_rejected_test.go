@@ -27,47 +27,6 @@ func TestRequestRejectedIsNeverRetried(t *testing.T) {
 	}
 }
 
-// Another route builds its own request for its own model ID, endpoint and
-// parameters, so a rejection of this route's request leaves another route
-// eligible, as a model refusal does. The decision binds the exact class.
-func TestPlanRouteFallbackLeavesAnotherRouteAfterRequestRejected(t *testing.T) {
-	free := mustKnownFreePricing(t)
-	primary := newFallbackRoute(t, 136_000, provider.ProviderZoneLocal, provider.ContentLoggingDisabled, provider.RouteQualityTier4, free)
-	fallback := newFallbackRoute(t, 136_001, provider.ProviderZoneLocal, provider.ContentLoggingDisabled, provider.RouteQualityTier3, free)
-	fixture := newFallbackFixture(t, 0, fallback, primary)
-	fallbackPolicy, _ := NewRouteFallbackPolicy(1, nil)
-	decision, err := planRouteFallback(fixture.selection, fixture.ranking, fallbackPolicy, RouteFailureRequestRejected, RouteReplayNoSideEffect, []string{observedRouteIdentity(primary)}, 0)
-	if err != nil || !decision.ShouldFallback() || decision.Reason() != RouteFallbackSelected || decision.Failure() != RouteFailureRequestRejected || decision.NextRecordIdentity() != observedRouteIdentity(fallback) || decision.Validate() != nil {
-		t.Fatalf("request rejected fallback = (%#v, %v)", decision, err)
-	}
-	invalid, err := planRouteFallback(fixture.selection, fixture.ranking, fallbackPolicy, RouteFailureInvalidResponse, RouteReplayNoSideEffect, []string{observedRouteIdentity(primary)}, 0)
-	if err != nil || invalid.Identity() == decision.Identity() {
-		t.Fatalf("request_rejected and invalid_response share a fallback decision identity: %v", err)
-	}
-	// The whole continuation, with retries allowed, skips the same-route
-	// retry and falls back to the other route.
-	request, _ := provider.NewRequest(provider.CapabilityReviewV1, "application/json", []byte("fallback payload"))
-	authorization, err := NewInitialRouteAttemptAuthorization(request, fixture.selection, fixture.ranking)
-	if err != nil {
-		t.Fatal(err)
-	}
-	outcome, err := NewFailedRouteAttemptOutcome(authorization, RouteFailureRequestRejected, RouteReplayNoSideEffect, provider.NewUnknownRouteTokenUsage(), 0, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	reconciliation, _ := ReconcileAuthorizedRouteAttemptCost(authorization, outcome)
-	retryPolicy, _ := NewRouteRetryPolicy(3, 1, 10, 0, 10)
-	plan, err := PlanRouteContinuation(fixture.selection, fixture.ranking, retryPolicy, fallbackPolicy, authorization, outcome, reconciliation, []string{authorization.RouteRecordIdentity()})
-	if err != nil || plan.RetryDecision().ShouldRetry() || plan.RetryDecision().Reason() != RouteRetryPermanentFailure || plan.Action() != RouteContinuationFallback || plan.NextAuthorization().RouteRecordIdentity() != observedRouteIdentity(fallback) || plan.Validate() != nil {
-		t.Fatalf("request rejected continuation = (%#v, %v)", plan, err)
-	}
-	// Without a fallback route allowed, the run stops; it never retries.
-	stopped, err := PlanRouteContinuation(fixture.selection, fixture.ranking, retryPolicy, NewNoRouteFallbackPolicy(), authorization, outcome, reconciliation, []string{authorization.RouteRecordIdentity()})
-	if err != nil || stopped.Action() != RouteContinuationStop || stopped.Reason() != RouteContinuationDenied || stopped.Validate() != nil {
-		t.Fatalf("request rejected without fallback = (%#v, %v)", stopped, err)
-	}
-}
-
 // The completed-attempt record, which holds failed attempts and exists only
 // on this branch, reads the class back in place with the field set of every
 // other failed attempt. Records of other classes keep their bytes.

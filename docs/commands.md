@@ -185,21 +185,17 @@ are documented in [setup](setup.md), [operations](operations.md) and
 | `setup inspect` | `--state`, `--expected-root-identity` |
 | `setup check storage` | `--state`, `--storage-root` |
 | `setup check observer` | `--state` |
-| `setup check postgres` | `--state`, `--approve-postgres-authority-identity`, `--approved-by` |
-| `setup check secret` | `--state`, `--approve-kms-authority-identity`, `--kms-region`, `--kms-key-arn`, `--kms-endpoint`, `--approved-by` |
-| `setup check envelope` | `--state`, `--approve-envelope-storage-authority-identity`, `--s3-endpoint`, `--s3-region`, `--s3-bucket`, `--s3-prefix`, `--kms-region`, `--kms-key-arn`, `--kms-endpoint`, `--approved-by` |
 | `setup check integration` | `--state`, `--approve-integration-permission-authority-identity`, `--approve-github-source-broker-authority-identity`, `--allow-github-installation-token-creation`, `--approved-by`; or the older `--github-api-endpoint`, `--github-api-version`, `--github-installation-id`, `--github-repository-full-name` |
 | `setup check webhook` | `--state`, `--approve-webhook-authority-identity`, `--github-webhook-key-id`, `--approved-by` |
-| `setup check rate-limit` | `--state`, `--approve-shared-rate-limit-authority-identity`, `--postgres-database-authority-identity`, `--approved-by` |
-| `setup check reconciliation` | `--state`, `--approve-replica-reconciliation-authority-identity`, `--postgres-database-authority-identity`, `--approved-by` |
-| `setup check bundle` | `--state`, `--approve-signed-bundle-authority-identity`, `--bundle`, `--bundle-sha256`, `--bundle-bytes`, `--public-key`, `--signature`, `--approved-by` |
 | `setup check administrator` | `--state`, `--approved-by` |
 | `setup check backup` | `--state`, `--backup-snapshot` |
 | `setup check provider`, `policy`, `dry-run`, `inference` | `--state`, `--route-inventory`, `--runtime-policy`, `--approve-inventory-identity`, `--approve-runtime-policy-identity`, `--approve-review-policy-identity`, `--approved-by` |
 | `setup backup create` | `--state`, `--destination`, `--expected-plan-identity` |
 | `setup backup restore` | `--snapshot`, `--destination`, `--expected-root-identity`, `--expected-plan-identity` |
-| `setup tui` | `--state`, `--storage-root`, `--backup-snapshot`, `--administrator-approved-by`, the approval flags of the checks above with one approver flag each (`--postgres-approved-by`, `--kms-approved-by`, `--envelope-approved-by`, `--integration-approved-by`, `--webhook-approved-by`, `--shared-rate-limit-approved-by`, `--replica-reconciliation-approved-by`, `--signed-bundle-approved-by`), `--approved-by` for the policy checks, `--width`, `--plain`, `--once` |
-| `setup web` | `--state`, `--listen LOOPBACK:PORT` (default `127.0.0.1:8742`), `--approve-github-source-broker-authority-identity` |
+| `setup tui` | `--state`, `--storage-root`, `--backup-snapshot`, `--administrator-approved-by`, `--approved-by` for the policy checks, `--width`, `--plain`, `--once` |
+| `setup web` | `--state`, `--listen LOOPBACK:PORT` (default `127.0.0.1:8742`) |
+
+The only profile is `local_single_node`. No current profile uses `setup check provider`, `integration` or `webhook`.
 
 ### `trestle setup bootstrap`
 
@@ -229,17 +225,9 @@ Writes the protected configuration for a local or remote first review.
 
 | Command | Flags |
 | --- | --- |
-| `admin bundle statement` | `--bundle-sha256`, `--bundle-bytes` |
-| `admin bundle identity` | `--bundle-sha256`, `--bundle-bytes`, `--public-key`, `--signature` |
-| `admin kms identity` | `--tenant`, `--region`, `--key-arn` |
-| `admin envelope identity` | `--tenant`, `--s3-endpoint`, `--s3-region`, `--s3-bucket`, `--s3-prefix`, `--kms-region`, `--kms-key-arn`, `--kms-endpoint` |
 | `admin github permissions identity` | `--api-endpoint`, `--api-version`, `--installation-id`, `--repository-full-name`; or `--broker-config PATH` |
 | `admin github webhook identity` | `--tenant`, `--repository`, `--key-id` |
 | `admin runtime status` | `--tenant`, `--repository`, `--server`, `--timeout` |
-| `admin postgres migrate`, `identity` | `--timeout` |
-| `admin postgres verify` | `--authority-identity`, `--expected-receipt-identity`, `--timeout` |
-| `admin postgres initialize` | `--authority-identity`, `--timeout` |
-| `admin postgres rate-limit identity`, `reconciliation identity` | `--database-authority-identity`, `--setup-root-identity` |
 
 ### Static local Git commands
 

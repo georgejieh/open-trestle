@@ -173,14 +173,14 @@ func TestIsSameReservationRetryOfRecognizesOnlyTakeoverRetries(t *testing.T) {
 	if IsSameReservationRetryOf(first, initial) || IsSameReservationRetryOf(initial, RouteAttemptAuthorization{}) {
 		t.Fatal("an ancestor or an invalid authorization was recognized")
 	}
-	spent, _ := provider.NewRouteTokenUsage(1_000, 1_000, 0)
-	_, _, timeoutInitial, timeout, settled := failedInitialAttempt(t, RouteFailureTimeout, spent)
-	retryPolicy, _ := NewRouteRetryPolicy(3, 100, 1_000, 0, 2_000)
-	ordinary, err := NewRouteRetryAttemptAuthorization(timeoutInitial, timeout, settled, mustRetryDecision(t, retryPolicy, timeoutInitial, timeout))
-	if err != nil {
+	moved := first
+	moved.remainingCostBeforeMicroUSD--
+	moved.remainingCostAfterMicroUSD = moved.remainingCostBeforeMicroUSD - moved.reservedCostMicroUSD
+	moved.identity = deriveRouteAttemptAuthorizationIdentity(moved)
+	if err := moved.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	if IsSameReservationRetryOf(timeoutInitial, ordinary) {
+	if IsSameReservationRetryOf(initial, moved) {
 		t.Fatal("a retry whose balance moved was recognized")
 	}
 }
@@ -195,9 +195,6 @@ func TestRateLimitedRetryIsTheSameForHeldAndReleasedReservations(t *testing.T) {
 	held, heldCost := settledRateLimit(t, initial, 0, provider.NewUnknownRouteTokenUsage())
 	if heldCost.Status() != RouteCostUsageUnknown || heldCost.RemainingCostMicroUSD() != initial.RemainingCostAfterMicroUSD() {
 		t.Fatalf("unknown usage settled %s", heldCost.Status())
-	}
-	if _, err := NewRouteRetryAttemptAuthorization(initial, held, heldCost, mustRetryDecision(t, policy, initial, held)); !errors.Is(err, ErrRouteAttemptInsufficientBudget) {
-		t.Fatalf("a second reservation fit the budget: %v", err)
 	}
 	retry, err := NewRateLimitedRetryAttemptAuthorization(initial, held, heldCost, mustRetryDecision(t, policy, initial, held))
 	if err != nil || retry.RemainingCostBeforeMicroUSD() != initial.RemainingCostBeforeMicroUSD() || retry.RemainingCostAfterMicroUSD() != initial.RemainingCostAfterMicroUSD() || !IsSameReservationRetryOf(initial, retry) {

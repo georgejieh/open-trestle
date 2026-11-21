@@ -360,7 +360,7 @@ func TestSetupBrokerBoundaryProbeIdentityAndComparisonPreadmission(t *testing.T)
 				mixed.session = nil
 			case "wrong-scope":
 				var err error
-				boundPlan, err = setupcore.NewCurrentPlan(setupcore.ProfileControlledHybrid, "tenant-a", "other-repo", "owner", f.at)
+				boundPlan, err = setupcore.NewCurrentPlan(setupcore.ProfileLocalSingleNode, "tenant-a", "other-repo", "owner", f.at)
 				if err != nil {
 					t.Fatal("scope fixture failed")
 				}
@@ -535,34 +535,6 @@ func TestSetupBrokerBoundarySessionNativeOpenVersusClose(t *testing.T) {
 		t.Fatal("native race created repeated owner")
 	}
 	f.effects(t, 0, 0, 0)
-}
-
-func TestSetupBrokerBoundaryCapturedHostDoesNotReloadDescriptor(t *testing.T) {
-	f := setupBrokerBoundaryNew(t)
-	plan := f.initialize(t, true, "tenant-a", "repo-a")
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	host := f.host(t)
-	s := setupBrokerBoundarySession(t, f, ctx)
-	probe, _, err := newSetupGitHubPermissionProbe(f.getenv, plan, setupGitHubPermissionConfiguration{host: host, session: s, expectedBrokerAuthority: host.expectedBrokerAuthority, allowTokenCreation: true}, executeSetupGitHubPermission)
-	if err != nil {
-		t.Fatal("captured current probe failed")
-	}
-	before := probe.ConfigurationIdentity()
-	if err := os.Remove(f.descriptor); err != nil {
-		t.Fatal("synthetic descriptor removal failed")
-	}
-	// Host/session already captured immutable protected configuration; no new
-	// descriptor read is permitted at dispatch. Native guard still owns state.
-	checker, err := setupcore.NewIntegrationPermissionChecker(plan, probe.AuthorityIdentity(), "owner", probe)
-	if err != nil || checker == nil || checker.Check(ctx, plan).State() != setupcore.CheckPassed {
-		t.Fatal("captured descriptor was reloaded or native inspect failed")
-	}
-	if before != probe.ConfigurationIdentity() {
-		t.Fatal("descriptor pathname changed immutable probe identity")
-	}
-	f.effects(t, 1, 1, 1)
-	f.accepted(t, 3)
 }
 
 func TestSetupBrokerBoundaryFrozenProbePreimageArithmetic(t *testing.T) {

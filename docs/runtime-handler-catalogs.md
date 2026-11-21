@@ -2,9 +2,9 @@
 
 A review run is split into tasks, and a handler is the code that executes one kind of task, such as acquiring source or generating findings. A catalog is the set of handlers a run uses. This page is for contributors who wire handlers together, and for operators who configure which model routes a run may use.
 
-The public `runtimecatalog` package builds a catalog from approved task implementations. The catalog must contain one handler for every task kind that the selected run mode requires. Advisory and local catalogs end at publication readiness. Required catalogs must also contain one publication handler.
+The public `runtimecatalog` package builds a catalog from approved task implementations. The catalog must contain one handler for every task kind that the selected run mode requires. Catalogs end at publication readiness.
 
-Building a catalog fails if a task kind is missing or duplicated, if a handler identity is malformed, if there are extra handlers, or if the publication handler does not match the run mode. A handler identity identifies one implementation, and the plan records it so that a run is only executed by the handlers it was planned with. The catalog identity is a digest computed from the catalog's content. It covers the run mode, the task kinds, and the handler identities. Callers can use the generic bindings (the records that tie a task kind to its handler) to build a plan for a particular transport.
+Building a catalog fails if a task kind is missing or duplicated, if a handler identity is malformed, or if there are extra handlers. A handler identity identifies one implementation, and the plan records it so that a run is only executed by the handlers it was planned with. The catalog identity is a digest computed from the catalog's content. It covers the run mode, the task kinds, and the handler identities. Callers can use the generic bindings (the records that tie a task kind to its handler) to build a plan for a particular transport.
 
 A `controlplane.TaskHandlerCatalog` returned by this package works with `worker.RepositorySupervisor` or with a scoped remote `worker.Runner`. Source and model credentials stay inside their configured adapters. The catalog holds handler interfaces and identities.
 

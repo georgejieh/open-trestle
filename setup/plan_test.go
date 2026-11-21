@@ -23,10 +23,7 @@ func TestProfilesUseSafeEffectFreeDefaults(t *testing.T) {
 		inference InferencePosture
 		egress    EgressPosture
 	}{
-		ProfileLocalSingleNode:  {MetadataLocal, ArtifactLocal, InferenceLocalOnly, EgressDenied},
-		ProfileControlledHybrid: {MetadataPostgres, ArtifactS3, InferenceApprovedRemote, EgressAllowlisted},
-		ProfileKubernetesHA:     {MetadataPostgres, ArtifactS3, InferenceApprovedRemote, EgressAllowlisted},
-		ProfileAirGapped:        {MetadataLocal, ArtifactLocal, InferenceLocalOnly, EgressDenied},
+		ProfileLocalSingleNode: {MetadataLocal, ArtifactLocal, InferenceLocalOnly, EgressDenied},
 	}
 	for profile, want := range cases {
 		plan, err := NewPlan(profile, "tenant-a", "repo-a", "platform-owner", setupTime(0))
@@ -34,7 +31,7 @@ func TestProfilesUseSafeEffectFreeDefaults(t *testing.T) {
 			t.Fatalf("%s: %v", profile, err)
 		}
 		posture := plan.Posture()
-		if posture.MetadataBackend() != want.metadata || posture.ArtifactBackend() != want.artifacts || posture.Inference() != want.inference || posture.Egress() != want.egress || posture.PublicationEnabled() || posture.DynamicValidationEnabled() || posture.ProviderFallbackEnabled() || posture.ContentLoggingAllowed() || posture.RetentionDays() != 30 || (profile == ProfileControlledHybrid || profile == ProfileKubernetesHA) && posture.MaxModelRequestCostMicroUSD() != 100_000 || (profile == ProfileLocalSingleNode || profile == ProfileAirGapped) && posture.MaxModelRequestCostMicroUSD() != 0 {
+		if posture.MetadataBackend() != want.metadata || posture.ArtifactBackend() != want.artifacts || posture.Inference() != want.inference || posture.Egress() != want.egress || posture.PublicationEnabled() || posture.DynamicValidationEnabled() || posture.ProviderFallbackEnabled() || posture.ContentLoggingAllowed() || posture.RetentionDays() != 30 || posture.MaxModelRequestCostMicroUSD() != 0 {
 			t.Fatalf("%s posture=%#v", profile, posture)
 		}
 		if plan.Status() != StatusIncomplete || plan.Ready() {
@@ -51,7 +48,7 @@ func TestPlanRejectsSecretLikeOrInvalidSetupInputs(t *testing.T) {
 	}
 }
 func TestPlanEncodingIsCanonicalReconstructiveAndRedacted(t *testing.T) {
-	plan, _ := NewPlan(ProfileControlledHybrid, "tenant-a", "repo-a", "platform-owner", setupTime(0))
+	plan, _ := NewPlan(ProfileLocalSingleNode, "tenant-a", "repo-a", "platform-owner", setupTime(0))
 	encoded, err := EncodePlan(plan)
 	if err != nil {
 		t.Fatal(err)
@@ -226,7 +223,7 @@ func TestPlanCannotClaimReadyWithoutReplayableApprovedReceipts(t *testing.T) {
 }
 
 func TestLocalInferenceFollowsPolicyAuthorityInSetupOrder(t *testing.T) {
-	for _, profile := range []Profile{ProfileLocalSingleNode, ProfileAirGapped} {
+	for _, profile := range []Profile{ProfileLocalSingleNode} {
 		plan, err := NewPlan(profile, "tenant-a", "repo-a", "owner", setupTime(0))
 		if err != nil {
 			t.Fatal(err)

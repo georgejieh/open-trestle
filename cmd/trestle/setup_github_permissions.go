@@ -211,7 +211,7 @@ func (p *setupGitHubTokenProvider) GoString() string {
 	return "main.setupGitHubTokenProvider{<redacted>}"
 }
 func (p *setupGitHubTokenProvider) Format(state fmt.State, verb rune) {
-	writeSetupEnvelopeFormat(state, verb, p.String(), p.GoString())
+	writeSetupRedactedFormat(state, verb, p.String(), p.GoString())
 }
 
 func executeSetupGitHubPermission(ctx context.Context, configuration setupGitHubPermissionConfiguration, userTokenValue string, broker *githubadapter.InstallationTokenBroker) (string, error) {

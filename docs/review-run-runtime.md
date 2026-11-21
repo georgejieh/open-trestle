@@ -21,9 +21,8 @@ The order of the safety-critical tasks is part of the graph's structure:
 2. Context assembly comes before candidate generation.
 3. Candidate generation comes before verification.
 4. Verification comes before publication evaluation.
-5. Publication depends on publication evaluation, and plans that stay local never include it.
 
-Publication, candidate generation and verification each get one orchestration attempt. A model retry needs a new route attempt that policy authorizes, together with a new cost reservation. Generic task retry can create neither. The publisher handler uses the idempotent publication-attempt and retry contracts, so generic worker recovery cannot duplicate an external effect.
+Candidate generation and verification each get one orchestration attempt. A model retry needs a new route attempt that policy authorizes, together with a new cost reservation. Generic task retry can create neither.
 
 ## Journal and recovery
 
@@ -33,7 +32,7 @@ Sequence numbers carry the order. Event times never decrease: a transition obser
 
 The local file journal stores the canonical plan JSON and the event JSON Lines with private permissions. You can list plans by tenant and repository filters with cursor pagination. A restarted supervisor can therefore find unfinished work without crossing repository scope.
 
-The journal uses an exclusive writer lease, bounded files, atomic replacement, file synchronization and directory synchronization. An unclean stop leaves the writer lease in place, and an operator must recover it explicitly. PostgreSQL and queue-backed implementations must keep the same compare-and-append behavior.
+The journal uses an exclusive writer lease, bounded files, atomic replacement, file synchronization and directory synchronization. An unclean stop leaves the writer lease in place, and an operator must recover it explicitly.
 
 ## Worker leases
 
@@ -131,7 +130,7 @@ This is cooperative owner custody. It does not protect against raw writes by the
 
 ## Current boundary
 
-The package provides the task graph, the canonical encodings, memory and durable local journals, replay, optimistic coordination, claims, renewals, retries, dependency propagation, completion, cancellation, restart recovery, content-free task notifications and automatic terminal finalization. The standalone daemon and the PostgreSQL runtime adapter are available. An operational lock-recovery command is not included. See [PostgreSQL canonical ledgers](postgresql-storage.md).
+The package provides the task graph, the canonical encodings, memory and durable local journals, replay, optimistic coordination, claims, renewals, retries, dependency propagation, completion, cancellation, restart recovery, content-free task notifications and automatic terminal finalization. The standalone daemon is available. An operational lock-recovery command is not included.
 
 At restart, a context packet (V4) that policy already terminated may exist next to a later, owner-settled context input (V6). Recovery handles this as a narrow composition of two existing proofs, not as general recovery from mixed history. The conditions are:
 

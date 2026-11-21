@@ -32,9 +32,7 @@ Approved handlers must stop when their context is canceled. Go cannot forcibly e
 
 ## Artifact exchange
 
-The worker API has no endpoint to download or upload artifacts. A deployed handler receives the task recipe identity and the dependency outputs through `TaskExecutionRequest`. A root task reads its static input artifact. A downstream task reads the artifact identities that its declared prerequisites produced. Shared workers should use the same PostgreSQL index, versioned S3 backend and tenant KMS boundary as the daemon.
-
-`artifactvalidation.ValidatedTaskHandler` resolves the static input for a root task, or every available dependency output for a downstream task. Before the completion crosses the lease boundary, it checks that the successful output exists in the same scope and that its provenance cites each resolved input artifact.
+The worker API has no endpoint to download or upload artifacts. A deployed handler receives the task recipe identity and the dependency outputs through `TaskExecutionRequest`. A root task reads its static input artifact. A downstream task reads the artifact identities that its declared prerequisites produced.
 
 This keeps source and model data away from the worker API.
 
@@ -42,7 +40,7 @@ This keeps source and model data away from the worker API.
 
 `Runner.Run` performs one task at a time. A control implementation can also implement `NotificationControl`. In that mode, an idle runner long-polls for a content-free `TaskNotificationLease`, rereads the plan and receipt, and acquires the normal task lease before it runs anything. It acknowledges the notification only after that check. If a worker crashes before it acknowledges, the notice is delivered again.
 
-Notifications bind the tenant, repository, run, plan, task-state transition event, task, handler, next attempt and availability time. They contain no source, model output, credentials or task lease. Delivery tokens go only to the authenticated worker, and PostgreSQL stores their digests. Each notice has at most ten deliveries. Journal reconciliation creates notices idempotently. It detects newly available retry work and expired task leases even if a wake-up was lost.
+Notifications bind the tenant, repository, run, plan, task-state transition event, task, handler, next attempt and availability time. They contain no source, model output, credentials or task lease. Delivery tokens go only to the authenticated worker, and only their digests are stored. Each notice has at most ten deliveries. Journal reconciliation creates notices idempotently. It detects newly available retry work and expired task leases even if a wake-up was lost.
 
 These timing ranges apply:
 

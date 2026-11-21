@@ -845,7 +845,7 @@ func parseInvestigationTurnSelection(wire investigationTurnSelectionWire, rankin
 		costBudget: budget, rankingPolicyIdentity: wire.RankingPolicyIdentity, selectedRecordIdentity: wire.SelectedRecordIdentity,
 		candidateScores: scores, rejections: rejections,
 	}
-	if selection.Validate() != nil || !fallbackSelectionMatchesRanking(selection, ranking) {
+	if selection.Validate() != nil || !selectionMatchesRanking(selection, ranking) {
 		return RouteSelectionReceipt{}, errInvestigationTurnEncoding
 	}
 	return selection, nil

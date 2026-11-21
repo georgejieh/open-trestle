@@ -1,6 +1,6 @@
 # Publication readiness task handler
 
-The publication readiness handler, `handlers/publication.ReadinessHandler`, decides which verified findings to select for publication. The decision is advisory. It is the last step before publication in advisory and local runs. The handler does not write to source control.
+The publication readiness handler, `handlers/publication.ReadinessHandler`, decides which verified findings are ready to report. The decision is advisory. It is the last task of a run. The handler does not write to source control.
 
 The handler takes three protected dependency artifacts as input: `analysis`, `change` and `verification`. It validates the change result against its base and head source snapshots. It then reloads the generation result, the dynamic generation input, and the context artifact that the verification result references. From these it reconstructs the source head revision, the verification receipt and the verified finding set. Only then does it apply one configured `PublicationPolicy`. The run's review-policy identity, the publication-policy identity and the diagnostic materialization behavior are all part of the handler identity, which identifies this implementation in the run plan.
 
@@ -22,4 +22,4 @@ The protected `publication_plan` artifact has policy origin. It binds the follow
 - the verification artifact, the verification result, the verification receipt and the verified finding set; and
 - the publication policy and the review policy.
 
-Its expiry is not later than that of any reconstructed source, model input or context artifact. Publishing needs the separate [publication handler](publication-handler.md), which obtains effect authority, reconciles the current source head, claims a publication attempt and uses a configured publisher.
+Its expiry is not later than that of any reconstructed source, model input or context artifact. The daemon does not publish reviews to a forge.

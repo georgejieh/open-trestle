@@ -42,8 +42,6 @@ All output artifacts keep the scope, classification, protection mode and expiry 
 
 `ParseSnapshotArtifact` verifies the scoped index. `ParseFileArtifact` then requires that verified snapshot and one listed reference. It checks scope, classification, protection, identity, canonical encoding, repository origin, provenance, content digest, byte count and acquisition lineage before it returns a copy of the content. Downstream change-building handlers should resolve only the file identities that the verified snapshot index lists.
 
-You can wrap the handler in `artifactvalidation.ValidatedTaskHandler`, with `task_input` as its input kind and `source_snapshot` as its output kind, for an additional catalog boundary.
-
 ## Terminal behavior
 
 Source-adapter outcomes map to these run failures:

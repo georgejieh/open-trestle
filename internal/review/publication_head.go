@@ -263,9 +263,6 @@ func ResolvePublicationHead(
 	if !authorization.Authorizes(request.Target(), observedAt) {
 		return PublicationHeadObservation{}, ErrPublicationNotAuthorized
 	}
-	if !attempt.Ready(observedAt) {
-		return PublicationHeadObservation{}, ErrPublicationRetryNotAllowed
-	}
 	if resolver.ResolverID() != request.Target().PublisherID() || !nonzeroPublicationAuthority(resolver.ConfigurationIdentity()) {
 		return PublicationHeadObservation{}, ErrPublicationHeadResolverMismatch
 	}

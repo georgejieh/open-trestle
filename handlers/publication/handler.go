@@ -224,7 +224,7 @@ func (h *Handler) loadVerification(ctx context.Context, scope audit.ReviewScope,
 	for _, id := range readiness.Provenance() {
 		value, err := h.store.Get(ctx, scope, id, at)
 		if err != nil {
-			if errors.Is(err, artifact.ErrArtifactNotFound) || errors.Is(err, artifact.ErrErasureAdmissionMissing) {
+			if errors.Is(err, artifact.ErrArtifactNotFound) {
 				continue
 			}
 			return zero, vr, zero, zero, zero, err
@@ -283,7 +283,7 @@ func (h *Handler) buildSourceBinding(ctx context.Context, scope audit.ReviewScop
 	for _, id := range contextArtifact.Provenance() {
 		value, getErr := h.store.Get(ctx, scope, id, at)
 		if getErr != nil {
-			if errors.Is(getErr, artifact.ErrArtifactNotFound) || errors.Is(getErr, artifact.ErrErasureAdmissionMissing) {
+			if errors.Is(getErr, artifact.ErrArtifactNotFound) {
 				continue
 			}
 			return review.ProtectedSourceBinding{}, getErr

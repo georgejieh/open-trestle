@@ -1,6 +1,6 @@
 # Operations and recovery
 
-This page is for operators who build, package, install and recover Open Trestle. It covers building from source, the Linux amd64 install package and its lifecycle commands, the secret scan helper, PostgreSQL setup, backup and restore, and shutdown. Most sections are numbered procedures.
+This page is for operators who build, package, install and recover Open Trestle. It covers building from source, the Linux amd64 install package and its lifecycle commands, the secret scan helper, backup and restore, and shutdown. Most sections are numbered procedures.
 
 ## Build
 
@@ -109,7 +109,7 @@ The included `Dockerfile` copies that staging tree into a scratch image that has
 
 Mount a writable volume at `/var/lib/open-trestle`, owned by UID 65532 with mode `0700`. The image sets `XDG_CACHE_HOME=/var/lib/open-trestle/cache`, so the secret scanner keeps its compile cache there; put `--state-dir` in another folder of the volume, such as `/var/lib/open-trestle/state`. If the scanner cannot be used, `trestled` says why at start and refuses every request to a model.
 
-Supply the route inventory and runtime policy through read-only mounts, and supply credentials through environment variables. Do not bake route inventories, policies, tokens, database URLs or key material into an image. The image includes the project license, NOTICE, the license texts of the runtime third-party components and the scanner release evidence.
+Supply the route inventory and runtime policy through read-only mounts, and supply credentials through environment variables. Do not bake route inventories, policies, tokens or key material into an image. The image includes the project license, NOTICE, the license texts of the runtime third-party components and the scanner release evidence.
 
 ## Build and inspect the unsigned Linux amd64 candidate
 
@@ -284,7 +284,7 @@ They make no claim about power loss or a supported deployment.
 
 `verify-installed` checks the receipt and the journal, the trusted ancestors, ownership in production, and the modes, sizes, hashes and ELF identities. `smoke` first runs that check. It then runs a probe at the CLI command boundary that changes nothing, with a minimal environment.
 
-In destdir mode, the smoke test does not exercise the scan helper. Smoke output is JSON with no content, and it does not show that the daemon, a provider, a database or the network is ready.
+In destdir mode, the smoke test does not exercise the scan helper. Smoke output is JSON with no content, and it does not show that the daemon, a provider or the network is ready.
 
 #### Roll back an install and uninstall
 
@@ -397,38 +397,6 @@ trestle config validate \
 
 The daemon applies stricter file checks at startup. Each of these paths must be a regular file that is not a symlink and has no group or world write permission.
 
-## Initialize PostgreSQL
-
-Use a migration role only for schema changes. `trestle admin postgres migrate` reads `OPEN_TRESTLE_POSTGRES_MIGRATION_URL`, applies migrations whose checksums it verifies under the migration lock, and creates the database namespace. Use `trestle admin postgres initialize` only when you intend to use required-mode publication. It does the same work and also creates the publication authority row once.
-
-To apply migrations:
-
-```sh
-OPEN_TRESTLE_POSTGRES_MIGRATION_URL="$MIGRATION_URL" \
-  trestle admin postgres migrate
-```
-
-For required-mode publication, initialize instead:
-
-```sh
-OPEN_TRESTLE_POSTGRES_MIGRATION_URL="$MIGRATION_URL" \
-  trestle admin postgres initialize \
-  --authority-identity "$OPERATOR_AUTHORITY_DIGEST"
-```
-
-The authority argument is a nonzero lowercase SHA-256 digest of a stable identifier for your deployment. It is not secret, and it is not a password. Save the `publication_authority_receipt_identity` that the command returns in the protected recovery records of your deployment. Do not rerun initialization to repair a restored identity that you did not expect.
-
-Normal application credentials must use a separate connection URL in `OPEN_TRESTLE_POSTGRES_URL`. To read the database authority of the runtime role, which is not secret, run `trestle admin postgres identity`. Then verify the migrations and, when publication is enabled, the fence namespace that the database owns, before you start the daemon:
-
-```sh
-OPEN_TRESTLE_POSTGRES_URL="$APPLICATION_URL" \
-  trestle admin postgres verify \
-  --authority-identity "$OPERATOR_AUTHORITY_DIGEST" \
-  --expected-receipt-identity "$EXPECTED_RECEIPT_IDENTITY"
-```
-
-These commands print no connection string and no operator digest. Pass the identity from `trestle admin postgres identity` to every PostgreSQL daemon as `--postgres-database-authority-identity`. Startup fails if the runtime database identity differs.
-
 ## Local full-review recovery point
 
 A recovery point is a copy of a stopped local daemon's state that you can compare with later.
@@ -463,28 +431,16 @@ This evaluation profile is not yet a supported v1 installation.
 
 ## Backup and restore
 
-A complete backup must preserve all of these:
-
-- PostgreSQL metadata.
-- Publication attempts.
-- The publication authority singleton.
-- Protected artifact objects.
-- Envelope metadata.
-- The keys needed to decrypt the objects that are retained.
-
-Database snapshots and object-store snapshots must represent one documented recovery point. A database snapshot without its matching protected objects is incomplete, and so is a restored set of objects without the matching metadata.
+Stop the daemon and take one consistent copy of the entire private `--state-dir` (journal, artifacts, audit ledger, diagnostics and webhook inbox) together with the configured `--setup-state` file. Do not copy a live file journal piece by piece. A copy of only part of the state directory is incomplete.
 
 To accept a restore, work through these checks in order:
 
-1. Restore into an isolated environment with external publication disabled.
-2. Verify the PostgreSQL migration checksums.
-3. Verify the expected receipt identity of the publication authority.
-4. Confirm that the restored history of publication attempts covers the declared recovery point.
-5. Verify protected artifact retrieval and access to the envelope key, using conformance objects that are not sensitive.
-6. Run a review that only replays, and compare the terminal state that it derives from the journal with the recorded receipt.
-7. Enable ingress, workers, model dispatch and publication only after those checks pass.
+1. Restore into an isolated environment.
+2. Start the daemon against the restored state and verify that it reads a known artifact that is not sensitive.
+3. Run a review that only replays, and compare the terminal state that it derives from the journal with the recorded receipt.
+4. Enable ingress, workers and model dispatch only after those checks pass.
 
-The authority receipt detects a database that is fresh or was initialized separately. It cannot show that a copy that carries the same authority row contains every later transaction. To rule out stale restores, rely on the consistency of your database backups, your records of the recovery point and the check of publication attempts.
+To rule out a stale restore, rely on your records of the recovery point. See also [offline in-place recovery comparison](#offline-in-place-recovery-comparison).
 
 ## Retire an old active review plan after a typed incompatibility
 
@@ -496,8 +452,8 @@ If a prepared artifact is corrupt, expired, ambiguous or unavailable, startup st
 
 If replay or startup reports a typed incompatibility for an old active review plan, follow these steps:
 
-1. Halt dispatch and publication for that plan. Do not treat an incompatible journal as a completed review, and do not rewrite its immutable plan and events.
-2. For the local single-node profile, stop the daemon and take a consistent backup of the entire private `--state-dir` (journal, artifacts and diagnostics) together with the configured `--setup-state` file, before you decide anything else. For PostgreSQL and S3 profiles, use their procedure for a consistent backup of metadata, objects and envelope keys instead. Do not copy a live file journal piece by piece.
+1. Halt dispatch for that plan. Do not treat an incompatible journal as a completed review, and do not rewrite its immutable plan and events.
+2. Stop the daemon and take a consistent backup of the entire private `--state-dir` (journal, artifacts and diagnostics) together with the configured `--setup-state` file, before you decide anything else. Do not copy a live file journal piece by piece.
 3. Record the recovery point and confirm that you can read the backup.
 4. Try to retire the plan. An operator may use a compatible runtime and an authenticated `trestle runs cancel --tenant ID --repository ID --run ID --server URL`. First verify that the runtime can replay the plan and that cancellation is authorized for that scope.
 5. If a compatible runtime cannot safely replay and cancel the plan, leave the old plan intact and isolated for the operator to review later. There is no automatic cancellation and no migration of an incompatible active plan.
@@ -525,9 +481,9 @@ The `trestled` executable reports an incomplete shutdown and exits with a nonzer
 
 Configure the service manager with a grace period for termination, and alert on an overrun or on a failed shutdown. Before a backup or restart, confirm that the old daemon process and every process it started have exited. A closed socket or a shutdown error does not show that all work has stopped.
 
-The health endpoints do not show that a review or a publication succeeded. Query the authenticated run receipt and the review diagnostics instead. Versions 1 through 5 contain the state of verified findings. Version 6 contains scripted observations that remain unverified and need their own disposition in a review.
+The health endpoints do not show that a review succeeded. Query the authenticated run receipt and the review diagnostics instead. Versions 1 through 5 contain the state of verified findings. Version 6 contains scripted observations that remain unverified and need their own disposition in a review.
 
-To confirm that the daemon loaded the expected database, rate limit, route, policy and handler identities and completed the reconciliation of its supervisors, inspect the runtime of the repository:
+To confirm that the daemon loaded the expected route, policy and handler identities and completed the reconciliation of its supervisors, inspect the runtime of the repository:
 
 ```sh
 OPEN_TRESTLE_API_TOKEN="$OBSERVER_TOKEN" \
@@ -544,7 +500,6 @@ Compare these values with the record of your deployment:
 - `configuration_identity`.
 - The route and policy identities.
 - The storage posture.
-- The state of the publication fence.
 - The handler identities.
 - The readiness of each component.
 

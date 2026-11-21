@@ -130,8 +130,7 @@ offline only and has not run on GitHub. There is no packaged `action.yml`. See
 
 `trestled` keeps durable runs, a hash-chained task journal and an
 authenticated API. It supports scoped remote workers, verified GitHub webhook
-intake and source acquisition. In required mode it publishes one `COMMENT`
-review with a static publication token. Live GitHub publication is unverified.
+intake and source acquisition. It does not publish reviews to GitHub.
 
 The TUI, `trestle lsp` with the VS Code extension, the web console and ACP
 each observe one daemon run. MCP reads run status and submits a pre-built
@@ -142,8 +141,7 @@ plan. None of them starts a review.
 Repository text, including the base tree's instruction files, is treated as
 data. Every model request passes two Betterleaks scans in the secret scan helper,
 which has a reviewed recall of 11 of 14 expected occurrences. Each finding is
-tied to the source lines it concerns, and publication is guarded by a fresh-head
-check and idempotency. See the
+tied to the source lines it concerns. See the
 [prompt-injection boundary](prompt-injection-boundary.md).
 
 ### Updates
@@ -301,13 +299,11 @@ The release brings the whole loop to Windows and macOS:
   language-server facts could support verification, and heuristics such as
   historical co-change that may only point at review targets. Only the
   `structural` and `syntactic_candidate` grades exist today.
-- **Setup:** reachability checks for external delivery, broader replica and
-  failover coordination, no-egress enforcement, and governed bundle import.
+- **Setup:** reachability checks for external delivery and no-egress
+  enforcement.
 - **Deployment:** supported installation profiles, OpenTelemetry
   observability, a Docker Compose profile for a single operator, Helm charts
-  or Kubernetes manifests for larger installations, restore drills and
-  air-gapped distribution. The setup planner's `kubernetes_ha` profile and its
-  shared-store probe are setup checks, not a deployment.
+  or Kubernetes manifests for larger installations, and restore drills.
 - **Release:** signing, attestation publication and verification, supported
   production upgrade and crash-recovery guarantees, deployment qualification,
   accessibility evidence, and realistic adjudicated evaluation data with
