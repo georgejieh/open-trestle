@@ -92,8 +92,9 @@ func removeToolchainGrants() error {
 	return errors.Join(append(failures, os.WriteFile(record, []byte(content), 0o600))...)
 }
 
-// revokeExplicit takes the capability's entry off path, if it still has
-// one; a folder that is gone has nothing left to take back.
+// revokeExplicit takes the capability's and the logon sessions' entries off
+// path, if it still has them; a folder that is gone has nothing left to
+// take back.
 func revokeExplicit(path string, capability *windows.SID) error {
 	descriptor, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
 	if errors.Is(err, windows.ERROR_FILE_NOT_FOUND) || errors.Is(err, windows.ERROR_PATH_NOT_FOUND) {
@@ -106,10 +107,14 @@ func revokeExplicit(path string, capability *windows.SID) error {
 	if err != nil {
 		return err
 	}
-	if !grantsExplicitly(dacl, capability) {
+	granted := explicitLogonEntries(dacl)
+	if grantsExplicitly(dacl, capability) {
+		granted = append(granted, capability)
+	}
+	if len(granted) == 0 {
 		return nil
 	}
-	return revoke(path, capability)
+	return revoke(path, granted...)
 }
 
 func ignoreMissing(err error) error {

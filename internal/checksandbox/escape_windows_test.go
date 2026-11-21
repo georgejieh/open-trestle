@@ -7,55 +7,58 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"unsafe"
 
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
 )
 
 // platformProbe holds the Windows-only escape attempts.
-func platformProbe(mode string, _ []string) int {
+func platformProbe(mode string, args []string) int {
 	switch mode {
 	case "fill-profile":
-		folder, err := ownProfileFolder()
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			return 1
-		}
-		return fillFile(filepath.Join(folder, "fill"))
+		return fillFile(filepath.Join(ownProfileFolder(args[0]), "fill"))
 	case "fill-stream":
 		// An alternate data stream does not change the file's size.
 		return fillFile(filepath.Join(os.Getenv("TMPDIR"), "fill:hidden"))
 	case "registry":
-		key, err := registry.OpenKey(registry.CURRENT_USER, "Environment", registry.QUERY_VALUE)
-		if err != nil {
+		readable := readableValues(registry.CURRENT_USER, "", 2)
+		if readable == 0 {
 			return probeBlocked
 		}
-		defer key.Close()
-		names, err := key.ReadValueNames(-1)
-		if err != nil {
-			return probeBlocked
-		}
-		readable := 0
-		for _, name := range names {
-			if _, _, err := key.GetValue(name, nil); err == nil {
-				readable++
-			}
-		}
-		// Only the counts: the values can be secrets.
-		fmt.Printf("%d of %d values readable\n", readable, len(names))
+		// Only the count: the values can be secrets.
+		fmt.Printf("%d values readable\n", readable)
 		return probeEscaped
 	case "lock-scratch":
 		return lockFolder(os.Getenv("TMPDIR"))
 	case "lock-profile":
-		folder, err := ownProfileFolder()
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			return 1
-		}
-		return lockFolder(folder)
+		return lockFolder(ownProfileFolder(args[0]))
 	}
 	return 2
+}
+
+// readableValues counts the values the process can read in the key at path
+// below root and in its subkeys, depth levels down.
+func readableValues(root registry.Key, path string, depth int) int {
+	key, err := registry.OpenKey(root, path, registry.QUERY_VALUE|registry.ENUMERATE_SUB_KEYS)
+	if err != nil {
+		return 0
+	}
+	defer key.Close()
+	readable := 0
+	names, _ := key.ReadValueNames(-1)
+	for _, name := range names {
+		if _, _, err := key.GetValue(name, nil); err == nil {
+			readable++
+		}
+	}
+	if depth == 0 {
+		return readable
+	}
+	subkeys, _ := key.ReadSubKeyNames(-1)
+	for _, subkey := range subkeys {
+		readable += readableValues(key, subkey, depth-1)
+	}
+	return readable
 }
 
 // lockFolder writes a folder in base and then denies everyone access to
@@ -89,7 +92,7 @@ func lockFolder(base string) int {
 func TestEscapeLockTheScratchAgainstCleanup(t *testing.T) {
 	for _, mode := range []string{"lock-scratch", "lock-profile"} {
 		t.Run(mode, func(t *testing.T) {
-			result := runProbe(t, probeSpec(t, mode))
+			result := runProbe(t, profileProbeSpec(t, mode))
 			requireBlocked(t, result)
 			if result.Leftover != "" {
 				t.Fatalf("the scratch was left behind: %s", result.Leftover)
@@ -114,22 +117,24 @@ func fillFile(path string) int {
 	}
 }
 
-// ownProfileFolder asks Windows for this AppContainer's profile storage,
-// the one place outside the scratch a sandboxed process may write.
-func ownProfileFolder() (string, error) {
-	const tokenAppContainerSid = 31
-	token := windows.GetCurrentProcessToken()
-	buffer := make([]byte, 256)
-	var size uint32
-	if err := windows.GetTokenInformation(token, tokenAppContainerSid, &buffer[0], uint32(len(buffer)), &size); err != nil {
-		return "", err
-	}
-	sid := *(**windows.SID)(unsafe.Pointer(&buffer[0]))
-	return profileFolder(sid)
+// ownProfileFolder is this AppContainer's profile storage in the user's
+// local application data, the one place outside the scratch a sandboxed
+// process may write. The sandbox cannot ask Windows for it, but the
+// profile's name is in its temporary folder's path and the rest is easy to
+// guess.
+func ownProfileFolder(localAppData string) string {
+	name := filepath.Base(filepath.Dir(filepath.Dir(os.Getenv("TMPDIR"))))
+	return filepath.Join(localAppData, "Packages", name, "AC")
+}
+
+// profileProbeSpec runs a probe that finds the profile folder.
+func profileProbeSpec(t *testing.T, mode string) Spec {
+	t.Helper()
+	return probeSpec(t, mode, os.Getenv("LOCALAPPDATA"))
 }
 
 func TestEscapeDiskFillThroughTheProfileFolderIsBounded(t *testing.T) {
-	requireDiskBounded(t, probeSpec(t, "fill-profile"))
+	requireDiskBounded(t, profileProbeSpec(t, "fill-profile"))
 }
 
 func TestEscapeDiskFillThroughAnAlternateStreamIsBounded(t *testing.T) {
@@ -144,16 +149,11 @@ func requireDiskBounded(t *testing.T, spec Spec) {
 	}
 }
 
-// TestEscapeReadUserEnvironmentRegistry checks whether the sandbox can read
-// the user's environment variables in HKCU\Environment, which can hold
-// keys. On Windows 10 it can; that is an open question for the owner, not
-// yet closed, so the test reports it as a skip rather than a pass.
-func TestEscapeReadUserEnvironmentRegistry(t *testing.T) {
-	result := runProbe(t, probeSpec(t, "registry"))
-	if result.ExitCode == probeEscaped {
-		t.Skipf("known open gap: the sandbox can read HKCU\\Environment (%s)", strings.TrimSpace(string(result.Stdout)))
-	}
-	requireBlocked(t, result)
+// TestEscapeReadUserRegistry checks that the sandbox reads no value of the
+// user's registry hive, such as the variables setx saves in
+// HKCU\Environment, which can hold keys.
+func TestEscapeReadUserRegistry(t *testing.T) {
+	requireBlocked(t, runProbe(t, probeSpec(t, "registry")))
 }
 
 // environmentLeaks has nothing to scan on Windows: no process can read

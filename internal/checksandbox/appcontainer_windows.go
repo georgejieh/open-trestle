@@ -46,6 +46,9 @@ type appContainer struct {
 	name       string
 	sid        *windows.SID
 	capability *windows.SID
+	// logon is the logon session's SID, which the sandbox's folders grant
+	// because its token does not match the user; see restrictedToken.
+	logon *windows.SID
 	// folder is the profile's own storage, which the sandbox may write.
 	folder string
 }
@@ -79,17 +82,22 @@ func newAppContainer() (*appContainer, error) {
 		deleteProfile(name16)
 		return nil, err
 	}
+	logon, err := logonSid()
+	if err != nil {
+		deleteProfile(name16)
+		return nil, err
+	}
 	folder, err := profileFolder(copied)
 	if err == nil {
 		// Windows gives the package full control of its folder; it gets the
 		// scratch's rights there instead (see scratchAccess).
-		err = changeAccess(folder, copied, windows.SET_ACCESS, scratchAccess)
+		err = changeAccess(folder, access(copied, windows.SET_ACCESS, scratchAccess), access(logon, windows.GRANT_ACCESS, scratchAccess))
 	}
 	if err != nil {
 		deleteProfile(name16)
 		return nil, err
 	}
-	return &appContainer{name: name, sid: copied, capability: capability, folder: folder}, nil
+	return &appContainer{name: name, sid: copied, capability: capability, logon: logon, folder: folder}, nil
 }
 
 // profileFolder is the storage Windows gives the AppContainer profile.
@@ -205,7 +213,12 @@ func (container *appContainer) startSuspended(application, commandLine string, e
 	if err != nil {
 		return information, err
 	}
+	token, err := restrictedToken(container.logon)
+	if err != nil {
+		return information, err
+	}
+	defer token.Close()
 	flags := uint32(windows.CREATE_SUSPENDED | windows.CREATE_NO_WINDOW | windows.CREATE_UNICODE_ENVIRONMENT | windows.EXTENDED_STARTUPINFO_PRESENT)
-	err = windows.CreateProcess(application16, commandLine16, nil, nil, true, flags, &environment[0], directory16, &startup.StartupInfo, &information)
+	err = windows.CreateProcessAsUser(token, application16, commandLine16, nil, nil, true, flags, &environment[0], directory16, &startup.StartupInfo, &information)
 	return information, err
 }

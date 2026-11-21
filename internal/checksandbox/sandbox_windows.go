@@ -24,8 +24,9 @@ func available() error { return nil }
 
 // run starts the command in a fresh AppContainer with no capability but
 // the toolchain one, so it has no network and reaches only its scratch and
-// the folders granted to every sandbox, inside a job object that bounds and
-// kills the whole tree.
+// the folders granted to every sandbox, under a token that no longer
+// matches the user (see restrictedToken), inside a job object that bounds
+// and kills the whole tree.
 func run(ctx context.Context, spec Spec) (result Result, err error) {
 	container, err := newAppContainer()
 	if err != nil {
@@ -33,7 +34,7 @@ func run(ctx context.Context, spec Spec) (result Result, err error) {
 	}
 	defer container.close()
 	for _, path := range spec.ReadOnly {
-		if err := ensureReadable(path, container.capability); err != nil {
+		if err := ensureReadable(path, container.capability, container.logon); err != nil {
 			return Result{}, unavailable("the sandbox could not be given read access to %s (%v)", path, err)
 		}
 	}
@@ -42,7 +43,7 @@ func run(ctx context.Context, spec Spec) (result Result, err error) {
 		return Result{}, unavailable("the scratch folder could not be created")
 	}
 	defer func() { result.Leftover = leftover(scratch) }()
-	if err := grant(scratch, container.sid, scratchAccess); err != nil {
+	if err := grant(scratch, scratchAccess, container.sid, container.logon); err != nil {
 		return Result{}, unavailable("the scratch folder could not be shared with the sandbox (%v)", err)
 	}
 	// Windows gives an AppContainer process the temporary folder of its
