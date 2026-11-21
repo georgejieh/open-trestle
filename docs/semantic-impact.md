@@ -1,6 +1,6 @@
 # Semantic impact profiles
 
-A semantic impact profile describes how a change affects the structure of the code: which declarations were added, modified or removed, where they are referenced, and which tests might be affected. Open Trestle derives a profile from the base and head snapshots. The first adapter uses Go's syntax tree parser and the graph contract `open-trestle/semantic-impact/go-ast-graph/v1`.
+A semantic impact profile describes how a change affects the structure of the code: which declarations were added, modified or removed, where they are referenced, and which tests might be affected. Open Trestle derives a profile from the base and head snapshots. The first adapter uses Go's syntax tree parser and the graph contract `open-trestle/semantic-impact/go-ast-graph/v2`.
 
 The profile records:
 

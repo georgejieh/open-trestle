@@ -5,18 +5,32 @@ past review so that a later review can take them into account. It writes a
 protected advisory snapshot from a protected, completed foreground model-review
 JSON result. The snapshot does not change findings.
 
-To author a snapshot, use `--review-input PATH` instead of `--revision-algorithm`
-and `--head-revision-digest`. Keep the other arguments from the existing authoring
-command: the repository labels, tenant, logical repository, route inventory,
-runtime policy, local-only egress, timeout, validity, feedback input and new
-output. The review result must meet all of these conditions:
+To author a snapshot from a review result, pass `--review-input PATH` instead of
+`--revision-algorithm` and `--head-revision-digest`. The review result must meet
+all of these conditions:
 
 - it has schema version 1, 4, 5 or 6;
 - its terminal status is succeeded;
 - it contains a canonical verified diagnostic set whose scope, repository, head
   and runtime policy match.
 
-The file is supplied by the operator. Open Trestle does not authenticate who
+```text
+trestle local-git retained-memory-input \
+  --repository-authority example.test \
+  --repository-namespace team \
+  --repository-name repository \
+  --review-input /protected/model-review-result.json \
+  --tenant TENANT --repository REPOSITORY \
+  --route-inventory /protected/routes.json \
+  --runtime-policy /protected/policy.json \
+  --egress local-only --timeout 5m --valid-for 1h \
+  --feedback-input /protected/operator-feedback-source.json \
+  --output /protected/operator-feedback.json --format json
+```
+
+Every flag except `--format` (`json` or `text`) is required. `--timeout` is from one second to 15 minutes, and `--valid-for` must exceed it and be at most 168 hours. The other arguments are those of [local model review](local-model-review.md#retained-advisory-input-opt-in).
+
+The review result is supplied by the operator. Open Trestle does not authenticate who
 wrote it.
 
 The protected convenience feedback file can contain:
