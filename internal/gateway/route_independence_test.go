@@ -40,8 +40,8 @@ func authorizationForPayload(t *testing.T, scope audit.ReviewScope, payload stri
 
 func TestVerifyIndependentRouteAttemptsBindsDistinctModels(t *testing.T) {
 	free := mustKnownFreePricing(t)
-	firstRoute := newFallbackRoute(t, 171_000, provider.ProviderZoneLocal, provider.ContentLoggingDisabled, provider.RouteQualityTier4, free)
-	secondRoute := newFallbackRoute(t, 171_001, provider.ProviderZoneLocal, provider.ContentLoggingDisabled, provider.RouteQualityTier4, free)
+	firstRoute := newFixtureRoute(t, 171_000, provider.ProviderZoneLocal, provider.ContentLoggingDisabled, provider.RouteQualityTier4, free)
+	secondRoute := newFixtureRoute(t, 171_001, provider.ProviderZoneLocal, provider.ContentLoggingDisabled, provider.RouteQualityTier4, free)
 	scope := newRoutingScope(t)
 	first, _ := authorizationForPayload(t, scope, "candidate request", firstRoute)
 	second, _ := authorizationForPayload(t, scope, "verification request", secondRoute)
@@ -63,8 +63,8 @@ func TestVerifyIndependentRouteAttemptsBindsDistinctModels(t *testing.T) {
 
 func TestVerifyIndependentRouteAttemptsRejectsSharedRouteAndInsufficientLevel(t *testing.T) {
 	free := mustKnownFreePricing(t)
-	firstRoute := newFallbackRoute(t, 172_000, provider.ProviderZoneLocal, provider.ContentLoggingDisabled, provider.RouteQualityTier4, free)
-	secondRoute := newFallbackRoute(t, 172_001, provider.ProviderZoneLocal, provider.ContentLoggingDisabled, provider.RouteQualityTier4, free)
+	firstRoute := newFixtureRoute(t, 172_000, provider.ProviderZoneLocal, provider.ContentLoggingDisabled, provider.RouteQualityTier4, free)
+	secondRoute := newFixtureRoute(t, 172_001, provider.ProviderZoneLocal, provider.ContentLoggingDisabled, provider.RouteQualityTier4, free)
 	scope := newRoutingScope(t)
 	first, _ := authorizationForPayload(t, scope, "candidate", firstRoute)
 	same, _ := authorizationForPayload(t, scope, "verification", firstRoute)
@@ -94,8 +94,8 @@ func TestVerifyIndependentRouteAttemptsRejectsSharedRouteAndInsufficientLevel(t 
 
 func TestVerifyIndependentRouteAttemptsRejectsCrossScopeRequestAndFailure(t *testing.T) {
 	free := mustKnownFreePricing(t)
-	firstRoute := newFallbackRoute(t, 173_000, provider.ProviderZoneLocal, provider.ContentLoggingDisabled, provider.RouteQualityTier4, free)
-	secondRoute := newFallbackRoute(t, 173_001, provider.ProviderZoneLocal, provider.ContentLoggingDisabled, provider.RouteQualityTier4, free)
+	firstRoute := newFixtureRoute(t, 173_000, provider.ProviderZoneLocal, provider.ContentLoggingDisabled, provider.RouteQualityTier4, free)
+	secondRoute := newFixtureRoute(t, 173_001, provider.ProviderZoneLocal, provider.ContentLoggingDisabled, provider.RouteQualityTier4, free)
 	scope := newRoutingScope(t)
 	otherScope, _ := audit.NewReviewScope("other", "repository", "review-run")
 	first, _ := authorizationForPayload(t, scope, "candidate", firstRoute)
@@ -159,7 +159,7 @@ func TestDistinctRouteRejectsRegistryMetadataChurn(t *testing.T) {
 	if receipt, err := VerifyIndependentRouteAttempts(policy, first, firstOutcome, second, secondOutcome); !errors.Is(err, ErrRouteAttemptsNotIndependent) || receipt.Identity() != "" {
 		t.Errorf("metadata-only completed attempts accepted: %v", err)
 	}
-	different := newFallbackRoute(t, 174_001, provider.ProviderZoneLocal, provider.ContentLoggingDisabled, provider.RouteQualityTier4, free)
+	different := newFixtureRoute(t, 174_001, provider.ProviderZoneLocal, provider.ContentLoggingDisabled, provider.RouteQualityTier4, free)
 	if err := VerifyIndependentRouteCandidate(policy, first, different); err != nil {
 		t.Fatalf("genuinely distinct route rejected: %v", err)
 	}

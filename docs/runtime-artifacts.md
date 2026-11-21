@@ -37,14 +37,6 @@ The local file adapter declares `process_private` protection and refuses artifac
 
 Artifacts must not contain credentials or raw worker lease capabilities. Secrets stay in the configured secret provider.
 
-## Handler boundary
-
-`ValidatedTaskHandler` wraps an approved task handler. Before it invokes the handler, the wrapper resolves the input. For a root task, that is the task's input artifact. For a downstream task, it is every available output from the declared dependencies. The wrapper checks the run scope, the retention and the allowed input kinds.
-
-A successful result is accepted only when its output resolves to an allowed kind in the same scope, and its provenance contains the identity of every resolved input artifact. A terminal optional dependency has no output artifact. A missing, corrupt, expired or cross-wired artifact fails before the task completion is recorded.
-
-Workers can restart, and downstream tasks can revalidate every input from its content-addressed provenance.
-
 ## Retention deletion
 
 Physical deletion requires a short-lived, content-addressed authorization. The authorization is bound to the scope, the artifact, the retention policy, the principal, the reason and a legal-hold clearance receipt. Deleting an artifact because it expired is rejected before the artifact's expiry time. Tenant erasure and repository erasure use separate reasons. The clearance identity records the policy decision, and the store does not infer clearance from missing data.

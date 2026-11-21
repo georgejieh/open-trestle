@@ -45,13 +45,8 @@ func TestRouteAuditRecordsCompleteSuccessfulAttempt(t *testing.T) {
 	if err != nil || costEvent.Sequence() != 4 || costEvent.SubjectIdentity() != reconciliation.Identity() {
 		t.Fatalf("cost event = (%#v, %v)", costEvent, err)
 	}
-	plan, _ := PlanRouteContinuation(fixture.selection, fixture.ranking, NewNoRouteRetryPolicy(), NewNoRouteFallbackPolicy(), authorization, outcome, reconciliation, []string{authorization.RouteRecordIdentity()})
-	continuationEvent, err := RecordRouteContinuationPlan(ctx, ledger, scope, authorization, outcome, reconciliation, plan, time.UnixMilli(5))
-	if err != nil || continuationEvent.Sequence() != 5 || continuationEvent.SubjectIdentity() != plan.Identity() {
-		t.Fatalf("continuation event = (%#v, %v)", continuationEvent, err)
-	}
 	events, _ := ledger.Read(ctx, scope, 0, 10)
-	if len(events) != 5 {
+	if len(events) != 4 {
 		t.Fatalf("event count = %d", len(events))
 	}
 	for index := 1; index < len(events); index++ {
@@ -247,108 +242,6 @@ func TestRouteSelectionRejectsConflictingDuplicateAndKeepsExactIdempotence(t *te
 	}
 }
 
-// A fallback uses the original selection receipt, but its route is not the first selected record.
-func TestRouteAuditClaimsFallbackAfterFailedInitialAttempt(t *testing.T) {
-	for _, storage := range []string{"memory", "file"} {
-		t.Run(storage, func(t *testing.T) {
-			var ledger audit.Ledger = audit.NewMemoryLedger()
-			if storage == "file" {
-				file, err := audit.NewFileLedger(t.TempDir())
-				if err != nil {
-					t.Fatal(err)
-				}
-				t.Cleanup(func() {
-					if err := file.Close(); err != nil {
-						t.Error(err)
-					}
-				})
-				ledger = file
-			}
-			ctx := context.Background()
-			scope := newRoutingScope(t)
-			free := mustKnownFreePricing(t)
-			primary := newFallbackRoute(t, 141_000, provider.ProviderZoneLocal, provider.ContentLoggingDisabled, provider.RouteQualityTier4, free)
-			next := newFallbackRoute(t, 141_001, provider.ProviderZoneLocal, provider.ContentLoggingDisabled, provider.RouteQualityTier3, free)
-			fixture := newFallbackFixture(t, 0, next, primary)
-			request, err := provider.NewRequest(provider.CapabilityReviewV1, "application/json", []byte("fallback payload"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			initial, err := NewInitialRouteAttemptAuthorization(request, fixture.selection, fixture.ranking)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := RecordRouteSelection(ctx, ledger, scope, fixture.selection, time.UnixMilli(1)); err != nil {
-				t.Fatal(err)
-			}
-			if _, acquired, err := ClaimRouteAttempt(ctx, ledger, scope, initial, time.UnixMilli(2)); err != nil || !acquired {
-				t.Fatalf("initial claim = (%t, %v)", acquired, err)
-			}
-			rawFailure, err := NewFailedRouteDispatchResult(RouteFailureConnection, RouteReplayNoSideEffect, provider.NewUnknownRouteTokenUsage(), 0)
-			if err != nil {
-				t.Fatal(err)
-			}
-			dispatcher := &recordingRouteDispatcher{adapterID: initial.RouteReference().AdapterID(), result: rawFailure}
-			result, err := DispatchAuthorizedRoute(ctx, dispatcher, initial, request)
-			if err != nil {
-				t.Fatal(err)
-			}
-			outcome, err := NewRouteAttemptOutcomeFromDispatch(initial, result, 5)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := RecordRouteDispatchCompleted(ctx, ledger, scope, initial, result, outcome, time.UnixMilli(3)); err != nil {
-				t.Fatal(err)
-			}
-			reconciliation, err := ReconcileAuthorizedRouteAttemptCost(initial, outcome)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := RecordRouteCostReconciliation(ctx, ledger, scope, initial, outcome, reconciliation, time.UnixMilli(4)); err != nil {
-				t.Fatal(err)
-			}
-			policy, err := NewRouteFallbackPolicy(2, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			decision, err := PlanRouteAttemptFallback(fixture.selection, fixture.ranking, policy, initial, outcome, reconciliation, []string{initial.RouteRecordIdentity()})
-			if err != nil || !decision.ShouldFallback() {
-				t.Fatalf("fallback decision = (%#v, %v)", decision, err)
-			}
-			fallback, err := NewRouteFallbackAttemptAuthorization(initial, outcome, reconciliation, decision, fixture.selection, fixture.ranking)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if fallback.SelectionReceiptIdentity() != initial.SelectionReceiptIdentity() || fallback.RouteRecordIdentity() == initial.RouteRecordIdentity() {
-				t.Fatal("fixture did not change route under the same selection")
-			}
-			claim, acquired, err := ClaimRouteAttempt(ctx, ledger, scope, fallback, time.UnixMilli(5))
-			if err != nil || !acquired || claim.SubjectIdentity() != fallback.Identity() {
-				t.Fatalf("fallback claim = (%#v, %t, %v)", claim, acquired, err)
-			}
-			duplicate, acquired, err := ClaimRouteAttempt(ctx, ledger, scope, fallback, time.UnixMilli(6))
-			if err != nil || acquired || duplicate.Identity() != claim.Identity() {
-				t.Fatalf("fallback duplicate = (%#v, %t, %v)", duplicate, acquired, err)
-			}
-			head, _, err := ledger.Head(ctx, scope)
-			if err != nil {
-				t.Fatal(err)
-			}
-			parents := []string{fixture.selection.RoutingInputIdentity(), fixture.selection.SelectedRecordIdentity(), fixture.selection.RankingPolicyIdentity()}
-			secondSelection, err := audit.NewEvent(scope, head.Sequence()+1, head.Identity(), audit.EventRouteSelected, fixture.selection.Identity(), parents, time.UnixMilli(7))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := ledger.Append(ctx, head.Identity(), secondSelection); err != nil {
-				t.Fatal(err)
-			}
-			if event, acquired, err := ClaimRouteAttempt(ctx, ledger, scope, fallback, time.UnixMilli(8)); !errors.Is(err, ErrRouteAuditRecordMismatch) || acquired || event.Identity() != "" {
-				t.Fatalf("duplicate selection fallback claim = (%#v, %t, %v)", event, acquired, err)
-			}
-		})
-	}
-}
-
 func TestRouteAuditClaimsSameRecordRetry(t *testing.T) {
 	for _, storage := range []string{"memory", "file"} {
 		t.Run(storage, func(t *testing.T) {
@@ -382,7 +275,7 @@ func TestRouteAuditClaimsSameRecordRetry(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			rawFailure, err := NewFailedRouteDispatchResult(RouteFailureTimeout, RouteReplayNoSideEffect, usage, 0)
+			rawFailure, err := NewFailedRouteDispatchResult(RouteFailureRateLimited, RouteReplayNoSideEffect, usage, 0)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -405,7 +298,7 @@ func TestRouteAuditClaimsSameRecordRetry(t *testing.T) {
 			if _, err := RecordRouteCostReconciliation(ctx, ledger, scope, initial, outcome, reconciliation, time.UnixMilli(4)); err != nil {
 				t.Fatal(err)
 			}
-			policy, err := NewRouteRetryPolicy(3, 100, 1_000, 0, 2_000)
+			policy, err := NewRateLimitRetryPolicy(100)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -413,7 +306,7 @@ func TestRouteAuditClaimsSameRecordRetry(t *testing.T) {
 			if err != nil || !decision.ShouldRetry() {
 				t.Fatalf("retry decision = (%#v, %v)", decision, err)
 			}
-			retry, err := NewRouteRetryAttemptAuthorization(initial, outcome, reconciliation, decision)
+			retry, err := NewRateLimitedRetryAttemptAuthorization(initial, outcome, reconciliation, decision)
 			if err != nil {
 				t.Fatal(err)
 			}

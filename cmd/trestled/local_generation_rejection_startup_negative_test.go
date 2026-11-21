@@ -109,7 +109,7 @@ func testGenerationRejectionStartupRefusals(t *testing.T, args []string, getenv 
 	if err := os.WriteFile(auditPath, raw, 0600); err != nil {
 		t.Fatal(err)
 	}
-	for _, kind := range []audit.EventKind{audit.EventRouteContinuationPlanned, audit.EventPublicationClaimed} {
+	for _, kind := range []audit.EventKind{audit.EventPublicationClaimed} {
 		extraEvent, err := audit.NewEvent(scope, events.Sequence()+1, events.Identity(), kind, strings.Repeat("a", 64), []string{events.SubjectIdentity()}, time.UnixMilli(events.OccurredAtUnixMilliseconds()))
 		if err != nil {
 			t.Fatal(err)

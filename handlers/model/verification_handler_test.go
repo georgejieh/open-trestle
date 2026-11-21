@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/georgejieh/open-trestle/artifact"
-	"github.com/georgejieh/open-trestle/artifactvalidation"
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/controlplane"
 	"github.com/georgejieh/open-trestle/internal/gateway"
@@ -232,14 +231,7 @@ func TestVerificationHandlerUsesIndependentRouteAndPersistsPromotedFindings(t *t
 		t.Fatal(err)
 	}
 	request := verificationTaskRequest(t, scope, generationArtifact.Identity(), handler.HandlerIdentity())
-	validated, err := artifactvalidation.NewValidatedTaskHandler(
-		handler, store, fixedClock{at: time.UnixMilli(221)},
-		[]artifact.Kind{artifact.KindCandidateBatch}, []artifact.Kind{artifact.KindVerifiedFindingSet},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	completion := validated.Execute(context.Background(), request)
+	completion := handler.Execute(context.Background(), request)
 	if completion.Status() != controlplane.TaskCompletionSucceeded || dispatcher.calls != 1 || authorizer.calls != 1 {
 		t.Fatalf("completion=%#v calls=(%d,%d)", completion, dispatcher.calls, authorizer.calls)
 	}
@@ -282,7 +274,7 @@ func TestVerificationHandlerUsesIndependentRouteAndPersistsPromotedFindings(t *t
 	if err != nil || len(events) != 8 || events[6].Kind() != audit.EventRouteDispatchCompleted || events[7].Kind() != audit.EventRouteCostReconciled {
 		t.Fatalf("events=(%#v,%v)", events, err)
 	}
-	replayed := validated.Execute(context.Background(), request)
+	replayed := handler.Execute(context.Background(), request)
 	if replayed.Status() != controlplane.TaskCompletionFailed || dispatcher.calls != 1 {
 		t.Fatalf("existing verifier claim redispatched: status=%s calls=%d", replayed.Status(), dispatcher.calls)
 	}

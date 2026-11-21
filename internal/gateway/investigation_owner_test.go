@@ -111,7 +111,7 @@ func investigationOwnerOptionsFixture(t *testing.T, mode string, cap uint64, tur
 	t.Helper()
 	_, requirements, constraints := newRoutingFixture(t, []byte("fixture"))
 	pricing, _ := provider.NewRoutePricing(1000000, 1000000)
-	route := newFallbackRoute(t, 140000, provider.ProviderZoneLocal, provider.ContentLoggingDisabled, provider.RouteQualityTier4, pricing)
+	route := newFixtureRoute(t, 140000, provider.ProviderZoneLocal, provider.ContentLoggingDisabled, provider.RouteQualityTier4, pricing)
 	ranking, _ := NewRouteRankingPolicy(nil)
 	plan, err := NewInvestigationRoutePlan(21, []ObservedRouteCandidate{route}, ranking, 4, []provider.RoutePerformanceObservation{routePerformance(t, route, 4, 100)})
 	if err != nil {
@@ -384,7 +384,7 @@ func TestInvestigationRoutePlanRefusesInvalidRevisionsAndValuesWithoutEffects(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	route := newFallbackRoute(t, 140000, provider.ProviderZoneLocal, provider.ContentLoggingDisabled, provider.RouteQualityTier4, pricing)
+	route := newFixtureRoute(t, 140000, provider.ProviderZoneLocal, provider.ContentLoggingDisabled, provider.RouteQualityTier4, pricing)
 	ranking, err := NewRouteRankingPolicy(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -669,7 +669,7 @@ func TestInvestigationRoutePlanCopiesCallerSlices(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	route := newFallbackRoute(t, 140000, provider.ProviderZoneLocal, provider.ContentLoggingDisabled, provider.RouteQualityTier4, pricing)
+	route := newFixtureRoute(t, 140000, provider.ProviderZoneLocal, provider.ContentLoggingDisabled, provider.RouteQualityTier4, pricing)
 	ranking, err := NewRouteRankingPolicy(nil)
 	if err != nil {
 		t.Fatal(err)

@@ -220,9 +220,15 @@ func TestInvestigationAuditFileLedgerPersistsTokensWithoutOperationDeduplication
 }
 
 func TestInvestigationAuditAdditionPreservesOldKindsAndEventRecipe(t *testing.T) {
-	kinds := []EventKind{EventRouteSelected, EventRouteAttemptClaimed, EventRouteDispatchCompleted, EventRouteCostReconciled, EventRouteContinuationPlanned, EventContextSourcesSelected, EventContextPacketAssembled, EventCandidateBatchAdmitted, EventVerificationContextAssembled, EventVerificationBatchAdmitted, EventIndependentVerificationCompleted, EventPublicationReadinessEvaluated, EventPublicationAuthorized, EventPublicationClaimed, EventPublicationHeadReconciled, EventPublicationCompleted, EventPublicationRetryAuthorized, EventReviewSnapshotBound, EventContextAcquisitionBound, EventArtifactDeleted}
-	tokens := []string{"route_selected", "route_attempt_claimed", "route_dispatch_completed", "route_cost_reconciled", "route_continuation_planned", "context_sources_selected", "context_packet_assembled", "candidate_batch_admitted", "verification_context_assembled", "verification_batch_admitted", "independent_verification_completed", "publication_readiness_evaluated", "publication_authorized", "publication_claimed", "publication_head_reconciled", "publication_completed", "publication_retry_authorized", "review_snapshot_bound", "context_acquisition_bound", "artifact_deleted"}
+	kinds := []EventKind{EventRouteSelected, EventRouteAttemptClaimed, EventRouteDispatchCompleted, EventRouteCostReconciled, EventKind(5), EventContextSourcesSelected, EventContextPacketAssembled, EventCandidateBatchAdmitted, EventVerificationContextAssembled, EventVerificationBatchAdmitted, EventIndependentVerificationCompleted, EventPublicationReadinessEvaluated, EventPublicationAuthorized, EventPublicationClaimed, EventPublicationHeadReconciled, EventPublicationCompleted, EventKind(17), EventReviewSnapshotBound, EventContextAcquisitionBound, EventArtifactDeleted}
+	tokens := []string{"route_selected", "route_attempt_claimed", "route_dispatch_completed", "route_cost_reconciled", "", "context_sources_selected", "context_packet_assembled", "candidate_batch_admitted", "verification_context_assembled", "verification_batch_admitted", "independent_verification_completed", "publication_readiness_evaluated", "publication_authorized", "publication_claimed", "publication_head_reconciled", "publication_completed", "", "review_snapshot_bound", "context_acquisition_bound", "artifact_deleted"}
 	for i, kind := range kinds {
+		if tokens[i] == "" {
+			if uint8(kind) != uint8(i+1) || kind.String() != "" || kind.Validate() == nil {
+				t.Fatal("retired audit enum value was reused")
+			}
+			continue
+		}
 		parsed, err := ParseEventKind(tokens[i])
 		if uint8(kind) != uint8(i+1) || kind.String() != tokens[i] || err != nil || parsed != kind {
 			t.Fatal("existing audit enum value or spelling changed")
