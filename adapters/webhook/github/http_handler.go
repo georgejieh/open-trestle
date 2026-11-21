@@ -35,10 +35,6 @@ type HTTPHandler struct {
 	slots    chan struct{}
 }
 
-func NewHTTPHandler(scope webhook.RepositoryScope, verifier *Verifier, inbox *webhook.Inbox, clock Clock, concurrency uint16) (*HTTPHandler, error) {
-	return NewHTTPHandlerWithNotifier(scope, verifier, inbox, nil, clock, concurrency)
-}
-
 // NewHTTPHandlerWithNotifier adds a best-effort content-free wake-up after durable acceptance.
 func NewHTTPHandlerWithNotifier(scope webhook.RepositoryScope, verifier *Verifier, inbox *webhook.Inbox, notifier webhook.DeliveryNotifier, clock Clock, concurrency uint16) (*HTTPHandler, error) {
 	if scope.Validate() != nil || verifier == nil || inbox == nil || clock == nil || concurrency == 0 || concurrency > maxWebhookConcurrency {
