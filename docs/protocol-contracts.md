@@ -24,7 +24,6 @@ Routing, policy, provider, and review schemas:
 - `schemas/policy/provider-data-constraints-v1.schema.json`
 - `schemas/provider/model-requirements-v1.schema.json`
 - `schemas/provider/model-capabilities-v1.schema.json`
-- `schemas/provider/route-reference-v1.schema.json`
 - `schemas/provider/route-reference-v2.schema.json`
 - `schemas/provider/route-capability-declaration-v1.schema.json`
 - `schemas/review/model-candidate-batch-v1.schema.json`
@@ -39,11 +38,11 @@ Routing, policy, provider, and review schemas:
 - `schemas/secret-scanner/secret-scan-request-v1.schema.json`
 - `schemas/secret-scanner/secret-scan-response-v1.schema.json`
 
-Route-reference schema v1 is the historical grammar for untagged models, and its bytes are unchanged. Schema v2 keeps the six-field wire shape and adds one optional final `:tag` in `model_id`. A tagged model ID requires an empty `model_version`. An untagged model ID keeps the existing behavior, which needs a nonempty version selector.
+Route-reference schema v2 allows one optional final `:tag` in `model_id`. A tagged model ID requires an empty `model_version`. An untagged model ID needs a nonempty version selector.
 
-Values that look like `host:port` or like an opaque URI in a tagged ID are inert model text. They never act as an endpoint, a filesystem path or a credential. The runtime inventory and the durable route authorization v1 schemas already bound these fields broadly, and native route validation enforces the stricter grammar. The capability-declaration v1 schema still references the historical route-reference v1 subset. No schema version changes the route identity preimages (the exact bytes that identities are computed from).
+Values that look like `host:port` or like an opaque URI in a tagged ID are inert model text. They never act as an endpoint, a filesystem path or a credential. The runtime inventory and the durable route authorization v1 schemas already bound these fields broadly, and native route validation enforces the stricter grammar. No schema version changes the route identity preimages (the exact bytes that identities are computed from).
 
-Native Go tests exercise the selector semantics. The schema tests check structure and the unchanged v1 bytes, and they do not perform full JSON Schema semantic validation.
+Native Go tests exercise the selector semantics. The schema tests check structure and do not perform full JSON Schema semantic validation.
 
 Candidate batch schema v1 keeps its bytes and is the output schema of recorded generation contexts before version 7. Schema v2 is the output schema of version 7, 8 and 9 generation contexts. In v2, every candidate adds two fields:
 
@@ -93,7 +92,7 @@ The `run` member of the API response v1 envelope is the canonical receipt v1, v2
 
 The run-progress response v1 is a separate read-only HTTP envelope with exactly `contract`, `schema_version`, `request_id`, `run` and `progress`. It references the canonical receipt v1, v2 or v3. Its four axes are `change`, `deterministic`, `context` and `verification`. Each axis has a bounded state, an optional immutable artifact identity and only its declared count fields.
 
-The schema inventory contains 124 documents. The native client also validates the scope, the completed-task binding, the output identities other than context, the count equations and the checked-versus-applicable bounds. Schema validation cannot establish artifact lineage or consistency with the receipt head.
+The schema inventory contains 122 documents. The native client also validates the scope, the completed-task binding, the output identities other than context, the count equations and the checked-versus-applicable bounds. Schema validation cannot establish artifact lineage or consistency with the receipt head.
 
 The delivery-refusal response v1 is another read-only envelope, with exactly `contract`, `schema_version`, `request_id` and `refusal`. The `refusal` member is the canonical `open-trestle/webhook-delivery-refusal` v1 record. It describes an accepted webhook delivery that intake refused instead of opening its run. It holds the tenant, repository, source, deduplication key, delivery and planner identities, the reason token and the refusal time. It carries no delivery content. Errors use the api-response envelope.
 
@@ -187,7 +186,6 @@ Artifact schemas:
 - `schemas/artifact/semantic-impact-profile-v1.schema.json`
 - `schemas/artifact/semantic-impact-profile-v2.schema.json`
 - `schemas/artifact/memory-retrieval-result-v1.schema.json`
-- `schemas/artifact/publication-readiness-result-v1.schema.json`
 - `schemas/artifact/publication-readiness-result-v2.schema.json`
 - `schemas/artifact/publication-content-scan-receipt-v1.schema.json` (names the scanner the same way, with `build_profile` and `helper_sha256`)
 - `schemas/artifact/publication-input-v1.schema.json`
