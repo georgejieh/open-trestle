@@ -15,6 +15,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -244,4 +245,9 @@ func (s appSignerState) String() string   { return "GitHub appSignerState" }
 func (s appSignerState) GoString() string { return "github.appSignerState{<redacted>}" }
 func (s appSignerState) Format(state fmt.State, verb rune) {
 	writeRedacted(state, verb, s.String(), s.GoString())
+}
+
+func validDigest(value string) bool {
+	decoded, err := hex.DecodeString(value)
+	return len(value) == 64 && err == nil && hex.EncodeToString(decoded) == value && strings.Trim(value, "0") != ""
 }

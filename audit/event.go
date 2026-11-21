@@ -139,20 +139,20 @@ const (
 	EventRouteDispatchCompleted
 	EventRouteCostReconciled
 	_ // retired, never recorded
-	EventContextSourcesSelected
-	EventContextPacketAssembled
-	EventCandidateBatchAdmitted
-	EventVerificationContextAssembled
-	EventVerificationBatchAdmitted
-	EventIndependentVerificationCompleted
-	EventPublicationReadinessEvaluated
-	EventPublicationAuthorized
+	_ // retired, never recorded
+	_ // retired, never recorded
+	_ // retired, never recorded
+	_ // retired, never recorded
+	_ // retired, never recorded
+	_ // retired, never recorded
+	_ // retired, never recorded
+	_ // retired, never recorded
 	EventPublicationClaimed
-	EventPublicationHeadReconciled
+	_ // retired, never recorded
 	EventPublicationCompleted
 	_ // retired, never recorded
 	EventReviewSnapshotBound
-	EventContextAcquisitionBound
+	_ // retired, never recorded
 	_ // retired, never recorded
 	EventInvestigationToolClaimed
 	EventInvestigationToolCompleted
@@ -169,32 +169,12 @@ func (k EventKind) String() string {
 		return "route_dispatch_completed"
 	case EventRouteCostReconciled:
 		return "route_cost_reconciled"
-	case EventContextSourcesSelected:
-		return "context_sources_selected"
-	case EventContextPacketAssembled:
-		return "context_packet_assembled"
-	case EventCandidateBatchAdmitted:
-		return "candidate_batch_admitted"
-	case EventVerificationContextAssembled:
-		return "verification_context_assembled"
-	case EventVerificationBatchAdmitted:
-		return "verification_batch_admitted"
-	case EventIndependentVerificationCompleted:
-		return "independent_verification_completed"
-	case EventPublicationReadinessEvaluated:
-		return "publication_readiness_evaluated"
-	case EventPublicationAuthorized:
-		return "publication_authorized"
 	case EventPublicationClaimed:
 		return "publication_claimed"
-	case EventPublicationHeadReconciled:
-		return "publication_head_reconciled"
 	case EventPublicationCompleted:
 		return "publication_completed"
 	case EventReviewSnapshotBound:
 		return "review_snapshot_bound"
-	case EventContextAcquisitionBound:
-		return "context_acquisition_bound"
 	case EventInvestigationToolClaimed:
 		return "investigation_tool_claimed"
 	case EventInvestigationToolCompleted:

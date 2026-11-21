@@ -656,3 +656,11 @@ func derivePublicationReadinessIdentity(r PublicationReadiness) string {
 	d := sha256.Sum256(b)
 	return hex.EncodeToString(d[:])
 }
+
+func verifiedFindingIdentities(findings []VerifiedFinding) []string {
+	identities := make([]string, len(findings))
+	for index, finding := range findings {
+		identities[index] = finding.Identity()
+	}
+	return identities
+}

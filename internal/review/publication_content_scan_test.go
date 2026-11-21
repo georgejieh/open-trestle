@@ -3,7 +3,6 @@ package review
 import (
 	"bytes"
 	"context"
-	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -191,11 +190,10 @@ func TestPublicationSelectionScanAndRendererUseExactFilteredOrder(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := newPublicationPlan(readiness, reviewPublicationTarget(t), strings.Repeat("9", 64))
-	if err != nil {
-		t.Fatal(err)
+	if readiness.Validate() != nil {
+		t.Fatal("readiness is invalid")
 	}
-	rendered := append(plan.InlinePublishableFindings(), plan.SummaryOnlyPublishableFindings()...)
+	rendered := append(selection.InlinePublishableFindings(), selection.SummaryOnlyPublishableFindings()...)
 	renderedBytes := publishableTextBytes(rendered)
 	if !reflect.DeepEqual(client.observed, renderedBytes) {
 		t.Fatalf("scanned=%q rendered=%q", client.observed, renderedBytes)
@@ -225,9 +223,6 @@ func TestPublicationReadinessBlocksDetectorRecognizedSecretInEveryPublishableFie
 			readiness, err := EvaluatePublicationReadiness(policy, independent, set, verificationContext, selection, scan)
 			if err != nil || readiness.Status() != PublicationBlockedSensitiveContent || readiness.AuthorizesPublication() || len(readiness.InlineFindings()) != 0 {
 				t.Fatalf("secret-bearing readiness=(%#v,%v)", readiness, err)
-			}
-			if _, err := newPublicationPlan(readiness, PublicationTarget{}, strings.Repeat("c", 64)); !errors.Is(err, ErrPublicationPlanNotReady) {
-				t.Fatalf("secret-bearing readiness formed a publication plan: %v", err)
 			}
 		})
 	}

@@ -2,9 +2,10 @@ package review
 
 import (
 	"context"
+	"reflect"
+
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/diagnostics"
-	"reflect"
 )
 
 // MaterializeDiagnosticSetWithDeterministicChecks exports and idempotently persists version 5 or 8 diagnostics.

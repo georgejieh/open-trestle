@@ -149,24 +149,6 @@ func TestContextManifestRefusesAccountingThatDisagreesWithTheSources(t *testing.
 	}
 }
 
-func mustMarshal(t *testing.T, value any) []byte {
-	t.Helper()
-	encoded, err := json.Marshal(value)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return encoded
-}
-
-func mustDecodeGeneration(t *testing.T, payload []byte) contextPacketWire {
-	t.Helper()
-	wire, err := decodeGenerationContextWire(payload)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return wire
-}
-
 // The verifier sees the index sources and the source limit of version 10, and
 // never the manifest or the repository checks, which are finder accounting.
 func TestVerifierReceivesIndexSourcesWithoutTheManifest(t *testing.T) {
