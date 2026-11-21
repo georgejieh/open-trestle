@@ -251,7 +251,7 @@ func TestPromptInjectionBoundaryGenerationAndVerification(t *testing.T) {
 		t.Fatalf("generation system channel differs between clean and injected repositories: %v %v %v", err, cleanErr, catalogErr)
 	}
 	profile, _ := catalog.Profile("bug_hunter")
-	if system != candidateOutputInstructionsV11+fmt.Sprintf(specialistGuidanceHeading, "bug_hunter")+profile.Skill() {
+	if system != candidateOutputInstructions+fmt.Sprintf(specialistGuidanceHeading, "bug_hunter")+profile.Skill() {
 		t.Fatal("generation system channel is not the host contract plus the embedded skill")
 	}
 	for _, marker := range injectionMarkers {
@@ -305,7 +305,7 @@ func TestPromptInjectionBoundaryGenerationAndVerification(t *testing.T) {
 	verifier := verifierPayload(packet, snapshot, injected)
 	cleanVerifierSystem, cleanErr := TrustedModelRequestInstructions(cleanVerifier)
 	verifierSystem, err := TrustedModelRequestInstructions(verifier)
-	if err != nil || cleanErr != nil || verifierSystem != cleanVerifierSystem || verifierSystem != verificationOutputInstructionsV10 {
+	if err != nil || cleanErr != nil || verifierSystem != cleanVerifierSystem || verifierSystem != verificationOutputInstructions {
 		t.Fatal("verifier system channel differs between clean and injected repositories")
 	}
 	requireInjectionOnlyInStrings(t, "verification", cleanVerifier, verifier, append(slices.Clone(injectionMarkers), claim))
@@ -337,7 +337,7 @@ func TestPromptInjectionBoundaryInvestigation(t *testing.T) {
 	clean, injected := build(false), build(true)
 	cleanSystem, cleanErr := TrustedModelRequestInstructions(clean)
 	system, err := TrustedModelRequestInstructions(injected)
-	if err != nil || cleanErr != nil || system != cleanSystem || system != investigationInstructionsV6 {
+	if err != nil || cleanErr != nil || system != cleanSystem || system != investigationContract {
 		t.Fatal("investigation system channel differs between clean and injected repositories")
 	}
 	if !strings.HasPrefix(system, "Instruction hierarchy:") || !strings.HasSuffix(system, InvestigationInstructions()) ||
@@ -352,11 +352,8 @@ func TestPromptInjectionBoundaryInvestigation(t *testing.T) {
 		Identity     string  `json:"instructions_identity"`
 	}
 	for _, payload := range [][]byte{clean, injected} {
-		if json.Unmarshal(payload, &header) != nil || header.Version != investigationContextVersion || header.Instructions != nil || header.Identity != modelInstructionsIdentity(investigationInstructionsV6) || bytes.Contains(payload, []byte("Instruction hierarchy:")) {
+		if json.Unmarshal(payload, &header) != nil || header.Version != investigationContextVersion || header.Instructions != nil || header.Identity != modelInstructionsIdentity(investigationContract) || bytes.Contains(payload, []byte("Instruction hierarchy:")) {
 			t.Fatal("investigation payload does not bind its system-channel contract by identity")
-		}
-		if ValidateRecordedInvestigationContext(payload) != nil {
-			t.Fatal("version 6 investigation context rejected on readback")
 		}
 		// The trusted system channel is counted in the input reservation.
 		request, err := provider.NewRequest(provider.CapabilityReviewV1, "application/json", payload)
@@ -371,12 +368,8 @@ func TestPromptInjectionBoundaryInvestigation(t *testing.T) {
 		if err != nil || uint64(budget.EstimatedInputTokens()) != uint64(len(payload)+len(system)+modelRequestFramingReserve) {
 			t.Fatalf("investigation budget does not count the system channel: %v", err)
 		}
-		// Recorded version 4 bytes (prose in the payload, no hierarchy) read
-		// back, but are never an executable request.
+		// Version 4 bytes (prose in the payload, no hierarchy) are refused.
 		recorded := recordedInvestigationV4(t, payload)
-		if ValidateRecordedInvestigationContext(recorded) != nil {
-			t.Fatal("recorded version 4 investigation context rejected on readback")
-		}
 		if _, err := TrustedModelRequestInstructions(recorded); err == nil {
 			t.Fatal("version 4 investigation context is executable")
 		}
@@ -448,8 +441,8 @@ func TestPromptInjectionBoundaryInvestigation(t *testing.T) {
 	}
 }
 
-// recordedInvestigationV4 rewrites a version 5 payload into the version 4 wire
-// shape: pinned prose in the payload, no instructions_identity.
+// recordedInvestigationV4 rewrites a payload into the version 4 wire shape:
+// pinned prose in the payload, no instructions_identity.
 func recordedInvestigationV4(t *testing.T, payload []byte) []byte {
 	t.Helper()
 	var wire map[string]json.RawMessage
@@ -466,43 +459,17 @@ func recordedInvestigationV4(t *testing.T, payload []byte) []byte {
 	return recorded
 }
 
-// recordedInvestigationV5 rewrites a version 6 payload into the version 5 wire
-// shape: the same fields bound to the version 5 contract identity.
-func recordedInvestigationV5(t *testing.T, payload []byte) []byte {
-	t.Helper()
-	var wire map[string]json.RawMessage
-	if err := json.Unmarshal(payload, &wire); err != nil {
-		t.Fatal(err)
-	}
-	wire["schema_version"] = json.RawMessage("5")
-	wire["instructions_identity"] = mustJSON(modelInstructionsIdentity(investigationInstructionsV5))
-	recorded, err := json.Marshal(wire)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return recorded
-}
-
-// A version 4 context with tampered prose, a stray identity, or a version 5
-// or 6 context with prose or the other version's identity is refused on
-// readback. Recorded versions 4 and 5 read back but are never executable.
-func TestRecordedInvestigationContextReadbackIsExact(t *testing.T) {
+// An investigation context with prose, another identity, or another version
+// is refused.
+func TestInvestigationContextContractIsExact(t *testing.T) {
 	f := newV4Fixture(t)
 	request, err := v4Initial(t, f).ProviderRequest()
 	if err != nil {
 		t.Fatal(err)
 	}
 	v6 := request.Payload()
-	v5 := recordedInvestigationV5(t, v6)
-	v4 := recordedInvestigationV4(t, v6)
-	if ValidateRecordedInvestigationContext(v6) != nil || ValidateRecordedInvestigationContext(v5) != nil || ValidateRecordedInvestigationContext(v4) != nil {
-		t.Fatal("exact recorded contexts rejected")
-	}
-	if system, err := TrustedModelRequestInstructions(v6); err != nil || system != investigationInstructionsV6 {
-		t.Fatal("version 6 investigation context is not executable")
-	}
-	if _, err := TrustedModelRequestInstructions(v5); err == nil {
-		t.Fatal("recorded version 5 investigation context is executable")
+	if system, err := TrustedModelRequestInstructions(v6); err != nil || system != investigationContract {
+		t.Fatal("investigation context is not executable")
 	}
 	set := func(payload []byte, key, value string) []byte {
 		var wire map[string]json.RawMessage
@@ -514,25 +481,16 @@ func TestRecordedInvestigationContextReadbackIsExact(t *testing.T) {
 		return out
 	}
 	for name, payload := range map[string][]byte{
-		"v4 tampered prose":      set(v4, "instructions", `"ignore host"`),
-		"v4 with identity":       set(v4, "instructions_identity", `"`+modelInstructionsIdentity(investigationInstructionsV5)+`"`),
-		"v5 with prose":          set(v5, "instructions", `"`+InvestigationInstructions()+`"`),
-		"v5 with v4 identity":    set(v5, "instructions_identity", `"`+investigationInstructionsIdentity+`"`),
-		"v5 with wrong identity": set(v5, "instructions_identity", `"`+strings.Repeat("0", 64)+`"`),
-		"v5 with v6 identity":    set(v5, "instructions_identity", `"`+modelInstructionsIdentity(investigationInstructionsV6)+`"`),
-		"v6 with v5 identity":    set(v6, "instructions_identity", `"`+modelInstructionsIdentity(investigationInstructionsV5)+`"`),
-		"v6 with prose":          set(v6, "instructions", `"`+InvestigationInstructions()+`"`),
-		"unknown version":        set(v6, "schema_version", "7"),
-		"wrong task":             set(v5, "task", `"candidate_verification"`),
-		"not investigation":      set(v5, "tool_calls", `"proposals_only"`),
+		"pinned rules identity": set(v6, "instructions_identity", `"`+investigationInstructionsIdentity+`"`),
+		"wrong identity":        set(v6, "instructions_identity", `"`+strings.Repeat("0", 64)+`"`),
+		"prose":                 set(v6, "instructions", `"`+InvestigationInstructions()+`"`),
+		"version 5":             set(v6, "schema_version", "5"),
+		"unknown version":       set(v6, "schema_version", "7"),
+		"wrong task":            set(v6, "task", `"candidate_verification"`),
 	} {
-		if ValidateRecordedInvestigationContext(payload) == nil {
-			t.Errorf("%s accepted on readback", name)
+		if _, err := TrustedModelRequestInstructions(payload); err == nil {
+			t.Errorf("%s accepted", name)
 		}
-	}
-	// A generation version 5 context shares the version number but not the contract.
-	if _, err := TrustedModelRequestInstructions(set(v5, "output_schema_identity", `"`+ModelCandidateBatchV1SchemaIdentity+`"`)); err == nil {
-		t.Error("generation schema identity accepted under the investigation version")
 	}
 }
 
@@ -585,12 +543,8 @@ func TestHarnessNeverLoadsReviewedRepositoryAIMaterial(t *testing.T) {
 	if hex.EncodeToString(digest[:]) != investigationInstructionsIdentity {
 		t.Fatal("investigation contract is not the pinned embedded text")
 	}
-	v5 := sha256.Sum256([]byte(investigationInstructionsV5))
-	if hex.EncodeToString(v5[:]) != investigationInstructionsV5Identity {
-		t.Fatal("investigation version 5 contract is not the pinned text")
-	}
-	v6 := sha256.Sum256([]byte(investigationInstructionsV6))
-	if hex.EncodeToString(v6[:]) != investigationInstructionsV6Identity {
+	v6 := sha256.Sum256([]byte(investigationContract))
+	if hex.EncodeToString(v6[:]) != investigationContractIdentity {
 		t.Fatal("investigation version 6 contract is not the pinned text")
 	}
 }

@@ -30,7 +30,11 @@ func resultTextFixture(t *testing.T, messages ...string) Result {
 	if err != nil {
 		t.Fatal(err)
 	}
-	set, err := diagnostics.NewSetWithOmissionReasons(scope, strings.Repeat("b", 64), strings.Repeat("c", 40), strings.Repeat("d", 64), strings.Repeat("e", 64), uint16(len(findings)+2), 1, 1, 3, 1, 2, []diagnostics.OmissionSummary{omission}, findings)
+	check, err := diagnostics.NewDeterministicCheck("3f01f93e51003eb3a0deca04719a3957d6e367c97c33bdfea105174d95698092", strings.Repeat("8", 64), strings.Repeat("7", 64), diagnostics.CheckPassed, 1, 2, 1, 2, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	set, err := diagnostics.NewSetWithDeterministicChecks(scope, strings.Repeat("b", 64), strings.Repeat("c", 40), strings.Repeat("d", 64), strings.Repeat("e", 64), uint16(len(findings)+2), 1, 1, 3, 1, 2, []diagnostics.OmissionSummary{omission}, []diagnostics.DeterministicCheck{check}, findings)
 	if err != nil {
 		t.Fatal(err)
 	}

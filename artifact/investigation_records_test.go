@@ -164,32 +164,13 @@ func TestInvestigationArtifactTokensDoNotRaisePayloadOrEnvelopeLimits(t *testing
 	}
 }
 
-func TestInvestigationArtifactAdditionPreservesOldKindsAndFixtureIdentities(t *testing.T) {
+func TestInvestigationArtifactAdditionPreservesOldKinds(t *testing.T) {
 	kinds := []Kind{KindSourceSnapshot, KindChangeModel, KindDeterministicEvidence, KindRetrievalResult, KindContextPacket, KindCandidateBatch, KindVerificationBatch, KindVerifiedFindingSet, KindPublicationPlan, KindRunExport, KindTaskInput, KindWebhookDelivery, KindSourceFile, KindPublicationReceipt}
 	tokens := []string{"source_snapshot", "change_model", "deterministic_evidence", "retrieval_result", "context_packet", "candidate_batch", "verification_batch", "verified_finding_set", "publication_plan", "run_export", "task_input", "webhook_delivery", "source_file", "publication_receipt"}
 	for i, kind := range kinds {
 		parsed, _, _, _, err := parseEnums(tokens[i], "confidential", "host", "process_private")
 		if uint8(kind) != uint8(i+1) || kind.String() != tokens[i] || err != nil || parsed != kind {
 			t.Fatal("existing artifact numeric value or string changed")
-		}
-	}
-	encoded, err := os.ReadFile("../handlers/model/testdata/model-context-v2.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var fixture map[string]json.RawMessage
-	if json.Unmarshal(encoded, &fixture) != nil {
-		t.Fatal("existing model-context fixture could not be read")
-	}
-	for name, identity := range map[string]string{
-		"generation_context":  "15f22c9225283f142880f60176dad90f2e2925ffb2c80daf3a8bc3d14ae394c9",
-		"generation_input":    "e83e28fc630f6deba9f1dc3fb5551b0c794213f5da16871474749ed6886e85de",
-		"generation_result":   "d531073360d994ca982cf46329ab728d7654d9c4718f7b859545de5d83a2dba7",
-		"verification_result": "a8ea330695e9a77e29f13f5f681ae68c5a60cfa66d56e1fc843bac7611a311fc",
-	} {
-		value, err := Parse(fixture[name])
-		if err != nil || value.Identity() != identity || !bytes.Equal(mustEncode(t, value), fixture[name]) {
-			t.Fatalf("unchanged legacy artifact fixture %s lost exact bytes or identity", name)
 		}
 	}
 }

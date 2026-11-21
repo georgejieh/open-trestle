@@ -21,13 +21,12 @@ func recordedFixture(t *testing.T) (string, string) {
 		}
 	}
 	for path, data := range map[string][]byte{
-		filepath.Join(state, localSourceOwnerLeaf):                                                             []byte("not valid owner content"),
-		filepath.Join(state, ".run-writer.lock"):                                                               {},
-		filepath.Join(artifacts, ".artifact-writer.lock"):                                                      {},
-		filepath.Join(state, strings.Repeat("a", 64)+".run-plan.json"):                                         []byte("invalid plan"),
-		filepath.Join(state, strings.Repeat("a", 64)+".run.jsonl"):                                             []byte("invalid stream"),
-		filepath.Join(artifacts, strings.Repeat("b", 64)+"-"+strings.Repeat("c", 64)+".artifact.json"):         []byte("invalid artifact"),
-		filepath.Join(artifacts, strings.Repeat("b", 64)+"-"+strings.Repeat("c", 64)+".artifact-deleted.json"): []byte("invalid receipt"),
+		filepath.Join(state, localSourceOwnerLeaf):                                                     []byte("not valid owner content"),
+		filepath.Join(state, ".run-writer.lock"):                                                       {},
+		filepath.Join(artifacts, ".artifact-writer.lock"):                                              {},
+		filepath.Join(state, strings.Repeat("a", 64)+".run-plan.json"):                                 []byte("invalid plan"),
+		filepath.Join(state, strings.Repeat("a", 64)+".run.jsonl"):                                     []byte("invalid stream"),
+		filepath.Join(artifacts, strings.Repeat("b", 64)+"-"+strings.Repeat("c", 64)+".artifact.json"): []byte("invalid artifact"),
 	} {
 		if err := os.WriteFile(path, data, 0600); err != nil {
 			t.Fatal(err)
@@ -61,7 +60,7 @@ func TestLocalSourceOwnerRecordedSnapshotExactShape(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if snap.StateRoot == nil || snap.ArtifactRoot == nil || snap.OwnerInfo == nil || len(snap.StateEntries) != 9 || len(snap.ArtifactEntries) != 3 {
+		if snap.StateRoot == nil || snap.ArtifactRoot == nil || snap.OwnerInfo == nil || len(snap.StateEntries) != 9 || len(snap.ArtifactEntries) != 2 {
 			t.Fatalf("incomplete candidate: %+v", snap)
 		}
 		stateRoot, err := os.OpenRoot(state)
@@ -214,7 +213,7 @@ func TestLocalSourceOwnerRecordedSnapshotBounds(t *testing.T) {
 			count := 1015
 			dir := state
 			if kind == "artifact" {
-				count = 19998
+				count = 19999
 				dir = artifacts
 			}
 			nameAt := func(i int) string {

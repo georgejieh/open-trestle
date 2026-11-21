@@ -24,7 +24,6 @@ Routing, policy, provider, and review schemas:
 - `schemas/policy/provider-data-constraints-v1.schema.json`
 - `schemas/provider/model-requirements-v1.schema.json`
 - `schemas/provider/model-capabilities-v1.schema.json`
-- `schemas/provider/route-reference-v1.schema.json`
 - `schemas/provider/route-reference-v2.schema.json`
 - `schemas/provider/route-capability-declaration-v1.schema.json`
 - `schemas/review/model-candidate-batch-v1.schema.json`
@@ -32,25 +31,23 @@ Routing, policy, provider, and review schemas:
 - `schemas/review/model-investigation-output-v1.schema.json`
 - `schemas/review/model-verification-batch-v1.schema.json`
 - `schemas/review/local-git-inspect-result-v1.schema.json`
-- `schemas/review/local-git-change-result-v1.schema.json`
 - `schemas/review/local-git-change-result-v2.schema.json`
-- `schemas/review/local-git-review-result-v1.schema.json`
 - `schemas/review/local-git-review-result-v2.schema.json`
 - `schemas/secret-scanner/secret-scan-request-v1.schema.json`
 - `schemas/secret-scanner/secret-scan-response-v1.schema.json`
 
-Route-reference schema v1 is the historical grammar for untagged models, and its bytes are unchanged. Schema v2 keeps the six-field wire shape and adds one optional final `:tag` in `model_id`. A tagged model ID requires an empty `model_version`. An untagged model ID keeps the existing behavior, which needs a nonempty version selector.
+Route-reference schema v2 allows one optional final `:tag` in `model_id`. A tagged model ID requires an empty `model_version`. An untagged model ID needs a nonempty version selector.
 
-Values that look like `host:port` or like an opaque URI in a tagged ID are inert model text. They never act as an endpoint, a filesystem path or a credential. The runtime inventory and the durable route authorization v1 schemas already bound these fields broadly, and native route validation enforces the stricter grammar. The capability-declaration v1 schema still references the historical route-reference v1 subset. No schema version changes the route identity preimages (the exact bytes that identities are computed from).
+Values that look like `host:port` or like an opaque URI in a tagged ID are inert model text. They never act as an endpoint, a filesystem path or a credential. The runtime inventory and the durable route authorization v1 schemas already bound these fields broadly, and native route validation enforces the stricter grammar. No schema version changes the route identity preimages (the exact bytes that identities are computed from).
 
-Native Go tests exercise the selector semantics. The schema tests check structure and the unchanged v1 bytes, and they do not perform full JSON Schema semantic validation.
+Native Go tests exercise the selector semantics. The schema tests check structure and do not perform full JSON Schema semantic validation.
 
-Candidate batch schema v1 keeps its bytes and is the output schema of recorded generation contexts before version 7. Schema v2 is the output schema of version 7, 8 and 9 generation contexts. In v2, every candidate adds two fields:
+Candidate batch schema v2 is the output schema of generation contexts. Schema v1 is the uncategorized batch that the setup dry run and the model-contract evaluation parse. In v2, every candidate adds two fields:
 
 - A required, closed `category`: `correctness`, `security`, `concurrency`, `performance`, `reliability`, `maintainability`, `style`, `documentation` or `testing`.
 - An optional `fix`, which is nonblank plain text of at most 256 characters. The schema sets this as `maxLength`. The host parser enforces the same 256-character bound plus a 1024-byte UTF-8 wire bound, which 256 characters can never exceed.
 
-Both fields are advisory model output. The fix is never applied and is not verified. At runtime, a candidate whose `source_range` names a `repository_context` source is dropped and counted. From generation context version 8, a candidate may instead be located in a `removed_lines` source, as a base-side finding.
+Both fields are advisory model output. The fix is never applied and is not verified. At runtime, a candidate whose `source_range` names a `repository_context` source is dropped and counted. A candidate may instead be located in a `removed_lines` source, as a base-side finding.
 
 The investigation output schema uses a closed `oneOf`: the output is either a candidate batch or one host-defined snapshot tool call. A valid proposal is not permission to run a tool. Runtime parsing, the retained model response, the source bindings and the policy limits still decide what is accepted.
 
@@ -93,7 +90,7 @@ The `run` member of the API response v1 envelope is the canonical receipt v1, v2
 
 The run-progress response v1 is a separate read-only HTTP envelope with exactly `contract`, `schema_version`, `request_id`, `run` and `progress`. It references the canonical receipt v1, v2 or v3. Its four axes are `change`, `deterministic`, `context` and `verification`. Each axis has a bounded state, an optional immutable artifact identity and only its declared count fields.
 
-The schema inventory contains 124 documents. The native client also validates the scope, the completed-task binding, the output identities other than context, the count equations and the checked-versus-applicable bounds. Schema validation cannot establish artifact lineage or consistency with the receipt head.
+The schema inventory contains 110 documents. The native client also validates the scope, the completed-task binding, the output identities other than context, the count equations and the checked-versus-applicable bounds. Schema validation cannot establish artifact lineage or consistency with the receipt head.
 
 The delivery-refusal response v1 is another read-only envelope, with exactly `contract`, `schema_version`, `request_id` and `refusal`. The `refusal` member is the canonical `open-trestle/webhook-delivery-refusal` v1 record. It describes an accepted webhook delivery that intake refused instead of opening its run. It holds the tenant, repository, source, deduplication key, delivery and planner identities, the reason token and the refusal time. It carries no delivery content. Errors use the api-response envelope.
 
@@ -168,8 +165,6 @@ Artifact schemas:
 - `schemas/artifact/context-abstention-v1.schema.json`
 - `schemas/artifact/sanitized-model-request-v1.schema.json`
 - `schemas/artifact/sanitized-egress-receipt-v1.schema.json` (names the scanner with `build_profile` `public_detect_run_re2_host_go1.26.11_wasip1_wasm_v1`, the same on every system, and `helper_sha256`; a program accepts a receipt only for the helper digest it pins)
-- `schemas/artifact/artifact-deletion-authorization-v1.schema.json`
-- `schemas/artifact/artifact-deletion-receipt-v1.schema.json`
 - `schemas/artifact/source-acquisition-input-v1.schema.json`
 - `schemas/artifact/source-acquisition-input-v2.schema.json`
 - `schemas/artifact/source-acquisition-input-v3.schema.json`
@@ -177,17 +172,12 @@ Artifact schemas:
 - `schemas/artifact/source-snapshot-v1.schema.json`
 - `schemas/artifact/source-snapshot-v2.schema.json`
 - `schemas/artifact/change-model-result-v1.schema.json`
-- `schemas/artifact/deterministic-evidence-result-v1.schema.json`
-- `schemas/artifact/deterministic-evidence-result-v2.schema.json`
-- `schemas/artifact/deterministic-evidence-result-v3.schema.json`
 - `schemas/artifact/deterministic-evidence-result-v4.schema.json`
 - `schemas/artifact/deterministic-evidence-result-v5.schema.json`
 - `schemas/artifact/deterministic-evidence-result-v6.schema.json`
 - `schemas/artifact/deterministic-evidence-result-v7.schema.json`
-- `schemas/artifact/semantic-impact-profile-v1.schema.json`
 - `schemas/artifact/semantic-impact-profile-v2.schema.json`
 - `schemas/artifact/memory-retrieval-result-v1.schema.json`
-- `schemas/artifact/publication-readiness-result-v1.schema.json`
 - `schemas/artifact/publication-readiness-result-v2.schema.json`
 - `schemas/artifact/publication-content-scan-receipt-v1.schema.json` (names the scanner the same way, with `build_profile` and `helper_sha256`)
 - `schemas/artifact/publication-input-v1.schema.json`
@@ -328,10 +318,6 @@ Setup schemas:
 
 Diagnostic schemas:
 
-- `schemas/diagnostics/verified-diagnostic-set-v1.schema.json`
-- `schemas/diagnostics/verified-diagnostic-set-v2.schema.json`
-- `schemas/diagnostics/verified-diagnostic-set-v3.schema.json`
-- `schemas/diagnostics/verified-diagnostic-set-v4.schema.json`
 - `schemas/diagnostics/verified-diagnostic-set-v5.schema.json`
 - `schemas/diagnostics/deterministic-diagnostic-set-v6.schema.json`
 - `schemas/diagnostics/full-review-diagnostic-set-v7.schema.json`

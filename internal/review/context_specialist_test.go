@@ -105,11 +105,11 @@ func TestContextSpecialistEncodesVersionEightAndRoundTrips(t *testing.T) {
 		t.Fatal(err)
 	}
 	instructions, err := TrustedModelRequestInstructions(payload)
-	wantInstructions := candidateOutputInstructionsV11 + "\n\nSpecialist review guidance (operator-packaged profile bug_hunter, shipped with Open Trestle):\n" + packet.Specialist().Instructions()
-	if baseInstructions, baseErr := TrustedModelRequestInstructions(baseRequest.Payload()); err != nil || baseErr != nil || instructions != wantInstructions || baseInstructions != candidateOutputInstructionsV11 {
+	wantInstructions := candidateOutputInstructions + "\n\nSpecialist review guidance (operator-packaged profile bug_hunter, shipped with Open Trestle):\n" + packet.Specialist().Instructions()
+	if baseInstructions, baseErr := TrustedModelRequestInstructions(baseRequest.Payload()); err != nil || baseErr != nil || instructions != wantInstructions || baseInstructions != candidateOutputInstructions {
 		t.Fatal("version 7 system channel is not the host contract plus the catalog-exact skill text")
 	}
-	if string(fields["instructions_identity"]) != `"`+modelInstructionsIdentity(candidateOutputInstructionsV11)+`"` {
+	if string(fields["instructions_identity"]) != `"`+modelInstructionsIdentity(candidateOutputInstructions)+`"` {
 		t.Fatal("version 7 payload does not bind the host contract by instructions_identity")
 	}
 	if schema, err := TrustedModelRequestOutputSchema(payload); err != nil || !bytes.Equal(schema, fields["output_schema"]) {
@@ -174,11 +174,10 @@ func TestContextSpecialistReadbackRejectsTamperedBlocks(t *testing.T) {
 			mustJSON(candidateOutputInstructions)),
 		"version seven instructions on version six":  replaceModelContractField(t, payload, "schema_version", json.RawMessage("6")),
 		"version five instructions on version seven": replaceModelContractField(t, payload, "instructions", mustJSON(candidateOutputInstructions)),
-		"host prose copied into version eight":       replaceModelContractField(t, payload, "instructions", mustJSON(candidateOutputInstructionsV11)),
+		"host prose copied into version eight":       replaceModelContractField(t, payload, "instructions", mustJSON(candidateOutputInstructions)),
 		"altered instructions identity":              replaceModelContractField(t, payload, "instructions_identity", mustJSON(strings.Repeat("a", 64))),
 		"missing instructions identity":              replaceModelContractField(t, payload, "instructions_identity", nil),
 		"plain version seven as version six":         replaceModelContractField(t, baseRequest.Payload(), "schema_version", json.RawMessage("6")),
-		"version one schema on version seven":        replaceModelContractField(t, payload, "output_schema_identity", mustJSON(ModelCandidateBatchV1SchemaIdentity)),
 		"unknown specialist field":                   replaceModelContractField(t, payload, "specialist", withField("extra", "true")),
 	}
 	for name, tampered := range cases {
@@ -189,7 +188,7 @@ func TestContextSpecialistReadbackRejectsTamperedBlocks(t *testing.T) {
 			if err := validateSpecialistPayload(packet, snapshot, tampered); !errors.Is(err, ErrInvalidContextPacketRequest) {
 				t.Fatalf("tampered context accepted: %v", err)
 			}
-			if err := ValidateRecordedContextPacketRequest(tampered, modelContractDigest(tampered), packet.ReviewScopeIdentity(), packet.MemoryScopeIdentity(), packet.MemoryIdentity(), snapshot, packet.EvidenceItems()); !errors.Is(err, ErrInvalidContextPacketRequest) {
+			if err := ValidateContextPacketRequest(tampered, modelContractDigest(tampered), packet.ReviewScopeIdentity(), packet.MemoryScopeIdentity(), packet.MemoryIdentity(), snapshot, packet.EvidenceItems()); !errors.Is(err, ErrInvalidContextPacketRequest) {
 				t.Fatalf("tampered context accepted for readback: %v", err)
 			}
 			tamperedRequest, err := provider.NewRequest(provider.CapabilityReviewV1, "application/json", tampered)
@@ -245,11 +244,8 @@ func TestVerificationOfSpecialistContextIsVersionSevenWithoutSpecialist(t *testi
 	if err := ValidateVerificationModelRequest(verification, packet.ReviewScopeIdentity()); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := modelOutputContractForVersion(modelGenerationContextVersion, true); err == nil {
-		t.Fatal("version 8 verification contract exists")
-	}
 	instructions, err := TrustedModelRequestInstructions(verification.Payload())
-	if err != nil || instructions != verificationOutputInstructionsV10 {
+	if err != nil || instructions != verificationOutputInstructions {
 		t.Fatal("verifier instructions changed for a specialist generation")
 	}
 }

@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"os"
 	"strings"
 
@@ -73,33 +72,12 @@ func inspectRestoredStoreLeaves(ctx context.Context, stateRoot, artifactRoot, di
 			}
 			continue
 		}
-		if strings.HasSuffix(leaf, ".artifact-deleted.json") {
-			prefix, ok := strings.CutSuffix(leaf, ".artifact-deleted.json")
-			if !ok || len(prefix) != 129 || prefix[64] != '-' {
-				return errRestoreObservationMismatch
-			}
-			scope, known := scopes[prefix[:64]]
-			if !known {
-				return errRestoreObservationMismatch
-			}
-			value, completed, err := artifact.ObserveFileDeletion(ctx, root, scope, prefix[65:])
-			if err != nil {
-				return err
-			}
-			if !completed {
-				return errRestoreObservationMismatch
-			}
-			if _, err := artifact.ObserveFileArtifact(ctx, root, scope, value.ArtifactIdentity()); !errors.Is(err, artifact.ErrArtifactNotFound) {
-				return errors.Join(errRestoreObservationMismatch, err)
-			}
-		} else {
-			value, err := artifact.Parse(raw)
-			if err != nil {
-				return err
-			}
-			if _, known := scopes[value.Scope().Identity()]; !known || leaf != value.Scope().Identity()+"-"+value.Identity()+".artifact.json" {
-				return errRestoreObservationMismatch
-			}
+		value, err := artifact.Parse(raw)
+		if err != nil {
+			return err
+		}
+		if _, known := scopes[value.Scope().Identity()]; !known || leaf != value.Scope().Identity()+"-"+value.Identity()+".artifact.json" {
+			return errRestoreObservationMismatch
 		}
 	}
 	return nil

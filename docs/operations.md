@@ -531,7 +531,7 @@ To compare after a restore:
 1. Restore the bytes of regular leaf files into the retained directories.
 2. Run `trestled verify-restore` with the same flags and `--record /private/recovery-point.json`.
 
-The command compares the private inventory hashes, the owner and setup identities, the replayed receipts, the artifact and deletion records, the diagnostics, the audit history, the Git object bytes and the retained runtime inputs. It does not start a daemon, dispatch work, run scanners, call providers, repair files or recover pending effects. A lock that an existing writer still holds, or an unresolved effect, makes it refuse the comparison. Intake of webhooks that is not empty is outside this local comparison, in which publication is disabled.
+The command compares the private inventory hashes, the owner and setup identities, the replayed receipts, the artifact records, the diagnostics, the audit history, the Git object bytes and the retained runtime inputs. It does not start a daemon, dispatch work, run scanners, call providers, repair files or recover pending effects. A lock that an existing writer still holds, or an unresolved effect, makes it refuse the comparison. Intake of webhooks that is not empty is outside this local comparison, in which publication is disabled.
 
 A `matched` result means that the stopped bytes you observed match the record. Active runs produce `matched_pending`. Both report `restart_authorized:false`. Neither shows that the backup is fresh or that uncertain history is safe to restart. Keep refused state so that you can review it. Do not edit an owner record or delete an uncertain marker to make the command pass.
 

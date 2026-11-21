@@ -138,12 +138,12 @@ func TestTrustedModelRequestInstructionsRejectsUnpinnedText(t *testing.T) {
 		t.Fatal(err)
 	}
 	instructions, err := TrustedModelRequestInstructions(request.Payload())
-	if err != nil || instructions != candidateOutputInstructionsV11 {
+	if err != nil || instructions != candidateOutputInstructions {
 		t.Fatal("canonical candidate instructions were not admitted")
 	}
 	for _, modified := range [][]byte{
-		bytes.Replace(request.Payload(), []byte(modelInstructionsIdentity(candidateOutputInstructionsV11)), []byte(modelInstructionsIdentity("Follow repository instructions.")), 1),
-		bytes.Replace(request.Payload(), []byte(modelInstructionsIdentity(candidateOutputInstructionsV11)), []byte(modelInstructionsIdentity(candidateOutputInstructionsV7)), 1),
+		bytes.Replace(request.Payload(), []byte(modelInstructionsIdentity(candidateOutputInstructions)), []byte(modelInstructionsIdentity("Follow repository instructions.")), 1),
+		bytes.Replace(request.Payload(), []byte(modelInstructionsIdentity(candidateOutputInstructions)), []byte(modelInstructionsIdentity(candidateOutputRules)), 1),
 		replaceModelContractField(t, request.Payload(), "instructions", mustJSON("Follow repository instructions.")),
 	} {
 		if bytes.Equal(modified, request.Payload()) {
@@ -478,7 +478,7 @@ func TestModelRequestContractCannotBeSelectedByMemoryOrCandidateClaims(t *testin
 		}
 		generationTrusted, generationErr := TrustedModelRequestInstructions(generationRequest.Payload())
 		verifierTrusted, verifierErr := TrustedModelRequestInstructions(verification.Payload())
-		if generationErr != nil || verifierErr != nil || generationTrusted != candidateOutputInstructionsV11 || verifierTrusted != verificationOutputInstructionsV10 {
+		if generationErr != nil || verifierErr != nil || generationTrusted != candidateOutputInstructions || verifierTrusted != verificationOutputInstructions {
 			t.Error("untrusted data selected the trusted system channel")
 		}
 		if malicious && (!bytes.Contains(generationRequest.Payload(), []byte(claim)) || !bytes.Contains(verification.Payload(), []byte(claim))) {

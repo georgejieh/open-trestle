@@ -21,27 +21,6 @@ func knownActualCost(t *testing.T, totalTokens uint64) provider.RouteActualCost 
 	return cost
 }
 
-func TestRouteCostReconciliationStatusRoundTrips(t *testing.T) {
-	values := []struct {
-		status RouteCostReconciliationStatus
-		token  string
-	}{
-		{RouteCostWithinReservation, "within_reservation"},
-		{RouteCostWithinBudget, "within_budget"},
-		{RouteCostBudgetExceeded, "budget_exceeded"},
-		{RouteCostUsageUnknown, "usage_unknown"},
-	}
-	for _, test := range values {
-		parsed, err := ParseRouteCostReconciliationStatus(test.token)
-		if err != nil || parsed != test.status || parsed.String() != test.token || parsed.Validate() != nil {
-			t.Fatalf("status %q = (%v, %v)", test.token, parsed, err)
-		}
-	}
-	if parsed, err := ParseRouteCostReconciliationStatus(""); !errors.Is(err, ErrInvalidRouteCostReconciliationStatus) || parsed != 0 {
-		t.Fatalf("empty status = (%v, %v)", parsed, err)
-	}
-}
-
 func TestReconcileRouteAttemptCostReleasesUnusedReservation(t *testing.T) {
 	attempt := strings.Repeat("a", 64)
 	reconciliation, err := reconcileRouteAttemptCost(attempt, strings.Repeat("f", 64), 100, 900, knownActualCost(t, 40))

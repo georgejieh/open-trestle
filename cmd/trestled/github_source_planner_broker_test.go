@@ -323,7 +323,7 @@ func TestPlannerBrokerBoundaryMountedPreparedSource(t *testing.T) {
 	t.Run("broker", func(t *testing.T) {
 		root := plannerBrokerBoundaryRoot(t)
 		path, authority := writeProtectedBrokerDescriptor(t, root, f)
-		environment := &plannerBrokerBoundaryEnvironment{values: map[string]string{"OPEN_TRESTLE_API_TOKEN": daemonFixtureOperator, "OPEN_TRESTLE_GITHUB_WEBHOOK_SECRET": daemonFixtureWebhook, "OPEN_TRESTLE_GITHUB_SOURCE_BROKER_CONFIG": path, "OPEN_TRESTLE_GITHUB_APP_PRIVATE_KEY": string(f.pem), "OPEN_TRESTLE_GITHUB_SETUP_TOKEN": daemonFixtureSetup, "OPEN_TRESTLE_GITHUB_PUBLICATION_TOKEN": daemonFixturePublication}, reads: map[string]int{}}
+		environment := &plannerBrokerBoundaryEnvironment{values: map[string]string{"OPEN_TRESTLE_API_TOKEN": daemonFixtureOperator, "OPEN_TRESTLE_GITHUB_WEBHOOK_SECRET": daemonFixtureWebhook, "OPEN_TRESTLE_GITHUB_SOURCE_BROKER_CONFIG": path, "OPEN_TRESTLE_GITHUB_APP_PRIVATE_KEY": string(f.pem), "OPEN_TRESTLE_GITHUB_PUBLICATION_TOKEN": daemonFixturePublication}, reads: map[string]int{}}
 		args := append(plannerBrokerBoundaryArgs(root), "--approve-github-source-broker-authority-identity", authority)
 		wrongArgs := append([]string(nil), args...)
 		for index := range wrongArgs {

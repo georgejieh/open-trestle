@@ -207,7 +207,6 @@ Writes the protected configuration for a local or remote first review.
 | `config inventory-identity` | `--route-inventory` |
 | `config models refresh` | `--sources`, `--current`, `--proposal`, `--allow-remote` |
 | `config models apply` | `--sources`, `--current`, `--proposal`, `--expected-proposal`, `--expected-current` |
-| `config codex-session status` | none |
 
 ### `trestle admin`
 

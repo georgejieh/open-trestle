@@ -1,8 +1,6 @@
 package review
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -86,21 +84,6 @@ func TestParseRecordedContextBindsCanonicalHeadSnapshot(t *testing.T) {
 	}
 	if _, err := ParseRecordedContext(append(request.Payload(), ' '), scope, head); err == nil {
 		t.Fatal("noncanonical packet accepted")
-	}
-	for _, version := range []int{2, 3, 5} {
-		legacy, _ := decodeGenerationContextWire(request.Payload())
-		legacy = legacyGenerationWire(t, legacy, version)
-		legacyPayload, _ := json.Marshal(legacy)
-		legacyResult, err := ParseRecordedContext(legacyPayload, scope, head)
-		sum := sha256.Sum256(legacyPayload)
-		if err != nil || legacyResult.Identity() != hex.EncodeToString(sum[:]) || legacyResult.Analyzed() != 173 || legacyResult.Selected() != 1 || legacyResult.Omitted() != 172 {
-			t.Fatalf("v%d recorded readback: %v", version, err)
-		}
-		legacy.Sources[0].Content = "tamper"
-		tampered, _ := json.Marshal(legacy)
-		if _, err := ParseRecordedContext(tampered, scope, head); err == nil {
-			t.Fatalf("v%d recorded source tampering accepted", version)
-		}
 	}
 }
 

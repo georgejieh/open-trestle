@@ -21,7 +21,7 @@ func mustDiagnosticSet(t *testing.T, runID string, findings []Finding) Set {
 	if err != nil {
 		t.Fatal(err)
 	}
-	set, err := NewSet(scope, strings.Repeat("d", 64), strings.Repeat("1", 40), strings.Repeat("e", 64), findings)
+	set, err := verifiedTestSet(t, scope, findings)
 	if err != nil {
 		t.Fatal(err)
 	}

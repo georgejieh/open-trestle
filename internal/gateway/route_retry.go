@@ -229,16 +229,6 @@ func (r RouteRetryReason) String() string {
 	}
 }
 
-// ParseRouteRetryReason parses one exact stable decision token.
-func ParseRouteRetryReason(value string) (RouteRetryReason, error) {
-	for candidate := RouteRetryTransientFailure; candidate <= RouteRetryAfterTooLong; candidate++ {
-		if candidate.String() == value {
-			return candidate, nil
-		}
-	}
-	return 0, fmt.Errorf("parse route retry reason: %w", ErrInvalidRouteRetryReason)
-}
-
 // Validate verifies that the retry reason is recognized.
 func (r RouteRetryReason) Validate() error {
 	if r.String() == "" {

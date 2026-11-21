@@ -12,17 +12,10 @@ import (
 	"strings"
 )
 
-// goGraphSchema records declaration differences only. Version 1 also
-// recorded name-matched reference candidates; it is read back, never made.
-const (
-	goGraphSchema   = "open-trestle/semantic-impact/go-ast-graph/v2"
-	goGraphSchemaV1 = "open-trestle/semantic-impact/go-ast-graph/v1"
-)
+// goGraphSchema records declaration differences only.
+const goGraphSchema = "open-trestle/semantic-impact/go-ast-graph/v2"
 
-var (
-	goAdapterIdentity   = hashJSON(struct{ Implementation, Version, Graph string }{"go/parser", "1", goGraphSchema})
-	goAdapterIdentityV1 = hashJSON(struct{ Implementation, Version, Graph string }{"go/parser", "1", goGraphSchemaV1})
-)
+var goAdapterIdentity = hashJSON(struct{ Implementation, Version, Graph string }{"go/parser", "1", goGraphSchema})
 
 type rawDeclaration struct {
 	key, name, kind                string

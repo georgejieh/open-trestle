@@ -240,7 +240,7 @@ func TestLocalGitFeedbackRejectsAmbiguousCanonicalFindingSelection(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ambiguous, err := diagnostics.NewSetWithSourceCoverage(set.Scope(), set.SnapshotIdentity(), set.HeadRevision(), set.VerifiedSetIdentity(), set.VerificationContextIdentity(), set.CandidateCount()+1, set.RejectedCount(), set.InconclusiveCount(), set.SourceAnalyzedCount(), set.SourceSelectedCount(), set.SourceOmittedCount(), []diagnostics.Finding{first, second})
+	ambiguous, err := diagnostics.NewSetWithDeterministicChecks(set.Scope(), set.SnapshotIdentity(), set.HeadRevision(), set.VerifiedSetIdentity(), set.VerificationContextIdentity(), set.CandidateCount()+1, set.RejectedCount(), set.InconclusiveCount(), set.SourceAnalyzedCount(), set.SourceSelectedCount(), set.SourceOmittedCount(), set.OmissionSummaries(), set.DeterministicChecks(), []diagnostics.Finding{first, second})
 	if err != nil {
 		t.Fatal(err)
 	}

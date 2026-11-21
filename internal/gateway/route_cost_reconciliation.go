@@ -46,16 +46,6 @@ func (s RouteCostReconciliationStatus) String() string {
 	}
 }
 
-// ParseRouteCostReconciliationStatus parses one exact stable accounting token.
-func ParseRouteCostReconciliationStatus(value string) (RouteCostReconciliationStatus, error) {
-	for candidate := RouteCostWithinReservation; candidate <= RouteCostUsageUnknown; candidate++ {
-		if candidate.String() == value {
-			return candidate, nil
-		}
-	}
-	return 0, fmt.Errorf("parse route cost reconciliation status: %w", ErrInvalidRouteCostReconciliationStatus)
-}
-
 // Validate verifies that the accounting status is recognized.
 func (s RouteCostReconciliationStatus) Validate() error {
 	if s.String() == "" {

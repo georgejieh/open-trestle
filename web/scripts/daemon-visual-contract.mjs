@@ -53,14 +53,6 @@ function canonicalConfiguration(configuration, scope) {
     Array.isArray(configuration)
   )
     throw new Error("invalid runtime configuration");
-  const hasDatabase = Object.hasOwn(
-    configuration,
-    "database_authority_identity",
-  );
-  const hasRateLimit = Object.hasOwn(
-    configuration,
-    "rate_limit_authority_identity",
-  );
   const hasRoutes =
     Object.hasOwn(configuration, "route_inventory_identity") ||
     Object.hasOwn(configuration, "runtime_policy_identity");
@@ -68,12 +60,10 @@ function canonicalConfiguration(configuration, scope) {
     "tenant_id",
     "repository_ids",
     "metadata_backend",
-    ...(hasDatabase ? ["database_authority_identity"] : []),
     "artifact_backend",
     "artifact_protection",
     "notification_backend",
     "rate_limit_backend",
-    ...(hasRateLimit ? ["rate_limit_authority_identity"] : []),
     "review_mode",
     "webhook_ingress",
     "local_workers",
@@ -94,15 +84,11 @@ function canonicalConfiguration(configuration, scope) {
     !Array.isArray(configuration.repository_ids) ||
     configuration.repository_ids.length !== 1 ||
     configuration.repository_ids[0] !== scope.repository ||
-    !["local", "postgres"].includes(configuration.metadata_backend) ||
-    !["local", "s3"].includes(configuration.artifact_backend) ||
-    !["process_private", "envelope_encrypted"].includes(
-      configuration.artifact_protection,
-    ) ||
-    !["process_local", "postgres"].includes(
-      configuration.notification_backend,
-    ) ||
-    !["process_local", "postgres"].includes(configuration.rate_limit_backend) ||
+    configuration.metadata_backend !== "local" ||
+    configuration.artifact_backend !== "local" ||
+    configuration.artifact_protection !== "process_private" ||
+    configuration.notification_backend !== "process_local" ||
+    configuration.rate_limit_backend !== "process_local" ||
     !["disabled", "local", "advisory", "required"].includes(
       configuration.review_mode,
     ) ||
@@ -119,12 +105,7 @@ function canonicalConfiguration(configuration, scope) {
   )
     throw new Error("invalid runtime configuration");
   if (
-    hasDatabase !== (configuration.metadata_backend === "postgres") ||
-    hasRateLimit !== (configuration.rate_limit_backend === "postgres") ||
     hasRoutes !== configuration.route_count > 0 ||
-    (hasDatabase && !validDigest(configuration.database_authority_identity)) ||
-    (hasRateLimit &&
-      !validDigest(configuration.rate_limit_authority_identity)) ||
     (hasRoutes &&
       (!validDigest(configuration.route_inventory_identity) ||
         !validDigest(configuration.runtime_policy_identity))) ||
@@ -138,24 +119,7 @@ function canonicalConfiguration(configuration, scope) {
       (configuration.review_mode === "required") ||
     (configuration.publication_enabled &&
       !configuration.publication_fence_verified) ||
-    (configuration.publication_fence_verified &&
-      configuration.metadata_backend !== "postgres") ||
-    (configuration.metadata_backend === "local" &&
-      (configuration.artifact_backend !== "local" ||
-        configuration.artifact_protection !== "process_private" ||
-        configuration.notification_backend !== "process_local" ||
-        configuration.rate_limit_backend !== "process_local")) ||
-    (configuration.artifact_backend === "local" &&
-      configuration.artifact_protection !== "process_private") ||
-    (configuration.artifact_backend === "s3" &&
-      (configuration.metadata_backend !== "postgres" ||
-        configuration.artifact_protection !== "envelope_encrypted")) ||
-    (configuration.notification_backend === "postgres" &&
-      configuration.metadata_backend !== "postgres") ||
-    (configuration.rate_limit_backend === "postgres" &&
-      configuration.metadata_backend !== "postgres") ||
-    (configuration.metadata_backend === "postgres" &&
-      configuration.rate_limit_backend !== "postgres")
+    configuration.publication_fence_verified
   )
     throw new Error("invalid runtime configuration");
   let previous = "";
@@ -173,22 +137,10 @@ function canonicalConfiguration(configuration, scope) {
     tenant_id: configuration.tenant_id,
     repository_ids: [...configuration.repository_ids],
     metadata_backend: configuration.metadata_backend,
-    ...(hasDatabase
-      ? {
-          database_authority_identity:
-            configuration.database_authority_identity,
-        }
-      : {}),
     artifact_backend: configuration.artifact_backend,
     artifact_protection: configuration.artifact_protection,
     notification_backend: configuration.notification_backend,
     rate_limit_backend: configuration.rate_limit_backend,
-    ...(hasRateLimit
-      ? {
-          rate_limit_authority_identity:
-            configuration.rate_limit_authority_identity,
-        }
-      : {}),
     review_mode: configuration.review_mode,
     webhook_ingress: configuration.webhook_ingress,
     local_workers: configuration.local_workers,

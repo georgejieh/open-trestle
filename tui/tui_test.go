@@ -86,7 +86,7 @@ func TestRunKeepsTaskHeaderWithinMinimumWidth(t *testing.T) {
 func TestRunRendersDiagnosticVerificationCoverage(t *testing.T) {
 	service, scope := tuiFixture(t)
 	finding := service.set.Findings()[0]
-	set, err := diagnostics.NewSetWithCoverage(scope, service.set.SnapshotIdentity(), service.set.HeadRevision(), service.set.VerifiedSetIdentity(), 3, 1, 1, []diagnostics.Finding{finding})
+	set, err := diagnostics.NewSetWithDeterministicChecks(scope, service.set.SnapshotIdentity(), service.set.HeadRevision(), service.set.VerifiedSetIdentity(), strings.Repeat("f", 64), 3, 1, 1, 1, 1, 0, nil, service.set.DeterministicChecks(), []diagnostics.Finding{finding})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,8 @@ func TestRunRendersDiagnosticVerificationCoverage(t *testing.T) {
 func TestRunRendersIncompleteDiagnosticSourceCoverage(t *testing.T) {
 	service, scope := tuiFixture(t)
 	finding := service.set.Findings()[0]
-	set, err := diagnostics.NewSetWithSourceCoverage(scope, service.set.SnapshotIdentity(), service.set.HeadRevision(), service.set.VerifiedSetIdentity(), strings.Repeat("f", 64), 3, 1, 1, 173, 1, 172, []diagnostics.Finding{finding})
+	selection, _ := diagnostics.NewOmissionSummary(diagnostics.OmissionSelectionLimit, 172)
+	set, err := diagnostics.NewSetWithDeterministicChecks(scope, service.set.SnapshotIdentity(), service.set.HeadRevision(), service.set.VerifiedSetIdentity(), strings.Repeat("f", 64), 3, 1, 1, 173, 1, 172, []diagnostics.OmissionSummary{selection}, service.set.DeterministicChecks(), []diagnostics.Finding{finding})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +129,7 @@ func TestRunRendersDiagnosticOmissionReasons(t *testing.T) {
 	finding := service.set.Findings()[0]
 	unsupported, _ := diagnostics.NewOmissionSummary(diagnostics.OmissionUnsupported, 2)
 	selection, _ := diagnostics.NewOmissionSummary(diagnostics.OmissionSelectionLimit, 170)
-	set, err := diagnostics.NewSetWithOmissionReasons(scope, service.set.SnapshotIdentity(), service.set.HeadRevision(), service.set.VerifiedSetIdentity(), strings.Repeat("f", 64), 3, 1, 1, 173, 1, 172, []diagnostics.OmissionSummary{unsupported, selection}, []diagnostics.Finding{finding})
+	set, err := diagnostics.NewSetWithDeterministicChecks(scope, service.set.SnapshotIdentity(), service.set.HeadRevision(), service.set.VerifiedSetIdentity(), strings.Repeat("f", 64), 3, 1, 1, 173, 1, 172, []diagnostics.OmissionSummary{unsupported, selection}, service.set.DeterministicChecks(), []diagnostics.Finding{finding})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +196,7 @@ func TestRunRendersDeterministicCheckOutcomes(t *testing.T) {
 func TestRunOmitsEmptyDiagnosticOmissionReasons(t *testing.T) {
 	service, scope := tuiFixture(t)
 	finding := service.set.Findings()[0]
-	set, err := diagnostics.NewSetWithOmissionReasons(scope, service.set.SnapshotIdentity(), service.set.HeadRevision(), service.set.VerifiedSetIdentity(), strings.Repeat("f", 64), 1, 0, 0, 1, 1, 0, nil, []diagnostics.Finding{finding})
+	set, err := diagnostics.NewSetWithDeterministicChecks(scope, service.set.SnapshotIdentity(), service.set.HeadRevision(), service.set.VerifiedSetIdentity(), strings.Repeat("f", 64), 1, 0, 0, 1, 1, 0, nil, service.set.DeterministicChecks(), []diagnostics.Finding{finding})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,7 +253,8 @@ func tuiFixture(t *testing.T) (*fakeService, audit.ReviewScope) {
 	state, _ := controlplane.ReplayReviewRun(plan, []controlplane.RunEvent{opened, available})
 	receipt, _ := controlplane.NewReviewRunReceipt(state)
 	finding, _ := diagnostics.NewFinding(strings.Repeat("e", 64), strings.Repeat("f", 64), "Avoid unchecked result", "This output must remain visibly untrusted.", diagnostics.SeverityWarning, "src/main.go", 7, 8, []string{"evidence:one"})
-	set, _ := diagnostics.NewSet(scope, strings.Repeat("1", 64), strings.Repeat("2", 40), strings.Repeat("3", 64), []diagnostics.Finding{finding})
+	check, _ := diagnostics.NewDeterministicCheck("3f01f93e51003eb3a0deca04719a3957d6e367c97c33bdfea105174d95698092", strings.Repeat("8", 64), strings.Repeat("7", 64), diagnostics.CheckPassed, 1, 2, 1, 2, 0)
+	set, _ := diagnostics.NewSetWithDeterministicChecks(scope, strings.Repeat("1", 64), strings.Repeat("2", 40), strings.Repeat("3", 64), strings.Repeat("4", 64), 1, 0, 0, 1, 1, 0, nil, []diagnostics.DeterministicCheck{check}, []diagnostics.Finding{finding})
 	return &fakeService{receipt: receipt, set: set}, scope
 }
 

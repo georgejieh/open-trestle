@@ -11,7 +11,7 @@
   ],
   "properties": {
     "route_reference": {
-      "$ref": "urn:open-trestle:schema:provider:route-reference:v1"
+      "$ref": "urn:open-trestle:schema:provider:route-reference:v2"
     },
     "model_capabilities": {
       "description": "Trusted runtime validation must also enforce every semantic invariant documented by the referenced capability schema.",

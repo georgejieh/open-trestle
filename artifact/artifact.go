@@ -7,12 +7,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/georgejieh/open-trestle/audit"
 	"mime"
 	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/georgejieh/open-trestle/audit"
 )
 
 const (
@@ -311,3 +312,13 @@ func hashBytes(value []byte) string {
 	return hex.EncodeToString(digest[:])
 }
 func hashValue(value any) string { encoded, _ := json.Marshal(value); return hashBytes(encoded) }
+
+func writeRedacted(state fmt.State, verb rune, plain, syntax string) {
+	value := plain
+	if verb == 'q' {
+		value = fmt.Sprintf("%q", plain)
+	} else if verb == 'v' && state.Flag('#') {
+		value = syntax
+	}
+	_, _ = state.Write([]byte(value))
+}

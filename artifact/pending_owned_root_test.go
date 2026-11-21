@@ -1,14 +1,13 @@
 package artifact
 
 import (
-	"context"
 	"errors"
-	"github.com/georgejieh/open-trestle/audit"
-	"github.com/georgejieh/open-trestle/internal/fileauthority"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/georgejieh/open-trestle/internal/fileauthority"
 )
 
 func pendingOwnedFixture(t *testing.T) (*PendingFileStore, string) {
@@ -337,42 +336,5 @@ func TestPendingFileStoreOwnedRootJoinsCallbackPostcheckAndClose(t *testing.T) {
 	}
 	if err := pending.WithOwnedRoot(func(*os.Root) error { return nil }); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestFileStoreRetentionLegacyImmediatePreparedDeletion(t *testing.T) {
-	scope, err := audit.NewReviewScope("tenant-a", "repo-a", "run-owned-root-legacy")
-	if err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(t.TempDir(), "artifacts")
-	store, err := NewFileStore(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	value := artifactFixture(t, scope, `{"retention":true}`)
-	if _, err := store.Put(context.Background(), value, time.UnixMilli(200)); err != nil {
-		t.Fatal(err)
-	}
-	authorization := deletionAuthorizationFixture(t, scope, value.Identity(), DeletionExpired, time.UnixMilli(1000))
-	receipt := newDeletionReceipt(value, authorization, time.UnixMilli(1000))
-	prepared, err := encodeDeletionRecord(receipt, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.persist(store.deletionPath(scope, value.Identity()), prepared); err != nil {
-		t.Fatal(err)
-	}
-	payload := store.artifactPath(scope, value.Identity())
-	if err := store.Close(); err != nil {
-		t.Fatal(err)
-	}
-	legacy, err := NewFileStore(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer legacy.Close()
-	if _, err := os.Lstat(payload); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("legacy recovery did not remove payload: %v", err)
 	}
 }

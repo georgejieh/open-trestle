@@ -81,7 +81,7 @@ type daemon struct {
 	journal                controlplane.RunJournal
 	inboxStore             webhook.Store
 	diagnosticStore        diagnostics.Store
-	artifactStore          artifact.RetentionStore
+	artifactStore          artifact.Store
 	supervisors            []daemonSupervisor
 	supervisorNames        []string
 	closers                []io.Closer
@@ -194,13 +194,9 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 	githubSourceBrokerConfigPath := getenv("OPEN_TRESTLE_GITHUB_SOURCE_BROKER_CONFIG")
 	githubConfigured := len(githubSecret) != 0 || *githubRepository != "" || *githubKeyID != ""
 	if githubConfigured {
-		githubSetupToken := getenv("OPEN_TRESTLE_GITHUB_SETUP_TOKEN")
-		setupServiceToken := getenv("OPEN_TRESTLE_SETUP_TOKEN")
 		githubScope, scopeErr := webhook.NewRepositoryScope(*tenantID, *githubRepository)
 		_, verifierErr := githubwebhook.VerifierConfigurationIdentity(githubScope, *githubKeyID)
-		invalid := githubwebhook.ValidateRuntimeSecret(githubSecret) != nil || *githubRepository == "" || scopeErr != nil || verifierErr != nil || !containsRepository(repositories, *githubRepository) || sameDaemonCredential(githubSecret, credential) || sameDaemonCredential(githubSecret, observerCredential) || sameDaemonCredential(githubSecret, githubAPIToken) || sameDaemonCredential(githubSecret, githubSetupToken) || sameDaemonCredential(githubSecret, setupServiceToken)
-		githubSetupToken = ""
-		setupServiceToken = ""
+		invalid := githubwebhook.ValidateRuntimeSecret(githubSecret) != nil || *githubRepository == "" || scopeErr != nil || verifierErr != nil || !containsRepository(repositories, *githubRepository) || sameDaemonCredential(githubSecret, credential) || sameDaemonCredential(githubSecret, observerCredential) || sameDaemonCredential(githubSecret, githubAPIToken)
 		if invalid {
 			return nil, ErrInvalidDaemonConfiguration
 		}
@@ -339,7 +335,7 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 	}
 	var journal controlplane.RunJournal
 	var packetOwner *localPacketOwner
-	var artifactStore artifact.RetentionStore
+	var artifactStore artifact.Store
 	artifactProtection := artifact.ProtectionProcessPrivate
 	active, fileJournal, bootOwner, gateErr := startLocalSourceOwnerGateWithAuthority(ctx, resources, *stateDirectory, *setupState, &localSetupPlan, *tenantID, repositories[0], localRepository, localObjectsRoot, localObjectStore, localSourceAdapter, localRootDigest, daemonArtifactClock, generationStartup, nil)
 	if gateErr != nil {

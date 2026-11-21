@@ -1,13 +1,16 @@
 package publication
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
+	"sort"
+	"time"
+
 	"github.com/georgejieh/open-trestle/artifact"
 	"github.com/georgejieh/open-trestle/controlplane"
 	"github.com/georgejieh/open-trestle/diagnostics"
@@ -16,10 +19,6 @@ import (
 	modelhandler "github.com/georgejieh/open-trestle/handlers/model"
 	"github.com/georgejieh/open-trestle/internal/review"
 	"github.com/georgejieh/open-trestle/internal/secretscan"
-	"io"
-	"reflect"
-	"sort"
-	"time"
 )
 
 const maximumReadinessBytes = 64 << 10
@@ -138,16 +137,15 @@ func deriveHandlerIdentity(reviewPolicy, publicationPolicy, contentScanner strin
 }
 
 type Result struct {
-	identity, artifactIdentity, verificationArtifactIdentity, verificationResultIdentity, publicationPolicyIdentity, readinessIdentity string
-	status                                                                                                                             review.PublicationReadinessStatus
-	verified, rejected, inconclusive, belowThreshold                                                                                   uint8
-	inline, summary                                                                                                                    int
-	contentScan                                                                                                                        review.PublicationContentScanReceipt
+	identity, verificationArtifactIdentity, verificationResultIdentity, publicationPolicyIdentity, readinessIdentity string
+	status                                                                                                           review.PublicationReadinessStatus
+	verified, rejected, inconclusive, belowThreshold                                                                 uint8
+	inline, summary                                                                                                  int
+	contentScan                                                                                                      review.PublicationContentScanReceipt
 }
 
-func (r Result) ReadinessIdentity() string { return r.readinessIdentity }
-func (r Result) String() string            { return "publication readiness result" }
-func (r Result) GoString() string          { return "publication.Result{<redacted>}" }
+func (r Result) String() string   { return "publication readiness result" }
+func (r Result) GoString() string { return "publication.Result{<redacted>}" }
 func (r Result) Format(s fmt.State, v rune) {
 	writeRedacted(s, v, "publication readiness result", "publication.Result{<redacted>}")
 }
@@ -214,46 +212,6 @@ func encodeResult(r Result) ([]byte, error) {
 		return nil, ErrInvalidReadinessResult
 	}
 	return encoded, nil
-}
-func parseResult(value artifact.Artifact, verificationArtifact artifact.Artifact, verification modelhandler.VerificationResult, policy review.PublicationPolicy) (Result, error) {
-	if value.Validate() != nil || value.Kind() != artifact.KindPublicationPlan || value.MediaType() != "application/json" || value.Origin() != artifact.OriginPolicy || value.Scope().Identity() != verificationArtifact.Scope().Identity() || value.Classification() != verificationArtifact.Classification() || value.Protection() != verificationArtifact.Protection() || !contains(value.Provenance(), verificationArtifact.Identity()) || !contains(value.Provenance(), policy.Identity()) {
-		return Result{}, ErrInvalidReadinessResult
-	}
-	payload := value.Payload()
-	if len(payload) == 0 || len(payload) > maximumReadinessBytes {
-		return Result{}, ErrInvalidReadinessResult
-	}
-	decoder := json.NewDecoder(bytes.NewReader(payload))
-	decoder.DisallowUnknownFields()
-	var wire resultWire
-	if decoder.Decode(&wire) != nil || decoder.Decode(&struct{}{}) != io.EOF {
-		return Result{}, ErrInvalidReadinessResult
-	}
-	canonical, _ := json.Marshal(wire)
-	status, err := review.ParsePublicationReadinessStatus(wire.Status)
-	if err != nil || !bytes.Equal(canonical, payload) || wire.Contract != "open-trestle/publication-readiness-result" || wire.SchemaVersion != 2 {
-		return Result{}, ErrInvalidReadinessResult
-	}
-	selection, err := review.SelectPublicationFindings(policy, verification.IndependentReceipt(), verification.VerifiedFindings())
-	if err != nil || !contains(value.Provenance(), selection.Identity()) {
-		return Result{}, ErrInvalidReadinessResult
-	}
-	var contentScan review.PublicationContentScanReceipt
-	if selection.Status() != review.PublicationAdvisoryReady {
-		if !bytes.Equal(wire.ContentScan, []byte("null")) {
-			return Result{}, ErrInvalidReadinessResult
-		}
-	} else {
-		contentScan, err = review.ParsePublicationContentScanReceipt(wire.ContentScan)
-		if err != nil || !contains(value.Provenance(), contentScan.Identity()) || !contains(value.Provenance(), contentScan.ScannerAuthorityIdentity()) {
-			return Result{}, ErrInvalidReadinessResult
-		}
-	}
-	r := Result{identity: wire.Identity, artifactIdentity: value.Identity(), verificationArtifactIdentity: wire.VerificationArtifactIdentity, verificationResultIdentity: wire.VerificationResultIdentity, publicationPolicyIdentity: wire.PublicationPolicyIdentity, readinessIdentity: wire.ReadinessIdentity, status: status, verified: wire.Verified, rejected: wire.Rejected, inconclusive: wire.Inconclusive, belowThreshold: wire.BelowThreshold, inline: wire.Inline, summary: wire.SummaryOnly, contentScan: contentScan}
-	if r.validate(verificationArtifact, verification, policy) != nil {
-		return Result{}, ErrInvalidReadinessResult
-	}
-	return r, nil
 }
 func (h *ReadinessHandler) Execute(ctx context.Context, request controlplane.TaskExecutionRequest) controlplane.TaskCompletion {
 	if nilInterface(ctx) || h.Validate() != nil || request.Validate() != nil || request.Task().Kind() != controlplane.TaskEvaluatePublication || request.Task().HandlerIdentity() != h.identity || request.Plan().PolicyIdentity() != h.reviewPolicyIdentity || !equalStrings(request.Task().Dependencies(), []string{"analysis", "change", "verification"}) {
@@ -449,7 +407,7 @@ func readFailure(ctx context.Context, err error) controlplane.RunFailure {
 }
 func diagnosticDeterministicChecks(analysis analysishandler.Result, change changehandler.Result) ([]diagnostics.DeterministicCheck, error) {
 	checks := analysis.Checks()
-	if (analysis.SchemaVersion() < 3 || analysis.SchemaVersion() > 7) || len(checks) != 1 || analysis.ChangeIdentity() != change.Identity() {
+	if (analysis.SchemaVersion() < 4 || analysis.SchemaVersion() > 7) || len(checks) != 1 || analysis.ChangeIdentity() != change.Identity() {
 		return nil, ErrInvalidReadinessResult
 	}
 	check, err := diagnosticDeterministicCheck(checks[0], analysis.Identity(), change.Identity())
@@ -550,6 +508,7 @@ func minimumTime(v ...time.Time) time.Time {
 	}
 	return r
 }
+
 func writeRedacted(s fmt.State, v rune, p, d string) {
 	x := p
 	if v == 'q' {

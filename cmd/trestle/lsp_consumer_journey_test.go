@@ -32,9 +32,13 @@ func TestRunLSPAuthenticatedStoredAndExportedDiagnosticJourney(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	verified, err := diagnostics.NewSetWithOmissionReasons(plan.Scope(), strings.Repeat("d", 64),
+	verifiedCheck, err := diagnostics.NewDeterministicCheck("3f01f93e51003eb3a0deca04719a3957d6e367c97c33bdfea105174d95698092", strings.Repeat("8", 64), strings.Repeat("7", 64), diagnostics.CheckPassed, 1, 2, 1, 2, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verified, err := diagnostics.NewSetWithDeterministicChecks(plan.Scope(), strings.Repeat("d", 64),
 		strings.Repeat("1", 40), strings.Repeat("e", 64), strings.Repeat("f", 64),
-		1, 0, 0, 2, 1, 1, []diagnostics.OmissionSummary{omission}, []diagnostics.Finding{finding})
+		1, 0, 0, 2, 1, 1, []diagnostics.OmissionSummary{omission}, []diagnostics.DeterministicCheck{verifiedCheck}, []diagnostics.Finding{finding})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +132,7 @@ func TestRunLSPAuthenticatedStoredAndExportedDiagnosticJourney(t *testing.T) {
 			if sarifRun.Properties.DiagnosticSetID != tc.set.Identity() || sarifRun.Properties.Status != "inconclusive" || !reflect.DeepEqual(sarifRun.Results[0].Properties.EvidenceIDs, finding.EvidenceIDs()) {
 				t.Fatalf("SARIF evidence or disposition changed: %+v", sarifRun)
 			}
-			if tc.set.SchemaVersion() == 4 {
+			if tc.set.SchemaVersion() == 5 {
 				if sarifRun.Properties.SourceOmittedCount == nil || *sarifRun.Properties.SourceOmittedCount != tc.set.SourceOmittedCount() || !reflect.DeepEqual(sarifRun.Properties.Omissions, []sarifOmission{{Reason: omission.Reason().String(), Count: omission.Count()}}) || sarifRun.Results[0].Fingerprints["openTrestleVerifiedFindingId/v1"] != finding.Identity() {
 					t.Fatalf("SARIF omitted-source/finding evidence changed: %+v", sarifRun)
 				}

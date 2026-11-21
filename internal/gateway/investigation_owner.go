@@ -26,14 +26,10 @@ import (
 // review.ModelRequestBudget for every investigation request. A turn whose
 // routes use the local structured-output transport also counts, and records,
 // the serialized response_format bytes, which equals
-// review.ModelRequestBudgetForTransport for that transport. Version 1 counted
-// the payload and the reserve only; it is recorded readback only.
+// review.ModelRequestBudgetForTransport for that transport.
 const InvestigationBudgetEstimateVersion = 2
 
-const (
-	investigationBudgetEstimateVersionV1 = 1
-	investigationEstimateFramingReserve  = 256
-)
+const investigationEstimateFramingReserve = 256
 
 var ErrInvestigationRouteOwner = errors.New("investigation route owner refused operation")
 
@@ -52,21 +48,13 @@ func InvestigationTurnCostBudget(declared provider.ModelCostBudget, request prov
 	return investigationTurnEstimate(InvestigationBudgetEstimateVersion, declared.EstimatedInputTokens(), declared.MaxOutputTokens(), request, systemChannelBytes, responseFormatBytes, remainingCostMicroUSD)
 }
 
-// investigationTurnEstimate applies the recorded estimate version exactly. A
-// version 1 turn never counts system channel or response_format bytes, so its
-// recorded budget is never re-derived with the version 2 formula.
+// investigationTurnEstimate applies the estimate formula. It refuses any
+// other recorded estimate version.
 func investigationTurnEstimate(version uint8, declaredInput, maxOutput uint32, request provider.Request, systemChannelBytes, responseFormatBytes uint32, remainingCostMicroUSD uint64) (provider.ModelCostBudget, error) {
-	estimated := uint64(len(request.Payload())) + investigationEstimateFramingReserve
-	switch version {
-	case investigationBudgetEstimateVersionV1:
-		if systemChannelBytes != 0 || responseFormatBytes != 0 {
-			return provider.ModelCostBudget{}, ErrInvestigationRouteOwner
-		}
-	case InvestigationBudgetEstimateVersion:
-		estimated += uint64(systemChannelBytes) + uint64(responseFormatBytes)
-	default:
+	if version != InvestigationBudgetEstimateVersion {
 		return provider.ModelCostBudget{}, ErrInvestigationRouteOwner
 	}
+	estimated := uint64(len(request.Payload())) + investigationEstimateFramingReserve + uint64(systemChannelBytes) + uint64(responseFormatBytes)
 	return provider.NewModelCostBudget(max(uint64(declaredInput), estimated), uint64(maxOutput), remainingCostMicroUSD)
 }
 

@@ -13,11 +13,10 @@ import (
 func validOptions() ConfigurationOptions {
 	return ConfigurationOptions{
 		TenantID: "tenant-a", RepositoryIDs: []string{"repo-b", "repo-a"},
-		MetadataBackend: MetadataPostgres, DatabaseAuthorityIdentity: digest("database"), ArtifactBackend: ArtifactS3,
-		ArtifactProtection: ProtectionEnvelopeEncrypted, NotificationBackend: NotificationPostgres,
-		RateLimitBackend: RateLimitPostgres, RateLimitAuthorityIdentity: digest("rate-limit"),
-		ReviewMode: ReviewRequired, WebhookIngress: true, LocalWorkers: true,
-		PublicationEnabled: true, PublicationFenceVerified: true,
+		MetadataBackend: MetadataLocal, ArtifactBackend: ArtifactLocal,
+		ArtifactProtection: ProtectionProcessPrivate, NotificationBackend: NotificationProcessLocal,
+		RateLimitBackend: RateLimitProcessLocal,
+		ReviewMode:       ReviewAdvisory, WebhookIngress: true, LocalWorkers: true,
 		RouteInventoryIdentity: digest("inventory"), RuntimePolicyIdentity: digest("policy"),
 		RouteCount: 2, Handlers: []HandlerBinding{{Kind: "verify_candidates", Identity: digest("verify")}, {Kind: "generate_candidates", Identity: digest("generate")}},
 	}
@@ -44,34 +43,20 @@ func TestConfigurationIsCanonicalAndScoped(t *testing.T) {
 	if first.RepositoryIDs()[0] != "repo-a" {
 		t.Fatal("repository slice escaped")
 	}
-	if first.DatabaseAuthorityIdentity() != digest("database") {
-		t.Fatal("database authority missing")
-	}
-	if first.RateLimitBackend() != RateLimitPostgres || first.RateLimitAuthorityIdentity() != digest("rate-limit") {
-		t.Fatal("rate-limit authority missing")
-	}
-	changedOptions := validOptions()
-	changedOptions.DatabaseAuthorityIdentity = digest("other-database")
-	changed, _ := NewConfiguration(changedOptions)
-	if changed.Identity() == first.Identity() {
-		t.Fatal("database authority omitted from configuration identity")
-	}
-	changedOptions = validOptions()
-	changedOptions.RateLimitAuthorityIdentity = digest("other-rate-limit")
-	changed, _ = NewConfiguration(changedOptions)
-	if changed.Identity() == first.Identity() {
-		t.Fatal("rate-limit authority omitted from configuration identity")
-	}
 }
 
 func TestConfigurationRejectsInconsistentAuthority(t *testing.T) {
 	cases := []func(*ConfigurationOptions){
 		func(o *ConfigurationOptions) { o.TenantID = "../tenant" },
 		func(o *ConfigurationOptions) { o.RepositoryIDs = []string{"repo-a", "repo-a"} },
-		func(o *ConfigurationOptions) { o.MetadataBackend = "mysql" },
-		func(o *ConfigurationOptions) { o.DatabaseAuthorityIdentity = "" },
-		func(o *ConfigurationOptions) { o.RateLimitAuthorityIdentity = "" },
-		func(o *ConfigurationOptions) { o.PublicationEnabled = false },
+		func(o *ConfigurationOptions) { o.MetadataBackend = "postgres" },
+		func(o *ConfigurationOptions) { o.ArtifactBackend = "s3" },
+		func(o *ConfigurationOptions) { o.ArtifactProtection = "envelope_encrypted" },
+		func(o *ConfigurationOptions) { o.NotificationBackend = "postgres" },
+		func(o *ConfigurationOptions) { o.RateLimitBackend = "postgres" },
+		func(o *ConfigurationOptions) { o.PublicationEnabled = true },
+		func(o *ConfigurationOptions) { o.PublicationFenceVerified = true },
+		func(o *ConfigurationOptions) { o.ReviewMode = ReviewRequired },
 		func(o *ConfigurationOptions) { o.RouteInventoryIdentity = "" },
 		func(o *ConfigurationOptions) { o.Handlers = append(o.Handlers, o.Handlers[0]) },
 		func(o *ConfigurationOptions) {
@@ -166,18 +151,9 @@ func TestRepositoryStatusIdentityIgnoresOtherRepositoryMembership(t *testing.T) 
 
 func TestConfigurationReportsLocalAdmissionWithoutRunningWorkers(t *testing.T) {
 	options := validOptions()
-	options.MetadataBackend = MetadataLocal
-	options.DatabaseAuthorityIdentity = ""
-	options.ArtifactBackend = ArtifactLocal
-	options.ArtifactProtection = ProtectionProcessPrivate
-	options.NotificationBackend = NotificationProcessLocal
-	options.RateLimitBackend = RateLimitProcessLocal
-	options.RateLimitAuthorityIdentity = ""
 	options.ReviewMode = ReviewLocal
 	options.WebhookIngress = false
 	options.LocalWorkers = false
-	options.PublicationEnabled = false
-	options.PublicationFenceVerified = false
 	configuration, err := NewConfiguration(options)
 	if err != nil || configuration.LocalWorkers() || configuration.RouteCount() != 2 {
 		t.Fatalf("staged local configuration=(%#v,%v)", configuration, err)

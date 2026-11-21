@@ -15,9 +15,6 @@ func runConfig(args []string, stdout, stderr io.Writer) int {
 		writeConfigUsage(stderr)
 		return 2
 	}
-	if args[0] == "codex-session" {
-		return runConfigCodexSession(args[1:], stdout, stderr)
-	}
 	if args[0] == "models" {
 		return runConfigModels(args[1:], stdout, stderr)
 	}
@@ -84,5 +81,4 @@ func writeConfigUsage(writer io.Writer) {
 	writeConfigBindUsage(writer)
 	writeConfigInventoryIdentityUsage(writer)
 	writeConfigModelsUsage(writer)
-	writeConfigCodexSessionUsage(writer)
 }

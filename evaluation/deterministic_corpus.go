@@ -1008,7 +1008,6 @@ type DeterministicCorpusReport struct {
 }
 
 func (r DeterministicCorpusReport) Identity() string              { return r.identity }
-func (r DeterministicCorpusReport) CorpusIdentity() string        { return r.corpusIdentity }
 func (r DeterministicCorpusReport) ReviewState() string           { return r.reviewState }
 func (r DeterministicCorpusReport) ExecutionStatus() string       { return r.executionStatus }
 func (r DeterministicCorpusReport) CaseCount() uint32             { return r.caseCount }

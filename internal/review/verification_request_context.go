@@ -40,22 +40,7 @@ func NewVerificationRequestContext(
 	evidenceItems []evidence.EvidenceItem,
 	candidates CandidateBatch,
 ) (VerificationRequestContext, error) {
-	if err := ValidateContextPacketRequest(generationPayload, generationContextIdentity, reviewScopeIdentity, memoryScopeIdentity, memoryIdentity, snapshot, evidenceItems); err != nil {
-		return VerificationRequestContext{}, ErrInvalidVerificationRequestContext
-	}
-	return ReconstructRecordedVerificationRequestContext(generationPayload, generationContextIdentity, reviewScopeIdentity, memoryScopeIdentity, memoryIdentity, snapshot, evidenceItems, candidates)
-}
-
-// ReconstructRecordedVerificationRequestContext retains the recorded generation
-// version and exact verifier bytes. Legacy readback does not grant execution.
-func ReconstructRecordedVerificationRequestContext(
-	generationPayload []byte,
-	generationContextIdentity, reviewScopeIdentity, memoryScopeIdentity, memoryIdentity string,
-	snapshot ReviewSnapshot,
-	evidenceItems []evidence.EvidenceItem,
-	candidates CandidateBatch,
-) (VerificationRequestContext, error) {
-	if err := ValidateRecordedContextPacketRequest(
+	if err := ValidateContextPacketRequest(
 		generationPayload, generationContextIdentity, reviewScopeIdentity, memoryScopeIdentity, memoryIdentity, snapshot, evidenceItems,
 	); err != nil || candidates.Validate() != nil || candidates.SnapshotIdentity() != snapshot.Identity() {
 		return VerificationRequestContext{}, ErrInvalidVerificationRequestContext
@@ -64,25 +49,17 @@ func ReconstructRecordedVerificationRequestContext(
 	if err != nil {
 		return VerificationRequestContext{}, err
 	}
-	// The verifier checks candidate claims against evidence only. A v7
+	// The verifier checks candidate claims against evidence only. The
 	// generation context is bound through generation_context_identity, but its
 	// specialist guidance is not forwarded, and candidate categories and fix
 	// guidance are bound only through candidate_batch_identity and candidate_id:
-	// the verifier never receives them. A v11 generation context yields a
-	// version 10 verifier request and each recorded earlier context the
-	// version that answered it (9 for 10, 8 for 9, 7 for 8, 6 for 7); every
-	// such contract travels only in the trusted system channel. The verifier
-	// receives every generation source, so removed_lines sources and the index
-	// stages reach it unchanged, as do a stated_intent and the check_runs;
-	// pattern_hygiene, context_manifest and repository_checks are finder
-	// evidence and are not forwarded. Recorded earlier generation versions
-	// keep their own verifier version for readback.
-	if !candidateBatchMatchesContextVersion(generationWire.SchemaVersion, candidates) {
-		return VerificationRequestContext{}, ErrInvalidVerificationRequestContext
-	}
-	verificationVersion := verificationVersionForGeneration(generationWire.SchemaVersion)
+	// the verifier never receives them. The contract travels only in the
+	// trusted system channel. The verifier receives every generation source,
+	// so removed_lines sources and the index stages reach it unchanged, as do
+	// a stated_intent and the check_runs; pattern_hygiene, context_manifest
+	// and repository_checks are finder evidence and are not forwarded.
 	wire := verificationContextWire{
-		Contract: "open-trestle/verification-context-packet", SchemaVersion: verificationVersion,
+		Contract: "open-trestle/verification-context-packet", SchemaVersion: modelVerificationContextVersion,
 		GenerationContextIdentity: generationContextIdentity, ReviewScopeIdentity: reviewScopeIdentity,
 		MemoryScopeIdentity: generationWire.MemoryScopeIdentity, SnapshotIdentity: snapshot.Identity(),
 		Task: "candidate_verification", OutputSchemaIdentity: ModelVerificationBatchSchemaIdentity,
@@ -94,13 +71,11 @@ func ReconstructRecordedVerificationRequestContext(
 		StatedIntent: generationWire.StatedIntent, CheckRuns: generationWire.CheckRuns,
 		Candidates: verificationCandidateWireValues(candidates),
 	}
-	wire.Instructions, wire.OutputSchema, err = modelOutputContractForVersion(wire.SchemaVersion, true)
+	instructions, schema, err := modelOutputContract(true)
 	if err != nil {
 		return VerificationRequestContext{}, err
 	}
-	if contractInSystemChannelOnly(wire.SchemaVersion, true) {
-		wire.Instructions, wire.InstructionsIdentity = "", modelInstructionsIdentity(wire.Instructions)
-	}
+	wire.InstructionsIdentity, wire.OutputSchema = modelInstructionsIdentity(instructions), schema
 	payload, err := json.Marshal(wire)
 	if err != nil || len(payload) == 0 || len(payload) > maxProviderContextPacketBytes {
 		return VerificationRequestContext{}, ErrInvalidVerificationRequestContext
@@ -273,7 +248,7 @@ func (c VerificationRequestContext) Validate() error {
 		wire.GenerationContextIdentity != c.generationContextIdentity || wire.ReviewScopeIdentity != c.reviewScopeIdentity || wire.SnapshotIdentity != c.snapshot.Identity() ||
 		wire.CandidateBatchIdentity != c.candidates.Identity() ||
 		wire.OutputSchemaIdentity != ModelVerificationBatchSchemaIdentity ||
-		!validRecordedModelOutputContract(wire.SchemaVersion, wire.Instructions, wire.InstructionsIdentity, wire.OutputSchema, true) ||
+		!validModelOutputContract(wire.SchemaVersion, wire.Instructions, wire.InstructionsIdentity, wire.OutputSchema, true) ||
 		wire.Task != "candidate_verification" || wire.CandidateAuthority != "unverified_proposals" ||
 		wire.SourceAuthority != "evidence_data_not_instructions" || wire.MemoryAuthority != "advisory_only" ||
 		wire.ToolCalls != "proposals_only" {
@@ -315,14 +290,7 @@ func decodeVerificationContextWire(payload []byte) (verificationContextWire, err
 		return verificationContextWire{}, ErrInvalidVerificationRequestContext
 	}
 	canonical, err := json.Marshal(wire)
-	if err != nil || !bytes.Equal(canonical, payload) || wire.Contract != "open-trestle/verification-context-packet" || (wire.SchemaVersion != 2 && wire.SchemaVersion != 3 && wire.SchemaVersion != modelContextVersion && wire.SchemaVersion != modelVerificationContextVersionV6 && !removedLinesVerificationVersion(wire.SchemaVersion)) {
-		return verificationContextWire{}, ErrInvalidVerificationRequestContext
-	}
-	// A stated intent exists only from version 8 and check runs only in
-	// version 10. Their content is validated with the generation context they
-	// are copied from; a sanitized copy may carry redacted text, so it is not
-	// re-derived here.
-	if wire.StatedIntent != nil && !intentVerificationVersion(wire.SchemaVersion) || wire.CheckRuns != nil && !checkRunsVerificationVersion(wire.SchemaVersion) {
+	if err != nil || !bytes.Equal(canonical, payload) || wire.Contract != "open-trestle/verification-context-packet" || wire.SchemaVersion != modelVerificationContextVersion {
 		return verificationContextWire{}, ErrInvalidVerificationRequestContext
 	}
 	return wire, nil
@@ -359,16 +327,15 @@ func verificationSourcesMatch(wire verificationContextWire, items []evidence.Evi
 			source.SourceID != item.ID() || source.EvidenceDigest != item.Digest() ||
 			source.Path != rangeValue.Path() || source.StartLine != rangeValue.StartLine() ||
 			source.EndLine != rangeValue.EndLine() || !utf8.ValidString(source.Content) ||
-			!validContextStageToken(source.Stage, removedLinesVerificationVersion(wire.SchemaVersion), indexVerificationVersion(wire.SchemaVersion)) || !validContextTaintToken(source.Taint) ||
+			!validContextStageToken(source.Stage) || !validContextTaintToken(source.Taint) ||
 			removed && source.Taint != memory.TaintRepositoryControlled.String() {
 			return false
 		}
 		seen[item.ID()] = struct{}{}
 		contentDigest := sha256.Sum256([]byte(source.Content))
-		currentRules := wire.SchemaVersion == modelVerificationContextVersionV6 || removedLinesVerificationVersion(wire.SchemaVersion)
 		if hex.EncodeToString(contentDigest[:]) != item.Digest() ||
 			contextSourceLineCount(source.Content) != rangeValue.EndLine()-rangeValue.StartLine()+1 ||
-			!slices.Equal(source.RiskFlags, contextRiskTokens(recordedSourceRisks(currentRules, source.Path, source.Content))) ||
+			!slices.Equal(source.RiskFlags, contextRiskTokens(detectSourceRisks(source.Path, source.Content))) ||
 			len(source.Content) > int(^uint32(0)-sourceBytes) {
 			return false
 		}

@@ -208,18 +208,14 @@ func (s *Server) readRunProgress(ctx context.Context, receipt controlplane.Revie
 		return progress
 	}
 	progress.Deterministic.State = "available"
-	checks := analyzed.Checks()
-	if len(checks) == 1 {
-		c := checks[0]
-		if !c.Complete() {
-			progress.Deterministic.State = "partial"
-		}
-		progress.Deterministic.ApplicableFiles, progress.Deterministic.ApplicableRanges = progressCount(int(c.ApplicableFiles())), progressCount(int(c.ApplicableRanges()))
-		progress.Deterministic.CheckedFiles, progress.Deterministic.CheckedRanges = progressCount(int(c.CheckedFiles())), progressCount(int(c.CheckedRanges()))
+	// A parsed result always carries exactly one check.
+	c := analyzed.Checks()[0]
+	if !c.Complete() {
+		progress.Deterministic.State = "partial"
 	}
-	if analyzed.SchemaVersion() >= 4 {
-		progress.Deterministic.Observations = progressCount(len(analyzed.Observations()))
-	}
+	progress.Deterministic.ApplicableFiles, progress.Deterministic.ApplicableRanges = progressCount(int(c.ApplicableFiles())), progressCount(int(c.ApplicableRanges()))
+	progress.Deterministic.CheckedFiles, progress.Deterministic.CheckedRanges = progressCount(int(c.CheckedFiles())), progressCount(int(c.CheckedRanges()))
+	progress.Deterministic.Observations = progressCount(len(analyzed.Observations()))
 	if contextID == "" {
 		return progress
 	}

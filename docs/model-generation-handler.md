@@ -31,7 +31,7 @@ An ambiguous transport outcome stays visible as a claimed attempt. If a process 
 The handler accepts a response only when all of these hold:
 
 - it is one complete structured `review.v1` response;
-- it conforms to the candidate schema that its context requests: `model-candidate-batch-v2` for a version 11 context (and a recorded version 7 to 10 context), or `model-candidate-batch-v1` for a recorded earlier context (`review.ParseContextCandidateBatch`);
+- it conforms to the candidate schema that its context requests: `model-candidate-batch-v2` (`review.ParseContextCandidateBatch`);
 - every cited source and evidence ID was in the context packet;
 - every claimed range is covered by the snapshot and the cited evidence;
 - there are no semantic duplicate findings; and
@@ -62,7 +62,7 @@ Generation at versions 7, 8 and 9 asks for `model-candidate-batch-v2`. Each cand
 
 The parser rejects a v1 document, a category that is missing, null or unknown, a fix that is empty, blank, oversized, not a string or contains control characters, and any extra member. Category and fix are bound into the candidate identity (preimage version 2) and the batch identity, and the durable `open-trestle/candidate-batch` encoding uses schema version 2 for such batches. Both fields are model output. The category is advisory, and the fix is guidance for a person, not a patch or command.
 
-The generation input records the context's `output_schema_identity` (v1 for recorded contexts before version 7, v2 for versions 7, 8 and 9). Both execution and `ParseGenerationResultArtifact` require it to match the context bytes. Readback, which reloads a stored result and checks it, also requires the schema of the accepted batch to match its context version.
+The generation input records the context's `output_schema_identity`, which is always v2. Both execution and `ParseGenerationResultArtifact` require it to match the context bytes. Readback, which reloads a stored result and checks it, also requires the schema of the accepted batch to match its context.
 
 ## Candidate artifact
 
@@ -81,6 +81,6 @@ Its provenance includes the task input, context, candidates, authorization, outc
 - `schemas/artifact/route-execution-record-v1.schema.json`
 - `schemas/artifact/candidate-batch-v1.schema.json`, `schemas/artifact/candidate-batch-v2.schema.json` (categorized) and `schemas/artifact/candidate-batch-v3.schema.json` (uncategorized, recording removed base lines)
 - `schemas/artifact/model-generation-input-v1.schema.json` (candidate schema v1 or v2), `schemas/artifact/model-generation-input-v3.schema.json` (sanitized) and `schemas/artifact/model-generation-input-v4.schema.json` (unsanitized, with `removed_lines` evidence)
-- `schemas/review/model-candidate-batch-v1.schema.json` (recorded contexts before version 7)
-- `schemas/review/model-candidate-batch-v2.schema.json` (version 7, 8 and 9 contexts)
+- `schemas/review/model-candidate-batch-v1.schema.json` (the uncategorized batch that the setup dry run and the model-contract evaluation parse)
+- `schemas/review/model-candidate-batch-v2.schema.json` (generation contexts)
 - `schemas/artifact/model-generation-result-v1.schema.json`
