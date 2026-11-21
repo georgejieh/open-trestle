@@ -31,11 +31,7 @@ func inspectRestoredRun(ctx context.Context, receipt controlplane.ReviewRunRecei
 		}
 		value, err := artifact.ObserveFileArtifact(ctx, artifacts, receipt.Scope(), task.OutputIdentity())
 		if errors.Is(err, artifact.ErrArtifactNotFound) {
-			_, completed, deletionErr := artifact.ObserveFileDeletion(ctx, artifacts, receipt.Scope(), task.OutputIdentity())
-			if deletionErr != nil || !completed {
-				return errors.Join(errRestoreObservationMismatch, deletionErr)
-			}
-			continue
+			return errors.Join(errRestoreObservationMismatch, err)
 		}
 		if err != nil {
 			return err

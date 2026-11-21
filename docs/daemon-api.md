@@ -36,7 +36,7 @@ Keep writable roots and their ancestors under the operator's exclusive control. 
 
 Every startup with `metadata=local` inspects the entire bounded historical journal. It does this before it builds audit or diagnostics, starts workers or opens a listener. A valid historical v4 context-packet-prepared event blocks startup, even when its run is terminal or belongs to an old tenant or repository. This is a conservative rejection, not packet recovery.
 
-The local artifact store is constructed first and can recover pending deletions. The journal constructor also creates the state, changes its permissions and locks it before inspection. This is therefore not a check that runs before any effect on storage.
+The local artifact store is constructed first. The journal constructor also creates the state, changes its permissions and locks it before inspection. This is therefore not a check that runs before any effect on storage.
 
 ### What the state directory may contain
 

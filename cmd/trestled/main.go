@@ -81,7 +81,7 @@ type daemon struct {
 	journal                controlplane.RunJournal
 	inboxStore             webhook.Store
 	diagnosticStore        diagnostics.Store
-	artifactStore          artifact.RetentionStore
+	artifactStore          artifact.Store
 	supervisors            []daemonSupervisor
 	supervisorNames        []string
 	closers                []io.Closer
@@ -335,7 +335,7 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 	}
 	var journal controlplane.RunJournal
 	var packetOwner *localPacketOwner
-	var artifactStore artifact.RetentionStore
+	var artifactStore artifact.Store
 	artifactProtection := artifact.ProtectionProcessPrivate
 	active, fileJournal, bootOwner, gateErr := startLocalSourceOwnerGateWithAuthority(ctx, resources, *stateDirectory, *setupState, &localSetupPlan, *tenantID, repositories[0], localRepository, localObjectsRoot, localObjectStore, localSourceAdapter, localRootDigest, daemonArtifactClock, generationStartup, nil)
 	if gateErr != nil {

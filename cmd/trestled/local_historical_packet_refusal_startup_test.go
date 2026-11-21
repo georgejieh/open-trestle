@@ -116,7 +116,7 @@ func TestRefusedV4StartupRecoversEachDurableBoundary(t *testing.T) {
 // a deletion receipt, or a scope marker keeps startup refused without an append.
 func TestRefusedV4StartupRetentionRefusals(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"missing", "corrupt", "orphan", "deletion-receipt", "marker"} {
+	for _, mode := range []string{"missing", "corrupt", "orphan", "marker"} {
 		t.Run(mode, func(t *testing.T) {
 			f, refusedAt := refusedStartupFixture(t, 0)
 			at := refusedAt.Add(time.Millisecond)
@@ -135,8 +135,6 @@ func TestRefusedV4StartupRetentionRefusals(t *testing.T) {
 				}
 			case "orphan":
 				preserved = prefix + strings.Repeat("a", 64) + ".artifact.json"
-			case "deletion-receipt":
-				preserved = prefix + f.a.Packet.Identity() + ".artifact-deleted.json"
 			case "marker":
 				preserved = filepath.Join(state, f.fact.Plan().Scope().Identity()+".scope-intent.json")
 			}

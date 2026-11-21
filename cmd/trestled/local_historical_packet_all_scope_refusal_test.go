@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -175,143 +174,13 @@ func assertLocalHistoricalRawTwoScopes(t *testing.T, f localPacketOwnerFixture, 
 	}
 }
 
-// seedLocalHistoricalRecoveryControl returns a real completed Delete receipt and
-// its exact sacrificial artifact bytes. Only after the original leases close do
-// we restore the target and replace the receipt with its canonical prepared form.
-func seedLocalHistoricalRecoveryControl(t *testing.T, f localPacketOwnerFixture) (string, []byte, string, []byte) {
-	t.Helper()
-	ctx := context.Background()
-	scope, err := audit.NewReviewScope("tenant-c", "repo-c", "run-c")
-	if err != nil {
-		t.Fatal(err)
-	}
-	value, err := artifact.New(scope, artifact.KindDeterministicEvidence, "application/json", artifact.ClassificationInternal,
-		artifact.OriginDeterministicTool, artifact.ProtectionProcessPrivate, []string{strings.Repeat("a", 64)},
-		[]byte(`{"sacrificial":"recovery-control"}`), time.UnixMilli(200), time.UnixMilli(900))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if made, err := f.store.Put(ctx, value, time.UnixMilli(230)); err != nil || !made {
-		t.Fatalf("sacrificial Put: %t %v", made, err)
-	}
-	encoded, err := artifact.Encode(value)
-	if err != nil {
-		t.Fatal(err)
-	}
-	authorization, err := artifact.NewDeletionAuthorization(scope, value.Identity(), strings.Repeat("b", 64), strings.Repeat("c", 64), strings.Repeat("d", 64),
-		artifact.DeletionExpired, time.UnixMilli(1000), time.UnixMilli(2000))
-	if err != nil {
-		t.Fatal(err)
-	}
-	receipt, err := f.store.Delete(ctx, authorization, time.UnixMilli(1000))
-	if err != nil || receipt.Validate() != nil || receipt.ArtifactIdentity() != value.Identity() || receipt.PayloadDigest() != value.PayloadDigest() {
-		t.Fatalf("real completed deletion receipt: %v", err)
-	}
-	root := filepath.Join(f.statePath, "artifacts")
-	leaf := filepath.Join(root, scope.Identity()+"-"+value.Identity()+".artifact.json")
-	receiptLeaf := filepath.Join(root, scope.Identity()+"-"+value.Identity()+".artifact-deleted.json")
-	if _, err := os.Lstat(leaf); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("Delete left target: %v", err)
-	}
-	completed, err := os.ReadFile(receiptLeaf)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var completedRecord struct {
-		Contract      string `json:"contract"`
-		SchemaVersion int    `json:"schema_version"`
-		Completed     bool   `json:"completed"`
-		Identity      string `json:"identity"`
-	}
-	if err := json.Unmarshal(completed, &completedRecord); err != nil || !completedRecord.Completed || completedRecord.Identity != receipt.Identity() {
-		t.Fatalf("completed receipt did not match real Delete: %v", err)
-	}
-	// Field order matches artifact/retention.go deletionRecord and json.Marshal.
-	prepared := struct {
-		Contract              string `json:"contract"`
-		SchemaVersion         int    `json:"schema_version"`
-		Completed             bool   `json:"completed"`
-		Identity              string `json:"identity"`
-		TenantID              string `json:"tenant_id"`
-		RepositoryID          string `json:"repository_id"`
-		ReviewRunID           string `json:"review_run_id"`
-		ArtifactIdentity      string `json:"artifact_identity"`
-		PayloadDigest         string `json:"payload_digest"`
-		AuthorizationIdentity string `json:"authorization_identity"`
-		DeletedAtMilliseconds int64  `json:"deleted_at_milliseconds"`
-	}{"open-trestle/artifact-deletion", 1, false, receipt.Identity(), scope.TenantID(), scope.RepositoryID(), scope.ReviewRunID(),
-		receipt.ArtifactIdentity(), receipt.PayloadDigest(), receipt.AuthorizationIdentity(), receipt.DeletedAt().UnixMilli()}
-	preparedBytes, err := json.Marshal(prepared)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Confirm the same ordered encoding as the real completed record, changing only the boolean.
-	if !bytes.Equal(bytes.Replace(completed, []byte(`"completed":true`), []byte(`"completed":false`), 1), preparedBytes) {
-		t.Fatal("prepared record differs from real completed receipt beyond completed flag")
-	}
-	return leaf, encoded, receiptLeaf, preparedBytes
-}
-
-func installLocalHistoricalRecoveryControl(t *testing.T, target string, targetBytes []byte, receipt string, prepared []byte) {
-	t.Helper()
-	if err := os.WriteFile(target, targetBytes, 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(receipt, prepared, 0600); err != nil {
-		t.Fatal(err)
-	}
-	for _, path := range []string{target, receipt} {
-		info, err := os.Lstat(path)
-		if err != nil || info.Mode() != 0600 {
-			t.Fatalf("prepared recovery control leaf %s: %v", path, err)
-		}
-	}
-}
-
-func assertLocalHistoricalControlRecoversDetached(t *testing.T, target, receipt string) {
-	t.Helper()
-	root := t.TempDir()
-	if err := os.Chmod(root, 0700); err != nil {
-		t.Fatal(err)
-	}
-	for _, leaf := range []string{target, receipt} {
-		data, err := os.ReadFile(leaf)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(root, filepath.Base(leaf)), data, 0600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	pending, err := artifact.OpenPendingFileStore(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	store, err := pending.Activate()
-	if err != nil {
-		t.Fatalf("detached valid prepared record must recover: %v", err)
-	}
-	if err := store.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Lstat(filepath.Join(root, filepath.Base(target))); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("detached recovery did not remove sacrificial target: %v", err)
-	}
-	completed, err := os.ReadFile(filepath.Join(root, filepath.Base(receipt)))
-	if err != nil || !bytes.Contains(completed, []byte(`"completed":true`)) {
-		t.Fatalf("detached recovery did not complete receipt: %v", err)
-	}
-}
-
 func TestLocalHistoricalPacketRefusalAllScopeOwnerPrecedence(t *testing.T) {
 	for _, tc := range []struct {
 		name, tenant, repository string
-		receipt                  bool
 		wantMissing              bool
 	}{
-		{"same owner later missing", "tenant-a", "repo-a", false, true},
-		{"different tenant structural", "tenant-b", "repo-a", false, false},
-		{"unrelated receipt structural", "tenant-a", "repo-a", true, false},
+		{"same owner later missing", "tenant-a", "repo-a", true},
+		{"different tenant structural", "tenant-b", "repo-a", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
@@ -329,19 +198,10 @@ func TestLocalHistoricalPacketRefusalAllScopeOwnerPrecedence(t *testing.T) {
 				t.Fatal(err)
 			}
 			plan, second := prepareLocalHistoricalSecondScope(t, f, tc.tenant, tc.repository)
-			var target, receipt string
-			var targetBytes, preparedBytes []byte
-			if tc.receipt {
-				target, targetBytes, receipt, preparedBytes = seedLocalHistoricalRecoveryControl(t, f)
-			}
 			firstEvents := encodedLocalPacketHistory(t, f.journal, f.request.Plan().Scope())
 			secondEvents := encodedLocalPacketHistory(t, f.journal, plan.Scope())
 			if err := f.resources.Close(); err != nil {
 				t.Fatalf("close first owner leases: %v", err)
-			}
-			if tc.receipt {
-				installLocalHistoricalRecoveryControl(t, target, targetBytes, receipt, preparedBytes)
-				assertLocalHistoricalControlRecoversDetached(t, target, receipt)
 			}
 			assertLocalHistoricalRawTwoScopes(t, f, first, second, plan, firstBytes, firstEvents, secondEvents)
 			before := snapshotLocalPacketFiles(t, f.statePath)
@@ -360,7 +220,7 @@ func TestLocalHistoricalPacketRefusalAllScopeOwnerPrecedence(t *testing.T) {
 				t.Fatalf("close refused resources: %v", err)
 			}
 			if after := snapshotLocalPacketFiles(t, f.statePath); !reflect.DeepEqual(before, after) {
-				t.Fatal("boot changed runtime bytes/names or recovered unrelated receipt")
+				t.Fatal("boot changed runtime bytes/names")
 			}
 			assertLocalHistoricalRawTwoScopes(t, f, first, second, plan, firstBytes, firstEvents, secondEvents)
 			if after := snapshotLocalPacketFiles(t, f.statePath); !reflect.DeepEqual(before, after) {
@@ -371,12 +231,8 @@ func TestLocalHistoricalPacketRefusalAllScopeOwnerPrecedence(t *testing.T) {
 					t.Fatalf("later same-owner missing must win globally over intact first: %v", bootErr)
 				}
 			} else {
-				want := ErrLocalSourceOwnerMismatch
-				if tc.receipt {
-					want = errPhysicalPacketObservationUncertain
-				}
-				if !errors.Is(bootErr, want) || errors.Is(bootErr, errHistoricalPacketMissingAtStartup) || errors.Is(bootErr, errHistoricalPacketObservedAtStartup) || errors.Is(bootErr, errHistoricalPacketMismatchAtStartup) || errors.Is(bootErr, controlplane.ErrPreparedContextPacketAtStartup) || errors.Is(bootErr, artifact.ErrCorruptArtifact) {
-					t.Fatalf("owner mismatch/receipt requires its exact structural refusal before activation: %v", bootErr)
+				if !errors.Is(bootErr, ErrLocalSourceOwnerMismatch) || errors.Is(bootErr, errHistoricalPacketMissingAtStartup) || errors.Is(bootErr, errHistoricalPacketObservedAtStartup) || errors.Is(bootErr, errHistoricalPacketMismatchAtStartup) || errors.Is(bootErr, controlplane.ErrPreparedContextPacketAtStartup) || errors.Is(bootErr, artifact.ErrCorruptArtifact) {
+					t.Fatalf("owner mismatch requires its exact structural refusal before activation: %v", bootErr)
 				}
 			}
 		})

@@ -293,22 +293,6 @@ func TestPhysicalPacketObservationMissingAndEnumeratedThenRemovedDiffer(t *testi
 	})
 }
 
-func TestPhysicalPacketObservationRejectsUnrelatedReceipt(t *testing.T) {
-	fixture := newPhysicalPacketTestFixture(t)
-	unrelated := strings.Repeat("f", 64) + "-" + strings.Repeat("e", 64) + ".artifact-deleted.json"
-	if err := os.WriteFile(filepath.Join(fixture.root, unrelated), []byte(`{"receipt":"unrelated"}`), 0600); err != nil {
-		t.Fatal(err)
-	}
-	called := false
-	err := fixture.observe(t, fixture.expected, func([]physicalPacketObservation) error { called = true; return nil })
-	if err == nil {
-		t.Fatal("unrelated deletion receipt was accepted")
-	}
-	if called {
-		t.Fatal("receipt was provisionally classified")
-	}
-}
-
 func TestPhysicalPacketObservationRejectsUntrustedDirectEntries(t *testing.T) {
 	tests := []struct {
 		name   string

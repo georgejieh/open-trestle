@@ -153,7 +153,7 @@ const (
 	_ // retired, never recorded
 	EventReviewSnapshotBound
 	EventContextAcquisitionBound
-	EventArtifactDeleted
+	_ // retired, never recorded
 	EventInvestigationToolClaimed
 	EventInvestigationToolCompleted
 	EventGenerationRejected
@@ -195,8 +195,6 @@ func (k EventKind) String() string {
 		return "review_snapshot_bound"
 	case EventContextAcquisitionBound:
 		return "context_acquisition_bound"
-	case EventArtifactDeleted:
-		return "artifact_deleted"
 	case EventInvestigationToolClaimed:
 		return "investigation_tool_claimed"
 	case EventInvestigationToolCompleted:
