@@ -42,12 +42,12 @@ Values that look like `host:port` or like an opaque URI in a tagged ID are inert
 
 Native Go tests exercise the selector semantics. The schema tests check structure and do not perform full JSON Schema semantic validation.
 
-Candidate batch schema v1 keeps its bytes and is the output schema of recorded generation contexts before version 7. Schema v2 is the output schema of version 7, 8 and 9 generation contexts. In v2, every candidate adds two fields:
+Candidate batch schema v2 is the output schema of generation contexts. Schema v1 is the uncategorized batch that the setup dry run and the model-contract evaluation parse. In v2, every candidate adds two fields:
 
 - A required, closed `category`: `correctness`, `security`, `concurrency`, `performance`, `reliability`, `maintainability`, `style`, `documentation` or `testing`.
 - An optional `fix`, which is nonblank plain text of at most 256 characters. The schema sets this as `maxLength`. The host parser enforces the same 256-character bound plus a 1024-byte UTF-8 wire bound, which 256 characters can never exceed.
 
-Both fields are advisory model output. The fix is never applied and is not verified. At runtime, a candidate whose `source_range` names a `repository_context` source is dropped and counted. From generation context version 8, a candidate may instead be located in a `removed_lines` source, as a base-side finding.
+Both fields are advisory model output. The fix is never applied and is not verified. At runtime, a candidate whose `source_range` names a `repository_context` source is dropped and counted. A candidate may instead be located in a `removed_lines` source, as a base-side finding.
 
 The investigation output schema uses a closed `oneOf`: the output is either a candidate batch or one host-defined snapshot tool call. A valid proposal is not permission to run a tool. Runtime parsing, the retained model response, the source bindings and the policy limits still decide what is accepted.
 

@@ -202,7 +202,6 @@ func TestContextPacketRejectsScopeAndBudgetMismatch(t *testing.T) {
 
 func TestModelCandidateSchemaIdentityMatchesCanonicalPublicSchema(t *testing.T) {
 	for path, want := range map[string]string{
-		"../../schemas/review/model-candidate-batch-v1.schema.json": ModelCandidateBatchV1SchemaIdentity,
 		"../../schemas/review/model-candidate-batch-v2.schema.json": ModelCandidateBatchSchemaIdentity,
 	} {
 		encoded, err := os.ReadFile(path)

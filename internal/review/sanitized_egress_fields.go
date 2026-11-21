@@ -76,11 +76,9 @@ func parseSanitizableRequest(request provider.Request, reviewScopeIdentity strin
 		Contract      string `json:"contract"`
 		SchemaVersion int    `json:"schema_version"`
 	}
-	// Generation admits only the executable context version 11; verification
-	// admits only version 10. Each contract is checked against its own version
-	// below too.
+	// Each contract is checked against its own version below too.
 	if json.Unmarshal(request.Payload(), &header) != nil ||
-		header.Contract == "open-trestle/review-context-packet" && !executableGenerationContextVersion(header.SchemaVersion) ||
+		header.Contract == "open-trestle/review-context-packet" && header.SchemaVersion != modelGenerationContextVersion ||
 		header.Contract == "open-trestle/verification-context-packet" && header.SchemaVersion != modelVerificationContextVersion {
 		return sanitizedRequestDocument{}, ErrInvalidSanitizedModelRequest
 	}

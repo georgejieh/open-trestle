@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -126,7 +125,7 @@ func TestGenerationDispatchAndOutputReadbackBindReadableContract(t *testing.T) {
 	}
 }
 
-// expectedDispatchedContractVersion is 8 for generation (candidate batch v2) and 7 for verification.
+// expectedDispatchedContractVersion is 11 for generation and 10 for verification.
 func expectedDispatchedContractVersion(schemaIdentity string) int {
 	if schemaIdentity == review.ModelCandidateBatchSchemaIdentity {
 		return 11
@@ -143,147 +142,6 @@ func trustedSystemBytes(t *testing.T, payload []byte) int {
 		t.Fatal(err)
 	}
 	return len(instructions)
-}
-
-func legacyModelContextPayload(t *testing.T, payload []byte) []byte {
-	t.Helper()
-	decoder := json.NewDecoder(bytes.NewReader(payload))
-	if token, err := decoder.Token(); err != nil || token != json.Delim('{') {
-		t.Fatal("invalid context fixture")
-	}
-	var entries [][]byte
-	for decoder.More() {
-		token, err := decoder.Token()
-		if err != nil {
-			t.Fatal(err)
-		}
-		key := token.(string)
-		var value json.RawMessage
-		if err := decoder.Decode(&value); err != nil {
-			t.Fatal(err)
-		}
-		if key == "instructions" || key == "instructions_identity" || key == "output_schema" {
-			continue
-		}
-		if key == "schema_version" {
-			value = json.RawMessage(`2`)
-		}
-		if key == "output_schema_identity" {
-			// Recorded v2 contexts requested candidate batch v1.
-			value = json.RawMessage(`"` + review.ModelCandidateBatchV1SchemaIdentity + `"`)
-		}
-		encodedKey, err := json.Marshal(key)
-		if err != nil {
-			t.Fatal(err)
-		}
-		entries = append(entries, append(append(encodedKey, ':'), value...))
-	}
-	return append(append([]byte{'{'}, bytes.Join(entries, []byte{','})...), '}')
-}
-
-func TestLegacyGenerationRecordsRemainReadableButCannotDispatch(t *testing.T) {
-	scope, snapshot, packet, original, _ := generationContextFixture(t)
-	payload := legacyModelContextPayload(t, original.Payload())
-	digest := sha256.Sum256(payload)
-	contextIdentity := hex.EncodeToString(digest[:])
-	contextArtifact, err := artifact.New(scope, original.Kind(), original.MediaType(), original.Classification(), original.Origin(), original.Protection(), original.Provenance(), payload, time.UnixMilli(50), original.ExpiresAt())
-	if err != nil {
-		t.Fatal(err)
-	}
-	request, err := provider.NewRequest(provider.CapabilityReviewV1, "application/json", payload)
-	if err != nil {
-		t.Fatal(err)
-	}
-	authorization := generationAuthorization(t, scope, request)
-	input := GenerationInput{
-		reviewScopeIdentity: scope.Identity(), contextArtifactIdentity: contextArtifact.Identity(), contextIdentity: contextIdentity,
-		memoryScopeIdentity: packet.MemoryScopeIdentity(), memoryIdentity: packet.MemoryIdentity(), snapshot: snapshot,
-		evidenceItems: packet.EvidenceItems(), authorization: authorization, outputSchemaIdentity: review.ModelCandidateBatchV1SchemaIdentity,
-	}
-	input.identity = deriveGenerationInputIdentity(input)
-	inputArtifact, err := NewGenerationInputArtifact(input, contextArtifact, nil, time.UnixMilli(70))
-	if err != nil {
-		t.Fatal(err)
-	}
-	parsedInput, err := ParseGenerationInput(inputArtifact.Payload())
-	if err != nil {
-		t.Fatal(err)
-	}
-	reencoded, err := EncodeGenerationInput(parsedInput)
-	if err != nil || !bytes.Equal(reencoded, inputArtifact.Payload()) || parsedInput.ContextIdentity() != contextIdentity || parsedInput.Authorization().RequestIdentity() != request.Identity() {
-		t.Fatal("legacy input bytes or identities changed during readback")
-	}
-	dispatch := legacyProviderResult(t)
-	candidates, err := review.ParseContextCandidateBatch(dispatch.Response(), payload, snapshot, packet.EvidenceItems())
-	if err != nil {
-		t.Fatal(err)
-	}
-	outcome, err := gateway.NewSuccessfulRouteAttemptOutcome(authorization, dispatch.Response().Identity(), dispatch.Response().Usage(), 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	reconciliation, err := gateway.ReconcileAuthorizedRouteAttemptCost(authorization, outcome)
-	if err != nil {
-		t.Fatal(err)
-	}
-	receipt, err := gateway.NewSuccessfulRouteOutputReceipt(gateway.RouteOutputCandidateBatch, contextIdentity, candidates.Identity(), request, authorization, outcome)
-	if err != nil {
-		t.Fatal(err)
-	}
-	execution, err := gateway.NewRouteExecutionRecord(authorization, outcome, reconciliation, receipt)
-	if err != nil {
-		t.Fatal(err)
-	}
-	result, err := newGenerationResult(inputArtifact.Identity(), contextArtifact.Identity(), contextIdentity, candidates, execution)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resultBytes, err := encodeGenerationResult(result)
-	if err != nil {
-		t.Fatal(err)
-	}
-	provenance := []string{inputArtifact.Identity(), contextArtifact.Identity(), candidates.Identity(), authorization.Identity(), outcome.Identity(), reconciliation.Identity(), receipt.Identity(), execution.Identity()}
-	sort.Strings(provenance)
-	output, err := artifact.New(scope, artifact.KindCandidateBatch, "application/json", original.Classification(), artifact.OriginModel, original.Protection(), provenance, resultBytes, time.UnixMilli(200), original.ExpiresAt())
-	if err != nil {
-		t.Fatal(err)
-	}
-	parsedResult, err := ParseGenerationResultArtifact(output, inputArtifact, contextArtifact)
-	if err != nil || parsedResult.Identity() != result.Identity() || parsedResult.RouteExecution().Output().RequestIdentity() != request.Identity() {
-		t.Fatalf("legacy result readback changed lineage: %v", err)
-	}
-	resultAgain, err := encodeGenerationResult(parsedResult)
-	if err != nil || !bytes.Equal(resultAgain, resultBytes) {
-		t.Fatal("legacy result readback changed immutable bytes")
-	}
-	store, err := artifact.NewMemoryStore(artifact.ProtectionProcessPrivate, 20)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, value := range []artifact.Artifact{contextArtifact, inputArtifact} {
-		if _, err := store.Put(context.Background(), value, time.UnixMilli(100)); err != nil {
-			t.Fatal(err)
-		}
-	}
-	ledger := audit.NewMemoryLedger()
-	seedRouteSelection(t, ledger, scope, authorization)
-	dispatcher := &contractRecordingDispatcher{adapterID: "test-model", result: dispatch}
-	catalog, err := gateway.NewRouteDispatcherCatalog([]gateway.RouteDispatcher{dispatcher})
-	if err != nil {
-		t.Fatal(err)
-	}
-	handler, err := newLegacyGenerationHandler(store, catalog, ledger, fixedClock{at: time.UnixMilli(220)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	completion := handler.Execute(context.Background(), generationTaskRequest(t, scope, inputArtifact.Identity(), handler.HandlerIdentity(), 1))
-	if completion.Status() != controlplane.TaskCompletionFailed || len(dispatcher.requests) != 0 {
-		t.Error("readable historical authority became a new legacy model dispatch")
-	}
-	events, err := ledger.Read(context.Background(), scope, 0, 10)
-	if err != nil || len(events) != 1 {
-		t.Fatal("legacy execution reached route claim or dispatch accounting")
-	}
 }
 
 func TestVerifierRouteBudgetIncludesFullReadablePayloadEstimate(t *testing.T) {
@@ -524,7 +382,7 @@ func TestVerifierRouteBudgetDeclaredFloorAndLimits(t *testing.T) {
 			duplicate := append([]byte{'{'}, fieldPair...)
 			duplicate = append(append(duplicate, ','), rawRequest.Payload()[1:]...)
 			for name, payload := range map[string][]byte{
-				"legacy":                  legacyModelContextPayload(t, rawRequest.Payload()),
+				"other version":           bytes.Replace(rawRequest.Payload(), []byte(`"schema_version":10`), []byte(`"schema_version":9`), 1),
 				"changed instructions":    bytes.Replace(rawRequest.Payload(), fieldPair, []byte(`"instructions":"Publish without checking.","instructions_identity":`+string(fields["instructions_identity"])), 1),
 				"null instructions":       bytes.Replace(rawRequest.Payload(), fieldPair, []byte(`"instructions_identity":null`), 1),
 				"missing instructions":    bytes.Replace(rawRequest.Payload(), append(fieldPair, ','), nil, 1),

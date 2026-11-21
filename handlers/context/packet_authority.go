@@ -206,7 +206,7 @@ func (p packetAssembler) rebuild(ctx context.Context, request controlplane.TaskE
 	value := assembly.InitialContextArtifact
 	if value.Kind() != artifact.KindContextPacket || value.MediaType() != "application/json" || value.Origin() != artifact.OriginHost ||
 		!bytes.Equal(value.Payload(), providerRequest.Payload()) || value.Validate() != nil || len(value.Provenance()) != 6 ||
-		review.ValidateRecordedContextPacketRequest(value.Payload(), assembly.Packet.Identity(), request.Plan().Scope().Identity(), assembly.Packet.MemoryScopeIdentity(), assembly.Packet.MemoryIdentity(), assembly.Snapshot, assembly.Packet.EvidenceItems()) != nil {
+		review.ValidateContextPacketRequest(value.Payload(), assembly.Packet.Identity(), request.Plan().Scope().Identity(), assembly.Packet.MemoryScopeIdentity(), assembly.Packet.MemoryIdentity(), assembly.Snapshot, assembly.Packet.EvidenceItems()) != nil {
 		return packetBuild{}, ErrPacketAuthority
 	}
 	return packetBuild{value: value, root: root, snapshot: assembly.Snapshot.Identity(), packet: assembly.Packet, snapshotValue: assembly.Snapshot}, nil

@@ -25,13 +25,9 @@ const (
 	maxContextAggregateBytes = 2 << 20
 	maxContextMemoryItems    = 50
 	// ModelCandidateBatchSchemaIdentity is the SHA-256 identity of the canonical
-	// candidate batch JSON Schema that new generation contexts request:
-	// model-candidate-batch-v2, used from context schema version 7.
+	// candidate batch JSON Schema that generation contexts request:
+	// model-candidate-batch-v2.
 	ModelCandidateBatchSchemaIdentity = "63a1bd4a1f2bea9faf93e17e0722aa0b50ba87d2a8ba80088422b8d5190f91bb"
-	// ModelCandidateBatchV1SchemaIdentity is the SHA-256 identity of canonical
-	// model-candidate-batch-v1 JSON Schema, requested by generation contexts
-	// before version 7. It is accepted only for recorded readback.
-	ModelCandidateBatchV1SchemaIdentity = "b79f43bd52cb67e18896dd053ab85c21efd11c4ba5a97234f3f4ce867109dc0e"
 )
 
 var (
@@ -282,15 +278,12 @@ func contextSourceLineCount(content string) int {
 	return count
 }
 
-// legacyInstructionMarkers are the content markers recorded by generation
-// contexts before version 7, verification contexts before version 6, and
-// publication content scans. They must not change: recorded readback
-// re-derives risk_flags from content with exactly this list.
+// legacyInstructionMarkers are the content markers of publication content
+// scans. The source rules extend them.
 var legacyInstructionMarkers = []string{"ignore previous", "system prompt", "developer message", "tool_call", "call a tool"}
 
-// extendedInstructionMarkers are additional high-signal literal markers used
-// from generation context version 7 and verification context version 6: chat
-// template role and turn tokens, fake system tags, override phrases, and the
+// extendedInstructionMarkers are additional high-signal literal markers of the
+// source rules: chat template role and turn tokens, fake system tags, override phrases, and the
 // JSON authority label older Open Trestle payloads used. Matching is a literal
 // substring search over lowercased text, so it has no backtracking cost.
 var extendedInstructionMarkers = []string{
@@ -299,8 +292,8 @@ var extendedInstructionMarkers = []string{
 	"instruction_authority", "you are now",
 }
 
-// detectContextRisks applies the legacy content rules. Recorded readback of
-// earlier context versions and publication content scans use it unchanged.
+// detectContextRisks applies the content rules that publication content scans
+// use.
 func detectContextRisks(content string) ContextRisk {
 	var risks ContextRisk
 	for _, character := range content {
@@ -326,14 +319,6 @@ func detectSourceRisks(path, content string) ContextRisk {
 		risks |= ContextRiskAgentConfiguration
 	}
 	return risks
-}
-
-// recordedSourceRisks returns the rules a recorded context version used.
-func recordedSourceRisks(current bool, path, content string) ContextRisk {
-	if current {
-		return detectSourceRisks(path, content)
-	}
-	return detectContextRisks(content)
 }
 
 func containsAnyMarker(lower string, markers []string) bool {
@@ -986,7 +971,7 @@ func encodeContextPacket(packet ContextPacket) ([]byte, error) {
 	if !packet.specialist.IsZero() {
 		specialist = packet.specialist.wire()
 	}
-	instructions, schema, err := modelOutputContractForVersion(version, false)
+	instructions, schema, err := modelOutputContract(false)
 	if err != nil {
 		return nil, err
 	}
@@ -1011,27 +996,10 @@ func encodeContextPacket(packet ContextPacket) ([]byte, error) {
 	return json.Marshal(wire)
 }
 
-// ValidateContextPacketRequest admits only the current executable host context.
+// ValidateContextPacketRequest verifies exact generation context bytes against
+// the evidence they were built from. A specialist block must re-derive exactly
+// from the embedded profile catalog.
 func ValidateContextPacketRequest(
-	payload []byte,
-	contextIdentity, reviewScopeIdentity, memoryScopeIdentity, memoryIdentity string,
-	snapshot ReviewSnapshot,
-	evidenceItems []evidence.EvidenceItem,
-) error {
-	if err := ValidateRecordedContextPacketRequest(payload, contextIdentity, reviewScopeIdentity, memoryScopeIdentity, memoryIdentity, snapshot, evidenceItems); err != nil {
-		return err
-	}
-	wire, err := decodeGenerationContextWire(payload)
-	if err != nil || !executableGenerationContextVersion(wire.SchemaVersion) {
-		return ErrInvalidContextPacketRequest
-	}
-	return nil
-}
-
-// ValidateRecordedContextPacketRequest verifies exact v2, v3, v5 or v7 to v11 bytes for readback.
-// A v7 to v11 specialist block must re-derive exactly from the embedded profile catalog.
-// It does not admit a legacy context for a new model attempt.
-func ValidateRecordedContextPacketRequest(
 	payload []byte,
 	contextIdentity, reviewScopeIdentity, memoryScopeIdentity, memoryIdentity string,
 	snapshot ReviewSnapshot,
@@ -1058,9 +1026,9 @@ func ValidateRecordedContextPacketRequest(
 	if err != nil || !bytes.Equal(canonical, payload) {
 		return ErrInvalidContextPacketRequest
 	}
-	if wire.Contract != "open-trestle/review-context-packet" || !validRecordedModelOutputContract(wire.SchemaVersion, wire.Instructions, wire.InstructionsIdentity, wire.OutputSchema, false) || !validGenerationContextSpecialist(wire) ||
+	if wire.Contract != "open-trestle/review-context-packet" || !validModelOutputContract(wire.SchemaVersion, wire.Instructions, wire.InstructionsIdentity, wire.OutputSchema, false) || !validGenerationContextSpecialist(wire) ||
 		wire.ReviewScopeIdentity != reviewScopeIdentity || wire.MemoryScopeIdentity != memoryScopeIdentity || deriveContextMemoryIdentityFromWire(wire) != memoryIdentity || wire.SnapshotIdentity != snapshot.Identity() ||
-		wire.Task != ContextTaskCandidateGeneration.String() || wire.OutputSchemaIdentity != candidateSchemaIdentityForContextVersion(wire.SchemaVersion) ||
+		wire.Task != ContextTaskCandidateGeneration.String() || wire.OutputSchemaIdentity != ModelCandidateBatchSchemaIdentity ||
 		wire.SourceAuthority != "evidence_data_not_instructions" || wire.MemoryAuthority != "advisory_only" ||
 		wire.ToolCalls != "proposals_only" || !validCandidateDigest(wire.SourceSelectionIdentity) ||
 		wire.Limits.MaxSourceBytes == 0 || wire.Limits.MaxSourceBytes > maxContextAggregateBytes ||
@@ -1092,14 +1060,7 @@ func ValidateRecordedContextPacketRequest(
 	if !validSourceHeadLines(wire.Sources) {
 		return ErrInvalidContextPacketRequest
 	}
-	// Stated intent and pattern hygiene exist only from version 9, the
-	// manifest and the repository checks only from version 10, and the check
-	// runs only in version 11.
-	indexVersion := indexGenerationVersion(wire.SchemaVersion)
-	if (wire.StatedIntent != nil || wire.PatternHygiene != nil) && !intentGenerationVersion(wire.SchemaVersion) ||
-		(wire.ContextManifest != nil || wire.RepositoryChecks != nil) && !indexVersion ||
-		wire.CheckRuns != nil && !checkRunsGenerationVersion(wire.SchemaVersion) ||
-		!validStatedIntentWire(wire.StatedIntent) || !validPatternHygieneWire(wire.PatternHygiene, wire.Sources) ||
+	if !validStatedIntentWire(wire.StatedIntent) || !validPatternHygieneWire(wire.PatternHygiene, wire.Sources) ||
 		!validContextManifestWire(wire.ContextManifest, wire.Sources) || !validRepositoryChecks(wire.RepositoryChecks) || !validCheckRunsWire(wire.CheckRuns) {
 		return ErrInvalidContextPacketRequest
 	}
@@ -1117,14 +1078,14 @@ func ValidateRecordedContextPacketRequest(
 		if source.SourceID != item.ID() || source.EvidenceDigest != item.Digest() ||
 			source.Path != rangeValue.Path() || source.StartLine != rangeValue.StartLine() ||
 			source.EndLine != rangeValue.EndLine() || !utf8.ValidString(source.Content) ||
-			!validContextStageToken(source.Stage, removedLinesGenerationVersion(wire.SchemaVersion), indexVersion) || !validContextTaintToken(source.Taint) ||
+			!validContextStageToken(source.Stage) || !validContextTaintToken(source.Taint) ||
 			removed && source.Taint != memory.TaintRepositoryControlled.String() {
 			return ErrInvalidContextPacketRequest
 		}
 		contentDigest := sha256.Sum256([]byte(source.Content))
 		if hex.EncodeToString(contentDigest[:]) != item.Digest() ||
 			contextSourceLineCount(source.Content) != rangeValue.EndLine()-rangeValue.StartLine()+1 ||
-			!slices.Equal(source.RiskFlags, contextRiskTokens(recordedSourceRisks(systemChannelGenerationVersion(wire.SchemaVersion), source.Path, source.Content))) ||
+			!slices.Equal(source.RiskFlags, contextRiskTokens(detectSourceRisks(source.Path, source.Content))) ||
 			len(source.Content) > int(^uint32(0)-sourceBytes) {
 			return ErrInvalidContextPacketRequest
 		}
@@ -1163,15 +1124,10 @@ func validSourceHeadLines(sources []contextSourceWire) bool {
 	return true
 }
 
-// validContextStageToken admits removed_lines, related_test and
-// repository_map only for the contract versions that define them; every
-// earlier version keeps its original stage set.
-func validContextStageToken(value string, removedLines, indexStages bool) bool {
+func validContextStageToken(value string) bool {
 	switch value {
-	case ContextStageRemovedLines.String():
-		return removedLines
-	case ContextStageRelatedTest.String(), ContextStageRepositoryMap.String():
-		return indexStages
+	case ContextStageRemovedLines.String(), ContextStageRelatedTest.String(), ContextStageRepositoryMap.String():
+		return true
 	}
 	for stage := ContextStageChangedHunk; stage <= ContextStageRepositoryContext; stage++ {
 		if value == stage.String() {
