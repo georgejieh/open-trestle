@@ -1,9 +1,9 @@
 # Platforms
 
-Linux, macOS and Windows all run the same review loop with the same secret scan
-helper. This page says what each system can do now, so that you can tell a
-missing feature from a mistake. See the [roadmap](roadmap.md#next-release) for
-what the release adds.
+The same review code builds for Linux, macOS and Windows. Linux and Windows are
+tested; macOS is not. This page says what each system can do now, so that you
+can tell a missing feature from a mistake. See the
+[roadmap](roadmap.md#next-release) for what the release adds.
 
 ## What works today
 

@@ -63,7 +63,7 @@ Because the request requires ZDR, OpenRouter refuses it instead of sending it to
 
 `allow_fallbacks` is true so that OpenRouter may retry a request on another pinned endpoint when the one it picked fails. Without it, OpenRouter serves a request only from its top-ranked endpoint, and one failing endpoint would fail the review. Fallback never leaves `only`. If no endpoint in `only` serves the model, OpenRouter refuses the request with HTTP 404 even with `allow_fallbacks` true.
 
-Each request has a deadline of two minutes per 4096 tokens of its output allowance, with a minimum of two minutes and a maximum of five. The 16384-token allowance that setup aims for therefore gets the full five minutes, and a smaller allowance gets less. A caller's earlier deadline still wins. See [the request deadline](openai-provider.md#sanitized-egress-boundary).
+The 16384-token allowance that setup aims for gets the longest request deadline, five minutes (see [the request deadline](remote-model-review.md#output-allowance-and-request-deadline)).
 
 The setup summary, `bootstrap check` (`data_retention: required_per_request`) and the wizard all say that ZDR is required on every request. This describes the request, not what a provider retains. OpenRouter documents legal exceptions to ZDR, such as CSAM handling.
 
@@ -100,55 +100,7 @@ The witness's `observation` holds what the API reported, or `null` when the API 
 
 The witness records what the API reported at one moment. A route without ZDR records the same observation, without endpoint facts, in an informational `openrouter_route` member labelled `not_required_by_open_trestle`.
 
-### Synthetic format example
-
-This witness is an offline example of the format, not an observation of OpenRouter. Setup writes the real one, so do not copy this.
-
-```json
-{
-  "openrouter_privacy": {
-    "contract": "open-trestle/openrouter-privacy-witness",
-    "schema_version": 3,
-    "route": {
-      "zone": "brokered_remote",
-      "provider_id": "openrouter",
-      "adapter_id": "openrouter-generation",
-      "connection_id": "openrouter/generation",
-      "model_id": "vendor/model",
-      "model_version": "",
-      "effective_selector": "vendor/model"
-    },
-    "endpoint": "https://openrouter.ai/api/v1",
-    "request_profile": "openrouter_zdr_chat_v2",
-    "protocol": "openai_chat_completions",
-    "credential_mode": "bearer",
-    "credential_reference_identity": "99d4435c2238d0cdf988ace246b7f44305262a35bd1c45ebe0559ed0d0286e4c",
-    "tenant_id": "personal",
-    "repository_id": "project",
-    "zero_data_retention": "required_per_request",
-    "provider_slugs": ["fixture-cloud", "fixture-cloud/us"],
-    "provider_slug_source": "openrouter_api",
-    "observation": {
-      "authority_label": "as reported by OpenRouter's API at 2026-11-10T21:00:00Z; not reviewed or verified by the operator",
-      "retrieved_at": "2026-11-10T21:00:00Z",
-      "sources": [
-        {"url": "https://openrouter.ai/api/v1/endpoints/zdr", "retrieved_at": "2026-11-10T21:00:00Z", "content_sha256": "e6b11692df5754cdf6d2c71791df04ea1c3cc6483d887ce7ba5c4f491caee63a"},
-        {"url": "https://openrouter.ai/api/v1/models", "retrieved_at": "2026-11-10T21:00:01Z", "content_sha256": "4df85e58e5206a5a1ae7fc7d672ca80a270bc9c3b4332fa14a122201c4aae40b"}
-      ],
-      "zdr_endpoints": [
-        {"tag": "fixture-cloud", "provider_name": "Fixture Cloud", "context_length": 200000, "max_prompt_tokens": 0, "max_completion_tokens": 64000, "prompt_micro_usd_per_million_tokens": 3000000, "completion_micro_usd_per_million_tokens": 15000000, "structured_outputs": true},
-        {"tag": "fixture-cloud/us", "provider_name": "Fixture Cloud", "context_length": 200000, "max_prompt_tokens": 0, "max_completion_tokens": 64000, "prompt_micro_usd_per_million_tokens": 3300000, "completion_micro_usd_per_million_tokens": 16500000, "structured_outputs": true}
-      ],
-      "safety_retention_endpoints_excluded": ["fixture-safety/global"],
-      "output_limit_endpoints_excluded": [
-        {"tag": "fixture-small/fp4", "max_completion_tokens": 4096}
-      ]
-    }
-  }
-}
-```
-
-Every member is required and closed. Only `observation` may be `null`. The slug rules are:
+Every member of the witness is required and closed. Only `observation` may be `null`. The slug rules are:
 
 - Slugs use lowercase letters, digits, `-`, `_`, `.` and `/`, are at most 256 bytes each, and are distinct. There are at most 32.
 - With `openrouter_api`, the slugs are exactly the observed endpoint tags, in order. `operator` needs at least one slug, and `none` has none.
@@ -180,7 +132,7 @@ For an OpenRouter route, HTTP 404 means that OpenRouter served no endpoint for t
 
 A 404 records `failure_detail` `provider_no_allowed_endpoint` and this hint: "OpenRouter has no endpoint for this model that the request may use: if zero data retention is required (by this setup or by your OpenRouter account or key settings), choose a model with zero-data-retention endpoints and run trestle init again (https://openrouter.ai/docs/guides/features/zdr); otherwise check the model ID". The daemon still records the generic `provider_model_unavailable` reason.
 
-OpenRouter answers an unknown model ID with HTTP 400 instead. That is a rejected request, not a ZDR refusal. It records `provider_request_rejected` with the hint to check the model ID (see [provider refusals](local-model-review.md#provider-refusals)).
+OpenRouter answers an unknown model ID with HTTP 400 instead. That is a rejected request, not a ZDR refusal. It records `provider_request_rejected` with the hint to check the model ID (see [provider failures](remote-model-review.md#provider-failures)).
 
 ## Earlier reviewed setups
 

@@ -332,7 +332,7 @@ Webhook schemas:
 
 The daemon API response carries exactly one of these: a run receipt, an immutable run plan, a task lease, a task-notification lease, a diagnostic set or a sanitized error. The diagnostic versions differ as follows.
 
-- Versions 1 through 5 contain independently verified finding contracts.
+- Version 5 contains independently verified finding contracts.
 - Version 8 is version 5 plus a recorded line side on each finding. It is written exactly when a verified finding is on removed base lines.
 - Version 6 contains deterministic observations and does not present them as verified findings.
 - Version 7 is a final-only full-review result with a terminal outcome and optional exact records: a version 6 deterministic record and a version 5 verified record (or, with a base-side finding, version 8). Absent verified evidence does not mean zero verified findings.

@@ -72,11 +72,11 @@ Files are analysed in worker processes, one per CPU within half of the memory (t
 ```sh
 trestle index build [--commit REF] [--directory PATH]
 trestle index status [--commit REF] [--directory PATH]
-trestle index query definitions NAME [--commit REF]
-trestle index query references NAME [--commit REF]
-trestle index query tests NAME [--commit REF]
-trestle index query imports PATH [--commit REF]
-trestle index query dependents --base REF [--commit REF]
+trestle index query definitions NAME [--commit REF] [--directory PATH]
+trestle index query references NAME [--commit REF] [--directory PATH]
+trestle index query tests NAME [--commit REF] [--directory PATH]
+trestle index query imports PATH [--commit REF] [--directory PATH]
+trestle index query dependents --base REF [--commit REF] [--directory PATH]
 ```
 
 `--commit` defaults to `HEAD`; `--directory` names the setup folder. `build` and `status` print counts only. Queries print JSON, in which every name and path is a JSON string, with control, format and bidirectional characters escaped. Each answer has a `coverage` object: the build's coverage, the files by status, the files with each kind of analysis gap, and `complete`. `complete` is false when the tree was cut, a path or a `go.mod` file was left out, a file that should have an analysis has none or an analysis has a gap, and for `dependents` also when a change was approximated or a limit cut the closure: a reference in such a place is not seen. A query indexes the commits it needs first.

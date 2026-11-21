@@ -134,6 +134,15 @@ A failure with no detail:
 A review that exits `3` with `no_candidates` or incomplete coverage is not a
 clearance. Read the `limitations`, and run the review again with `--verbose`.
 
+## Repository checks did not run
+
+The walkthrough says `could not run` for a check that was skipped, with the
+reason. The reasons are no sandbox on this machine (for example unprivileged user
+namespaces turned off or restricted by AppArmor on Linux, or the `NUL` device on
+Windows), a missing toolchain, a missing dependency (checks run offline) and a
+limit reached. Run `trestle checks status` to see whether the sandbox is
+available. See [repository checks](repository-checks.md#could-not-run).
+
 ## Updating
 
 | Message | Fix |

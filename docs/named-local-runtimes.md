@@ -60,8 +60,8 @@ Use only the `qwen3:8b` and `gemma3:4b` artifacts that are already present local
 > to Ollama Cloud, so your source would leave this machine. The local bootstrap
 > and `trestle init` refuse such a model with "this model runs on Ollama Cloud,
 > not on this machine; use --provider ollama-signin". They refuse a cloud name
-> whether or not the server lists it, read the server's `/api/tags` list once
-> at setup for the `remote_host` check, and refuse when an Ollama daemon answers
+> whether or not the server lists it, read the server's `/api/tags` list at
+> setup (once for each model role) for the `remote_host` check, and refuse when an Ollama daemon answers
 > that path but its list cannot be read.
 > To use those models deliberately, as remote egress with the sanitizer and
 > secret scanner, see
@@ -114,33 +114,27 @@ The probe sends a tiny synthetic source function through the candidate and verif
 
 These files also feed the local model-review and opt-in full-review runtime paths. See [Local model review](local-model-review.md) for source selection and [Setup plan](setup.md) for the setup plan.
 
-## Offline fixtures and limits
+## Servers without an API key
 
-Each named directory ships `generation.response.json`, `verification.response.json` and `refusal.response.json`. These are synthetic protocol fixtures based on the documented Chat contract, **not recorded live service responses**. The selectors match the templates, and the llama.cpp fixtures include its documented timings extension. Local models may express a refusal as ordinary text, and Open Trestle does not convert that text into a structured refusal; it cannot pass candidate or verifier JSON admission.
+Some local model servers do not need an API key. Runtime policy schema v2 lets you declare that with `credential_mode: "none"` on a connection. It applies to an approved `local` route whose endpoint is a numeric loopback address, and it works with the `openai_responses` and `openai_chat_completions` implementations. The templates above use it.
 
-`setup/named_local_runtimes_test.go` copies and binds these templates into temporary files. Only those copies receive synthetic approved and healthy declarations and temporary fixture endpoints. The tests cover these cases:
+```json
+{
+  "implementation": "openai_chat_completions",
+  "adapter_id": "local-chat",
+  "endpoint": "http://127.0.0.1:1234/v1",
+  "credential_mode": "none"
+}
+```
 
-- Pending templates bind but cannot pass setup readiness.
-- The shared confined local transport sends the selector, the POST path, system and user messages, no authentication, `max_tokens` and `stream:false`.
-- Known prompt and completion usage is accepted. Absent usage stays unknown. Inconsistent totals and mismatched returned selectors are refused.
-- A refusal does not become a finding. Setup requires valid empty candidate and verifier objects and known, bounded usage.
-- Cancellation before dispatch sends nothing. In-flight cancellation stops the client, and the fake server observes it. No server cancel or abort endpoint is called, so a real engine may keep working.
-- The setup inference checker reaches both shared adapters, parses the contracts and passes for a synthetic pair, for every template.
+Do not include `credential_environment`, even as an empty string or null. No key, placeholder or environment reference is needed, and Open Trestle does not resolve credentials or send an Authorization header for this connection. The inventory must still contain a matching approved `local` namespace, and schema v2 requires its explicit grant for a verification route. Pass the protected runtime policy and route inventory to `trestle local-git model-review` as usual.
 
-The decoder limits response bodies to 8 MiB and rejects unknown fields. Timings do not fill in missing usage. Separate adapter tests reject malformed, negative, overflowing or unknown timings, invalid reasoning types and oversize bodies, and they show that reasoning text does not become review content.
+If you omit `credential_mode`, the connection keeps bearer authentication and still requires its credential environment. An explicit `"bearer"` does not change that connection's identity.
 
-The fixtures do not show that a live service conforms or that your host works.
+Open Trestle refuses `none` for a remote endpoint, a remote route zone, a loopback hostname such as `localhost`, and a connection with conflicting credential authority. Setting `none` does not approve a route or change sanitization or logging policy, and Open Trestle cannot tell whether a local server forwards content elsewhere.
 
-## Official references
+## Offline fixtures
 
-These were read on 2026-10-31. They are current documentation URLs, not a pinned server version. Check them against your installed version.
+Each named directory ships `generation.response.json`, `verification.response.json` and `refusal.response.json`. These are synthetic protocol fixtures based on the documented Chat contract, not recorded live service responses. The tests in `setup/named_local_runtimes_test.go` bind copies of the templates and check them against the shared adapters. The fixtures do not show that a live service conforms or that your host works.
 
-- [llama.cpp server](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md): alias, host, port and context flags, the Chat endpoint, and standard usage, timings and reasoning content. llama.cpp makes no universal claim of OpenAI compatibility.
-- [Ollama OpenAI compatibility](https://docs.ollama.com/api/openai-compatibility): local `/v1/chat/completions`, model selectors, the supported subset and the cloud relay.
-- [Ollama FAQ](https://docs.ollama.com/faq): `OLLAMA_NO_CLOUD`, loopback binding, confirmation by restart and log, context length and local-only mode.
-- [vLLM online serving](https://docs.vllm.ai/en/latest/serving/online_serving/): the Chat route and the chat-template requirement.
-- [vLLM serve arguments](https://docs.vllm.ai/en/stable/cli/serve/): the local model path, binding, context length and the rule that the response uses the first served name.
-- [vLLM usage statistics](https://docs.vllm.ai/en/stable/usage/usage_stats/): the explicit opt-out from metadata collection.
-- [LM Studio Chat](https://lmstudio.ai/docs/developer/openai-compat/chat-completions): the Chat endpoint and the supported `messages`, `max_tokens`, `stream` and model fields.
-- [LM Studio load](https://lmstudio.ai/docs/cli/local-models/load) and [server start](https://lmstudio.ai/docs/cli/serve/server-start): local keys, exact custom identifiers, context length and an explicit loopback bind.
-- [LM Studio offline operation](https://lmstudio.ai/docs/app/offline) and [system requirements](https://lmstudio.ai/docs/app/system-requirements): serving of downloaded local models and the requirements of the selected Mac host.
+The adapter decoder limits response bodies to 8 MiB and rejects unknown fields. A local model may express a refusal as ordinary text, and Open Trestle does not convert that text into a structured refusal; it cannot pass candidate or verifier JSON admission.
