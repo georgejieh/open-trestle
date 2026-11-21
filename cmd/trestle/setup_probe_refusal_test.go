@@ -61,7 +61,7 @@ func TestSetupBootstrapCheckNamesTheProbeRefusal(t *testing.T) {
 				t.Fatalf("a check without the probe carried messages: %v", unprobed.Messages)
 			}
 			var out, errOut bytes.Buffer
-			code := runSetupWithClock([]string{"bootstrap", "check", "--directory", dir, "--approved-by", "owner", "--allow-local-probe"}, &out, &errOut, fixedSetupClock{setupTimeCLI()})
+			code := runSetup([]string{"bootstrap", "check", "--directory", dir, "--approved-by", "owner", "--allow-local-probe"}, &out, &errOut)
 			var result setupBootstrapResult
 			if code != 4 || errOut.Len() != 0 || json.Unmarshal(out.Bytes(), &result) != nil {
 				t.Fatalf("code=%d out=%s err=%s", code, out.String(), errOut.String())

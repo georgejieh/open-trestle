@@ -26,7 +26,7 @@ func TestSetupBootstrapLocalMaxOutputTokens(t *testing.T) {
 	for _, value := range []string{"8193", "4095"} {
 		refused, _, _, _ := bootstrapFixture(t)
 		var out, errOut bytes.Buffer
-		if code := runSetupWithClock(append([]string{"bootstrap"}, append(refused, "--max-output-tokens", value)...), &out, &errOut, fixedSetupClock{setupTimeCLI()}); code != 2 {
+		if code := runSetup(append([]string{"bootstrap"}, append(refused, "--max-output-tokens", value)...), &out, &errOut); code != 2 {
 			t.Fatalf("--max-output-tokens %s accepted: code=%d", value, code)
 		}
 	}

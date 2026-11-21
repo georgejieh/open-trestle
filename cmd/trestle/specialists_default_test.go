@@ -67,7 +67,7 @@ func TestLocalBootstrapSavesSpecialistsAutoByDefault(t *testing.T) {
 	invalid := slices.Clone(args)
 	invalid[index+1] = "bug_hunter"
 	var out, errOut bytes.Buffer
-	if code := runSetupWithClock(append([]string{"bootstrap"}, invalid...), &out, &errOut, fixedSetupClock{setupTimeCLI()}); code != 2 {
+	if code := runSetup(append([]string{"bootstrap"}, invalid...), &out, &errOut); code != 2 {
 		t.Fatalf("--specialists bug_hunter was accepted by setup: exit %d", code)
 	}
 	defaulted := slices.Delete(slices.Clone(args), index, index+2)
