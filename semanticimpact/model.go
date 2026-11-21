@@ -19,7 +19,6 @@ const (
 	maximumFileBytes      = 2 << 20
 	maximumTotalBytes     = 128 << 20
 	maximumDeclarations   = 8192
-	maximumReferences     = 32768
 	maximumGaps           = 4096
 	maximumSourcePosition = maximumFileBytes + 1
 )
@@ -31,10 +30,7 @@ var (
 
 type Grade string
 
-const (
-	GradeStructural         Grade = "structural"
-	GradeSyntacticCandidate Grade = "syntactic_candidate"
-)
+const GradeStructural Grade = "structural"
 
 type Change string
 
@@ -221,16 +217,6 @@ func (d Declaration) SyntaxDigest() string  { return d.syntaxDigest }
 func (d Declaration) APIDigest() string     { return d.apiDigest }
 func (d Declaration) PublicAPIChange() bool { return d.publicAPIChange }
 
-// recordedReference is a name-matched reference candidate of a version 1
-// profile, kept only so that a recorded profile reads back byte for byte.
-// Reviews take references from the repository index.
-type recordedReference struct {
-	identity, declarationIdentity, declarationKey, filePath string
-	line, column                                            int
-	affectedTest                                            bool
-	grade                                                   Grade
-}
-
 type Gap struct {
 	identity, filePath, detail string
 	reason                     GapReason
@@ -259,7 +245,6 @@ func NewCoverageGap(filePath string, reason GapReason) (Gap, error) {
 type Profile struct {
 	identity, adapterIdentity, graphSchema, inputIdentity, baseSnapshotIdentity, headSnapshotIdentity, changeModelIdentity string
 	declarations                                                                                                           []Declaration
-	references                                                                                                             []recordedReference
 	gaps                                                                                                                   []Gap
 }
 

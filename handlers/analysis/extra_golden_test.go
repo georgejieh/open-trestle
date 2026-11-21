@@ -159,12 +159,9 @@ func TestOldCodeHandlerProducedBranchGoldens(t *testing.T) {
 	}
 }
 
-// A removed file was once analysed as a lone removed_file gap (version 4).
-// Those recorded bytes still read back; the live handler now also binds the
-// removed base text beside the gap.
-func TestOldCodeRemovedFileGapGoldenStillReadsBack(t *testing.T) {
-	verifyOldCodeGolden(t, readOldCodeGolden(t, "produced-v4-removed-file-gap"))
-	base, head, change, output := executeOldCodeScenario(t, "produced-v4-removed-file-gap", map[string][]byte{"removed.txt": []byte("gone\n")}, map[string][]byte{})
+// A removed file is a removed_file gap with its removed base text bound.
+func TestRemovedFileBindsRemovedText(t *testing.T) {
+	base, head, change, output := executeOldCodeScenario(t, "produced-v7-removed-file", map[string][]byte{"removed.txt": []byte("gone\n")}, map[string][]byte{})
 	result, err := ParseResultArtifact(output, change, base, head)
 	if err != nil {
 		t.Fatal(err)
