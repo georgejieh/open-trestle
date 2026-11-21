@@ -1,13 +1,9 @@
 import {
-  Component,
-  lazy,
-  Suspense,
   useMemo,
   useEffect,
   useRef,
   useState,
   type FormEvent,
-  type ReactNode,
   type RefObject,
 } from "react";
 import { ShieldCheck } from "./ShieldCheck";
@@ -1054,48 +1050,7 @@ function RuntimeView({
   );
 }
 
-const SetupConsole = lazy(() => import("./SetupApp"));
-class SetupLoadBoundary extends Component<
-  { children: ReactNode },
-  { failed: boolean }
-> {
-  state = { failed: false };
-  static getDerivedStateFromError() {
-    return { failed: true };
-  }
-  render() {
-    return this.state.failed ? (
-      <div className="setup-loading setup-load-error" role="alert">
-        <strong>Setup interface could not load</strong>
-        <span>Reload this local page to try again.</span>
-        <button type="button" onClick={() => window.location.reload()}>
-          Reload setup
-        </button>
-      </div>
-    ) : (
-      this.props.children
-    );
-  }
-}
 export function App() {
-  return window.location.pathname === "/console/setup" ? (
-    <SetupLoadBoundary>
-      <Suspense
-        fallback={
-          <div className="setup-loading" role="status">
-            Loading protected setup
-          </div>
-        }
-      >
-        <SetupConsole />
-      </Suspense>
-    </SetupLoadBoundary>
-  ) : (
-    <ReviewConsole />
-  );
-}
-
-function ReviewConsole() {
   const [scope, setScope] = useState<Scope>(rememberedScope);
   const [token, setToken] = useState("");
   const [receipt, setReceipt] = useState<RunReceipt | null>(null);

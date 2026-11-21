@@ -5,7 +5,6 @@ import { StatusIcon, type StatusValue } from "./Icons";
 const expectedMarks: Record<StatusValue, string> = {
   active: "active",
   available: "available",
-  blocked: "failed",
   canceled: "unavailable",
   failed: "failed",
   incomplete: "incomplete",

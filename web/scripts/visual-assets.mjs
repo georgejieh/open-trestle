@@ -5,8 +5,7 @@ export function visualAssetPath(target, method, assets) {
     !["GET", "HEAD"].includes(method)
   )
     return null;
-  if (target === "/console/" || target === "/console/setup")
-    return "index.html";
+  if (target === "/console/") return "index.html";
   if (target === "/console/favicon.svg") return "favicon.svg";
   if (target === "/console/not-found.css") return "not-found.css";
   const match = /^\/console\/assets\/([A-Za-z0-9_-]+\.(?:js|css))$/.exec(

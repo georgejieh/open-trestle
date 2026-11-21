@@ -5,11 +5,7 @@ import { dirname, join, sep } from "node:path";
 import test from "node:test";
 import { checkDistribution } from "./check-dist.mjs";
 
-const expectedAssets = [
-  "index-Abc_123-.js",
-  "SetupApp-Xyz_987-.js",
-  "index-Abc_123-.css",
-];
+const expectedAssets = ["index-Abc_123-.js", "index-Abc_123-.css"];
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), "trestle-dist-"));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -32,11 +28,11 @@ async function fixture(t) {
   return { root, dist, publicDirectory };
 }
 
-test("accepts only the fixed public file and three hashed build assets", async (t) => {
+test("accepts only the fixed public file and two hashed build assets", async (t) => {
   const { dist, publicDirectory } = await fixture(t);
   const result = await checkDistribution(dist, publicDirectory);
-  assert.deepEqual(result.javascript, [expectedAssets[1], expectedAssets[0]]);
-  assert.equal(result.css, expectedAssets[2]);
+  assert.deepEqual(result.javascript, [expectedAssets[0]]);
+  assert.equal(result.css, expectedAssets[1]);
 });
 
 for (const location of ["dist", "public"]) {
@@ -82,7 +78,6 @@ for (const name of [
   "not-found.html",
   "assets",
   "assets/index-Abc_123-.js",
-  "assets/SetupApp-Xyz_987-.js",
   "assets/index-Abc_123-.css",
 ]) {
   test(`rejects missing dist/${name}`, async (t) => {

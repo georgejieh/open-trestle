@@ -2,11 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { visualAssetPath } from "./visual-assets.mjs";
 
-const assets = new Set([
-  "index-AbCd1234.js",
-  "SetupApp-EfGh5678.js",
-  "index-IjKl9012.css",
-]);
+const assets = new Set(["index-AbCd1234.js", "index-IjKl9012.css"]);
 
 test("visual fixture never resolves outside its console allowlist", () => {
   for (const path of [
@@ -31,10 +27,6 @@ test("visual fixture never resolves outside its console allowlist", () => {
 test("visual fixture admits only known assets and read methods", () => {
   for (const method of ["GET", "HEAD"]) {
     assert.equal(visualAssetPath("/console/", method, assets), "index.html");
-    assert.equal(
-      visualAssetPath("/console/setup", method, assets),
-      "index.html",
-    );
     assert.equal(
       visualAssetPath("/console/favicon.svg", method, assets),
       "favicon.svg",
