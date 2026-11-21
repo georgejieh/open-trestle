@@ -41,12 +41,12 @@ Both models receive the outcomes as the `check_runs` object: each check's name, 
 
 | | Linux | Windows | macOS |
 | --- | --- | --- | --- |
-| Mechanism | unprivileged user, mount, PID, network, IPC, UTS and cgroup namespaces, a seccomp filter, `no_new_privs` | an AppContainer with no capabilities, under a restricted token in which your account's SID only denies, in a job object | `sandbox-exec` with a deny-by-default profile |
+| Mechanism | unprivileged user, mount, PID, network, IPC, UTS and cgroup namespaces, a seccomp filter, `no_new_privs` | an AppContainer with no capabilities, under a restricted token with no privilege but bypassing traverse checking, in which your account's SID and every group except Everyone, Users, Authenticated Users and the sign-in's logon session only deny, so it keeps none of your account's or an administrator's rights, in a job object | `sandbox-exec` with a deny-by-default profile |
 | Network | none; only the sandbox's own loopback | none, including DNS and the host's loopback | none |
 | Reads | `/usr`, `/etc`, `/bin`, `/lib*`, the toolchain folders and the Go module cache, read-only (the whole cache, which can hold modules of your other repositories) | Windows' own folders, and the toolchain folders and Go module cache | the system folders, the null and random devices, the toolchain folders and the Go module cache |
 | Writes | its scratch only (a size-bounded tmpfs holding the tree copy, a private home and `/tmp`) | its scratch and its AppContainer profile folder (see Limits for what it can leave there) | the tree copy, private home and temporary folder in its scratch only |
 | Home folder, keys, other repositories | not mounted | not readable | not readable |
-| Environment | a short allowlist; no key or token variable | the same; your registry hive (`HKCU`), including the variables `setx` saves in `HKCU\Environment`, is not readable | the same |
+| Environment | a short allowlist; no key or token variable | the same; your registry hive (`HKCU`), including the variables `setx` saves in `HKCU\Environment`, is not readable through your account's rights | the same |
 | Terminal | none: a new session without a controlling terminal, and no `/dev/tty` | none: the process starts without a console | none: a new session without a controlling terminal, and no terminal device |
 | Processes | a fresh PID namespace; the whole tree is killed at the end or on timeout; they start as the kernel's first choice when memory runs out | the job object; the whole tree is killed at the end or on timeout | its process group is killed at the end or on timeout, but not a process that started its own session (see Limits) |
 
