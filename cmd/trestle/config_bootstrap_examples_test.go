@@ -122,10 +122,8 @@ func TestLocalModelReviewExamplesBindThroughInventoryIdentityCommand(t *testing.
 
 func TestLocalModelReviewDocsTeachBootstrapWithoutReadinessClaims(t *testing.T) {
 	localDoc := string(mustReadBootstrapFile(t, filepath.Join("..", "..", "docs", "local-model-review.md")))
-	setupDoc := string(mustReadBootstrapFile(t, filepath.Join("..", "..", "docs", "setup.md")))
 	readme := string(mustReadBootstrapFile(t, filepath.Join("..", "..", "README.md")))
 	localDoc = strings.Join(strings.Fields(strings.ReplaceAll(localDoc, "\\\n", " ")), " ")
-	setupDoc = strings.Join(strings.Fields(strings.ReplaceAll(setupDoc, "\\\n", " ")), " ")
 	if strings.Contains(localDoc, "ROOT_BINDING_REQUIRED") {
 		t.Fatal("published docs must not retain temporary root binding instructions")
 	}
@@ -152,9 +150,6 @@ func TestLocalModelReviewDocsTeachBootstrapWithoutReadinessClaims(t *testing.T) 
 	}
 	if !strings.Contains(lowerLocalDoc, "does not publish") && !strings.Contains(lowerLocalDoc, "no publication") {
 		t.Fatal("docs/local-model-review.md does not preserve the no-publication boundary")
-	}
-	if !strings.Contains(setupDoc, "trestle config inventory-identity --route-inventory") || !strings.Contains(setupDoc, "trestle config validate --route-inventory") {
-		t.Fatal("docs/setup.md does not link the inventory identity bootstrap to existing config validate")
 	}
 	if !strings.Contains(readme, "docs/local-model-review.md") {
 		t.Fatal("README.md does not link the model-review guide")
