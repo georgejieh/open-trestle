@@ -43,6 +43,7 @@ The local artifact store is constructed first. The journal constructor also crea
 The private `--state-dir` root accepts only these direct entries:
 
 - `.run-writer.lock`.
+- `.local-source-owner.json`, the owner record of a local source.
 - Pairs of `.run-plan.json` and `.run.jsonl` files, named with an exact lowercase hexadecimal, 64-character scope digest.
 - The private directories `artifacts`, `audit`, `diagnostics`, `webhook-inbox` and `setup`.
 
@@ -110,7 +111,7 @@ The plan input must be a regular file that does not change while it is read, and
 
 `GET /api/v1/tenants/{tenant}/repositories/{repository}/runtime` requires the separate `runtime_read` capability. It returns a snapshot, scoped to the repository, that contains no content. The snapshot describes these things:
 
-- Storage posture.
+- Local storage and artifact protection posture.
 - Review mode.
 - Configured ingress and workers.
 - Route and policy identities.
@@ -144,6 +145,7 @@ Every endpoint requires exactly one `Authorization: Bearer <credential>` header.
 
 - `POST /api/v1/runs` accepts a canonical `ReviewRunPlan`. Run IDs that begin with `webhook-` are reserved for webhook intake. A plan or local review intent that names one gets `400 invalid_request` after the scope is authorized, so a caller cannot open a delivery's run scope before intake does.
 - `GET /api/v1/tenants/{tenant}/repositories/{repository}/runs/{run}` returns a `ReviewRunReceipt`.
+- `GET .../runs/{run}/plan` requires `run_read` or `task_claim` and returns the canonical `ReviewRunPlan`.
 - `GET .../runs/{run}/progress` requires `run_read` and returns read-only counts of evidence that are bound to an unchanged canonical receipt.
 - `GET .../runs/{run}/refusal` requires `run_read`. It returns the refusal that intake recorded for the webhook delivery that owns the run scope (`webhook-{deduplication key}`), instead of opening its run. The refusal has no content. It is returned as `open-trestle/delivery-refusal-response` v1, with the `open-trestle/webhook-delivery-refusal` record and its reason token. The response is `404 not_found` when no refusal is recorded or the daemon has no webhook planner, and `503 unavailable` when the inbox cannot be read. The daemon answers from its inbox for the planner identity that it admits deliveries with. `trestle runs refusal` prints the record, and `trestle runs status` names the reason when no run exists.
 - `GET .../runs/{run}/diagnostics` returns the immutable canonical diagnostic set for that scope. See the version list below.
@@ -152,9 +154,10 @@ Every endpoint requires exactly one `Authorization: Bearer <credential>` header.
 
 The diagnostic set comes in these versions:
 
-- Version 5 contains the state of verified findings: counts of candidates, verified, rejected and inconclusive results, the identity of the verification context that supplied the result, counts of analyzed, selected and omitted sources, and sorted reasons for omissions. The reasons are aggregates that contain no content, and their counts equal the total omitted. It also has one deterministic check, bound to its analysis result and the change. Version 8 is version 5 with findings on removed base lines.
+- Version 5 contains the state of verified findings: counts of candidates, verified, rejected and inconclusive results, the identity of the verification context that supplied the result, counts of analyzed, selected and omitted sources, and sorted reasons for omissions. The reasons are aggregates that contain no content, and their counts equal the total omitted. It also has one deterministic check, bound to its analysis result and the change.
 - Version 6 instead contains one deterministic check and observations, bound to an analysis-result identity. It has no verified-finding set.
 - Version 7 is a set for the end of a full review only. It has a final outcome and optional evidence: deterministic evidence in the version 6 form and verified evidence in the version 5 form. Its top-level snapshot identifies the physical head source. The nested verified snapshot identifies the selected review snapshot, and the two need not be equal. An absent verified section means unknown, not zero findings.
+- Version 8 is version 5 plus findings on removed base lines, which are marked `"side":"base"` and carry an optional `head_line`. A final version 7 set may embed it in place of version 5.
 
 ### Read-only run progress
 
@@ -211,7 +214,7 @@ The public `client`, `controlplane` and `runtimeadmin` packages expose types for
 
 ## Storage
 
-The daemon keeps all state under `--state-dir`: the run journal, the audit ledger, the diagnostics store and the webhook inbox are local files. Task notifications use an in-process queue, and API rate limits apply within the process. The daemon runs as one process and does not support several replicas.
+The daemon keeps all state as local files under `--state-dir`. Task notifications use an in-process queue, and API rate limits apply within the process. The daemon runs as one process.
 
 Long-poll API requests and the notification supervisor wake up on a signal. If a notification is missed, the durable journal remains the source of truth. The daemon exposes liveness probes without content and readiness probes that the supervisors back.
 
@@ -261,6 +264,16 @@ This mode requires all of these:
 
 The startup process opens its configured loose-object root and keeps it open. An identity of the source root is bound into the source inputs and the handler identity. The HTTP request cannot select or replace that root.
 
-The setup plan serves only as a fence on the scope and the posture of denied effects, for an initialized `local_single_node`. Its root identity, profile, tenant, repository, local storage posture, denied egress, disabled publication and disabled dynamic validation must match. This deterministic path performs no setup, inference, provider, egress or publication effect, so it does not use `Plan.Ready()`. The gates for policy, local inference, dry run, backup and observer, and other setup gates, remain pending. This admission is for evaluation and is not setup readiness or a supported deployment.
+The setup plan serves only as a fence on the scope and the posture of denied effects, for an initialized `local_single_node`. Its root identity, profile, tenant, repository, local storage posture, denied egress, disabled publication and disabled dynamic validation must match. This path performs no setup, inference, provider, egress or publication effect.
+
+## Local full review
+
+Add `--local-full-review` to the local flags above, together with `--runtime-route-inventory` and `--runtime-policy`, and `POST /api/v1/runs` also accepts `open-trestle/local-full-review-intent` version 1. The intent binds the repository, the base and head revisions, the review-policy identity, the route-inventory identity and the runtime-policy identity, and it has no field for a path, source content or credential. The daemon opens the full run plan from it, and the model and readiness tasks run only when `--local-model-workers` is also set. Both flags require a loopback listener, and `--local-model-workers` also requires `--local-full-review`, `--setup-state`, `--local-git-objects-root`, the inventory and the policy, and rejects `--github-open-runs` and `--github-local-deterministic-workers`. See [Local model review](local-model-review.md) and [Review run runtime](runtime.md).
+
+## Offline subcommands
+
+`trestled build-info` prints the build metadata, and `trestled recovery-point` and `trestled verify-restore` record and compare stopped state. They start no daemon. See [Operations](operations.md).
+
+## Reading local runs
 
 You can read a successful local run through the existing run, plan, diagnostics, runtime, TUI and embedded-console paths. Diagnostic set version 6, from the deterministic-only path, carries observations instead of verified findings. Version 7, from a full review, keeps observations and verified findings as separate sections. `runs status --format json|sarif` reads that same stored set. Receipts of active runs report the task status, and their wire format, which is unchanged, does not include coverage counts. The read-only progress endpoint for the scope supplies counts of evidence without creating provisional diagnostics.

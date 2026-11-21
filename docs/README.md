@@ -2,11 +2,11 @@
 
 This index groups the documentation by what you want to do. Open Trestle has
 no release yet, and each page describes what the code does today. The
-[roadmap](roadmap.md) describes what is planned.
+[roadmap](roadmap.md) says what is built, what is next and what is out of scope.
 
 ## Start
 
-- [Install](install.md): the packaged Linux install, and what other systems can do today.
+- [Install](install.md): the packaged Linux install, the development build, and what other systems can do today.
 - [Getting started](getting-started.md): `trestle init` and your first review.
 - [Updating](updates.md): `trestle update`.
 - [Platforms](platforms.md): what works on Linux, macOS and Windows.
@@ -17,12 +17,14 @@ no release yet, and each page describes what the code does today. The
 - [Spending limits](spending-limits.md): per-key limits and `trestle usage`.
 - [Review output and options](local-model-review.md): text, JSON, SARIF and Markdown results, ranking, the walkthrough and specialists.
 - [Specialist profiles](agent-profiles.md): the nine packaged reviewers.
-- [Remote model review](remote-model-review.md): OpenRouter, OpenCode Go and Ollama Cloud.
-- [Local models](named-local-runtimes.md): Ollama, llama.cpp, vLLM, LM Studio and other servers on your machine.
-- [Local servers without a key](local-provider-no-auth.md): declare a local model server that needs no API key.
+- [Remote model review](remote-model-review.md): OpenRouter, OpenCode Go and Ollama Cloud, with [OpenRouter zero data retention](openrouter-zdr-profile.md), the [OpenCode Go profile](opencode-go-profile.md) and the [OpenAI Responses adapter](openai-provider.md).
+- [Local models](named-local-runtimes.md): Ollama, llama.cpp, vLLM, LM Studio and other servers on your machine, including servers that need no API key.
+- [Local-first bootstrap](local-first-bootstrap.md): `trestle setup bootstrap` for a review with models on your machine.
 - [Model catalog](model-catalog.md): how setup learns model facts.
+- [Repository index](repository-index.md): `trestle index`, the map and the context a review reads from it.
 - [Repository checks](repository-checks.md): run the repository's own tests in a sandbox during a review.
 - [Review feedback](local-feedback.md): record your own notes on a past review so that later reviews can use them.
+- Static local Git commands: [inspect](local-git-inspect.md), [change](local-git-change.md) and [debug-output review](local-git-review.md).
 
 ## Integrate
 
@@ -62,5 +64,5 @@ These pages are for running the daemon.
 - [Contributing](../CONTRIBUTING.md) and [development standards](development.md).
 - [Architecture](architecture.md), [design rationale](rationale.md) and [roadmap](roadmap.md).
 - [Quality evaluation](quality-evaluation.md) and [model result evaluation](model-result-evaluation.md).
-- [Review-run runtime](review-run-runtime.md) and its handlers: [source acquisition](source-acquisition-handler.md), [change model](change-model-handler.md), [evidence](deterministic-evidence-handler.md), [semantic impact](semantic-impact.md) with per-file [syntax analysis](syntax-analysis.md) and the [repository index](repository-index.md), [memory retrieval](memory-retrieval-handler.md), [context assembly](context-assembly-handler.md), [candidate generation](model-generation-handler.md), [verification](model-verification-handler.md), and [publication readiness](publication-readiness-handler.md).
-- Runtime internals: [handler catalogs](runtime-handler-catalogs.md), [artifact exchange](runtime-artifacts.md), [task notifications](task-notifications.md) and [automatic finalization](automatic-finalization.md).
+- [Review-run runtime](runtime.md): the task graph, journal, workers, notifications, finalization, handler catalogs, artifacts and the handlers.
+- Analysis: [semantic impact](semantic-impact.md), per-file [syntax analysis](syntax-analysis.md) and [publication readiness](publication-readiness-handler.md).

@@ -1,8 +1,7 @@
 # Commands
 
 This page lists every `trestle` command and its flags, grouped as `trestle --help`
-groups them. Use it to look up a flag; for a first walkthrough, start with
-[getting started](getting-started.md).
+groups them. Use it to look up a flag; for a first walkthrough, start with [getting started](getting-started.md).
 
 `trestle --help`, `trestle -h` and `trestle help` print the usage to standard
 output and exit `0`. A command line that Open Trestle does not recognise, and a
@@ -11,7 +10,8 @@ exit `2`. Each command also prints its own usage when its arguments are wrong.
 Exit codes are in [exit codes](exit-codes.md), and variables and paths are in
 [environment variables and files](environment-and-files.md).
 
-`--flag=value` and `--flag value` both work. `init`, `review`, `update` and
+`--flag=value` and `--flag value` both work, except for `profiles` and
+`local-git`, which take each flag and its value as two separate words. `init`, `review`, `update` and
 `usage` reject a flag that you give twice.
 
 ## Everyday
@@ -157,7 +157,7 @@ The daemon is `trestled`, a separate binary.
 | --- | --- |
 | `trestle runs submit` | `--plan PATH`, `--server URL` |
 | `trestle runs status` | `--tenant`, `--repository`, `--run`, `--server`, `--format run\|progress\|json\|sarif` |
-| `trestle runs cancel` | the same as `status` |
+| `trestle runs cancel` | the same as `status`, except that `--format` accepts only `run` |
 | `trestle runs refusal` | `--tenant`, `--repository`, `--run`, `--server` |
 
 `--server` defaults to `http://127.0.0.1:8741`, or `OPEN_TRESTLE_API_URL`.
@@ -192,7 +192,7 @@ Writes the protected configuration for a local or remote first review.
 
 | Command | Flags |
 | --- | --- |
-| `init` (local model server) | `--directory`, `--tenant`, `--repository`, `--recovery-owner`, `--checkout`, `--base`, `--head`, `--repository-authority`, `--repository-namespace`, `--repository-name`, `--generation-endpoint`, `--generation-model`, `--verification-endpoint`, `--verification-model`, `--transport`, `--context-tokens`, `--output-tokens`, `--max-output-tokens`, `--declare-local-capabilities`, `--scope direct-review` |
+| `init` (local model server) | `--directory`, `--tenant`, `--repository`, `--recovery-owner`, `--checkout`, `--base`, `--head`, `--repository-authority`, `--repository-namespace`, `--repository-name`, `--generation-endpoint`, `--generation-model`, `--generation-credential-environment`, `--verification-endpoint`, `--verification-model`, `--verification-credential-environment`, `--transport`, `--context-tokens`, `--output-tokens`, `--max-output-tokens`, `--declare-local-capabilities`, `--specialists auto\|none`, `--scope direct-review` |
 | `init --provider openrouter-zdr\|openrouter\|opencode-go\|ollama-cloud\|ollama-signin` | `--directory`, `--provider`, `--specialists`, `--tenant`, `--repository`, `--checkout`, `--base`, `--head`, the repository name flags, `--generation-model`, `--verification-model`, `--generation-credential-environment`, `--verification-credential-environment`, `--endpoint`, `--declared-by`, `--context-tokens`, `--output-tokens`, `--max-output-tokens`, `--input-micro-usd-per-million-tokens`, `--output-micro-usd-per-million-tokens`, `--max-cost-micro-usd`, and the provider declarations in [remote model review](remote-model-review.md) |
 | `check` | `--directory`, `--approved-by`, `--scope`, `--allow-local-probe`, `--backup-directory` (local); `--directory` only (remote) |
 | `inspect` | `--directory` |
@@ -240,7 +240,7 @@ Builds and queries the [repository index](repository-index.md) of the checkout i
 
 ### `trestle profile`
 
-Prints the repository profile of a commit (default `HEAD`) of the checkout in the current directory: its languages and their shares, the test frameworks and layout, the checks its CI enforces, grouped by class, and the checks that are only configured. A check counts as enforced when a GitHub Actions step that runs on pushes or pull requests, not disabled and not allowed to fail, runs it at a command position, directly or through a Make, just, Task, package.json, tox, nox or pre-commit target that step invokes; other CI systems, task-runner targets nobody invokes and linter configuration alone are listed as configured. Configuration files are read as data from the verified Git object store and never run. A review reads the checks of its base commit. Flags: `--commit REF`, `--directory PATH`, `--json`.
+Prints the repository profile of a commit (default `HEAD`) of the checkout in the current directory: its languages and their shares, the test frameworks and layout, the checks its CI enforces, grouped by class, and the checks that are only configured. A check counts as enforced when a GitHub Actions step that runs on pushes or pull requests, and is not disabled or allowed to fail, runs it. Other CI systems and linter configuration alone are listed as configured. Configuration files are read as data from the verified Git object store and never run. A review reads the checks of its base commit. Flags: `--commit REF`, `--directory PATH`, `--json`.
 
 ### `trestle build-info`
 

@@ -42,6 +42,8 @@ GOWORK=off go vet ./...
 
 A plain `go build` pins no secret scan helper, so the program it makes refuses every review. To run a review from a working tree, build with `python3 tools/package_secret_scanner.py --development DIR` on Linux, macOS or Windows, then run `DIR/bin/trestle`. See [operations](operations.md#package-the-secret-scanner).
 
+The check sandbox and repository check tests run with `go test -count=1 -v -run='Escape|Sandbox' ./internal/checksandbox/` and `go test -count=1 -v -run='Toolchains|EndToEnd' ./internal/checksandbox/ ./internal/repochecks/`. The escape tests skip, with a reason, where the sandbox facility is missing; CI fails the job on a skip.
+
 The release and packaging tools have Python tests: `python3 -m unittest discover -s tools -p "test_*.py"`.
 
 The web console in `web/` and the VS Code extension in `extensions/vscode/` use the Node version in `.node-version` (26.12.1). The web package declares `node >=22`. Install and check the console with:

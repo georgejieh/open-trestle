@@ -74,11 +74,13 @@ You need the private `0700` copy with loose objects, described in [choose the
 repository](local-first-bootstrap.md#choose-the-repository-and-model-pair), only
 if you use the optional background daemon.
 
-Setup sends no repository source. It does make a few network reads, and none of
-them sends a key:
+Setup sends no repository source. It does make a few network calls, and only the
+OpenRouter key check sends a key:
 
 - It may fetch a provider's public model list. For OpenRouter it also fetches
   the public list of zero-data-retention endpoints.
+- If you enter an OpenRouter key, it checks the key with one call to OpenRouter's
+  key-usage endpoint.
 - It may fetch a public evidence page that you name, once you confirm.
 - With a local Ollama, it reads that Ollama's model list (`/api/tags` on
   `127.0.0.1`).
@@ -93,8 +95,11 @@ Your source goes to the models only when you agree to run a review. See
 The wizard asks only what you alone can answer: where the models run, which two
 models to use, the API key when none is set yet (with hidden input), whether to
 require zero data retention on OpenRouter, an optional spending limit for the
-API key, and your consent. It fills in everything else itself and shows it in a
-settings panel before you consent. Enter accepts each recommended default.
+API key, and your consent. Once the setup checks pass, it also asks once whether
+reviews may run the repository's tests in a sandbox (see
+[repository checks](#repository-checks)). It fills in everything else itself and
+shows it in a settings panel before you consent. Enter accepts each recommended
+default.
 
 The wizard runs in six steps:
 
@@ -171,9 +176,9 @@ happens next depends on the provider.
   the model. If you keep the model or answer no, the wizard asks you to confirm
   once with `y` before it continues. See
   [OpenRouter zero data retention](openrouter-zdr-profile.md).
-- With a local server, if a server answers on its usual port (Ollama 11434, LM
+- With a local server, if exactly one server answers on its usual port (Ollama 11434, LM
   Studio 1234, llama.cpp 8080, vLLM 8000), the wizard uses it without asking.
-  Otherwise you pick the server or type its `127.0.0.1` address. The checker
+  With several, or none, you pick the server or type its `127.0.0.1` address. The checker
   shares the server when it lists two models. If both model lists can be read
   without a key, the wizard assumes the server needs none. It proposes a
   32768-token context (or a smaller value if the server lists one) and a
@@ -192,8 +197,8 @@ happens next depends on the provider.
 
 If the provider's key variable has no key yet, in the environment or saved, and
 the wizard runs in a terminal, it asks for the key with hidden input. It checks
-an OpenRouter key with one free call and offers to save the key once the setup
-is saved; Enter skips. Without a terminal, or with `--no-input`, it never asks.
+an OpenRouter key with one free call and offers to save the key (Enter saves it, `n`
+skips). Without a terminal, or with `--no-input`, it never asks.
 See [API keys](keys.md).
 
 The wizard does not ask how much a single model request may cost. Setup uses the
@@ -270,7 +275,7 @@ to confirm depends on the provider:
 - OpenCode Go also asks for four evidence items, a review window and the
   [workspace declaration](remote-model-review.md#opencode-go). For a public page,
   the wizard offers to fetch it once and compute its SHA-256 on your machine.
-  The fetch is one `https` GET with no key, cookie, query or repository content,
+  The fetch is an `https` GET (it follows at most two redirects) with no key, cookie, query or repository content,
   to public addresses only, with a limit of 8 MiB and 20 seconds. The wizard
   does not fetch account evidence: save a copy of your own account page and give
   its path.
@@ -364,7 +369,18 @@ command, in `NEXT-STEPS.txt` in the setup folder. It then asks:
 ```
 
 Only `y` runs it. The review runs in the foreground and keeps nothing for
-resume. It can take several minutes.
+resume. It can take several minutes. It first builds an index of the repository
+on this machine, with no network, and the models see the index's context for the
+change.
+
+### Repository checks
+
+After the setup checks pass, the wizard asks once: "Run this repository's tests
+inside a sandbox on this machine? It has no network and no access to your home
+folder or keys." The answer is saved in `checks.json` in the setup folder, and the
+default is no. With `--no-input`, `--checks` answers yes. `trestle checks on`,
+`off` and `status` change or show the answer later. A review that has no saved
+answer asks in the terminal. See [repository checks](repository-checks.md).
 
 A new setup runs specialist reviews by default. The general review runs first,
 and then up to three specialist reviews (such as `bug_hunter` or
@@ -431,7 +447,10 @@ Each part of the result means the following.
   analysis, and the checker's confirmed, rejected and inconclusive counts). They
   also show each changed file with its line counts and changed Go declarations,
   and `missing verification:` notes for changed functions that no test file
-  references. These notes are information, not defects.
+  references. These notes are information, not defects. A `context used:` line
+  says how many enclosing definitions, callers, tests and repository map entries
+  the models saw beside the changed code. A `check runs:` line says what ran when
+  [repository checks](#repository-checks) were on.
 - `confirmed findings (ranked)`: High, critical and medium findings, most
   important first. Findings that repeat one another are merged. Lower-severity
   findings are counted on a `hidden:` line, and `trestle review --all` lists
@@ -445,8 +464,8 @@ Each part of the result means the following.
 - `ci: inconclusive` with `status: findings`: This is an advisory review. Every
   confirmed finding is low severity or pre-existing, so none blocks CI (exit `3`
   by default, `0` with `--exit-code-policy findings`), and the closing line says
-  so. Only a medium, high or critical finding that the change introduced makes a
-  review `ci: blocked` (exit `4`).
+  so. Only a medium, high or critical finding that the change introduced, or whose
+  origin is unproven, makes a review `ci: blocked` (exit `4`).
 - `no_candidates`: Nothing was found and confirmed. That does not mean the
   change is correct.
 - `incomplete`: Part of the change was not covered. See the coverage and
@@ -582,13 +601,10 @@ It finds a newer version, shows it, asks you to confirm, and runs that version's
 own upgrade with `sudo`, which asks for your password. `trestle update --check`
 only reports; it exits `10` when an update is available.
 
-Open Trestle checks an update before installing it. For a GitHub release, the
-checks are an Ed25519 signature by a key pinned in this build, and the signed
-SHA-256 and size. No release is signed yet, so today it installs only an
-unsigned local build: one left in
-`~/.local/share/open-trestle/updates/` for a development install, or a file named
-with `--from`. See [updates](updates.md) for the channels, the checks, the threat
-model and `OPEN_TRESTLE_UPDATE_CHECK=off`.
+No release is signed yet, so today it installs only an unsigned local build: one
+left in `~/.local/share/open-trestle/updates/` for a development install, or a
+file named with `--from`. See [updates](updates.md) for the channels, the checks
+and `OPEN_TRESTLE_UPDATE_CHECK=off`.
 
 ## Non-interactive use
 
@@ -623,6 +639,7 @@ settings panel, without color.
 | Evidence window | `--broker-evidence`, `--account-evidence`, `--evidence-retrieved-at`, `--reviewed-at`, `--valid-from`, `--valid-until` |
 | Declarations | `--declare-remote-route`, `--declare-opencode-go-account`, `--declare-ollama-cloud-signin`, `--declare-local-capabilities` |
 | Local test requests | `--allow-local-probe` |
+| Repository checks (optional) | `--checks` (run the repository's tests in a sandbox; without it, the answer is no) |
 | Consent to review | `--run-review` |
 
 There is no blanket "yes to everything" flag. Each declaration is its own

@@ -85,6 +85,30 @@ lives.
 - `pending` with `sanitized_egress_scanner` means that the binary pins a helper,
   but the helper is missing or does not match.
 
+### What the scan does
+
+Before a request is authorized, the host extracts its typed text fields and scans
+them in the helper. It replaces reported bytes without changing the byte length
+or the line breaks. A second scan then checks the projected request. Dispatch is
+denied unless both scans complete and the second finds nothing. Generation and
+verification are sanitized separately.
+
+The pinned scanner is Betterleaks v1.8.1, commit
+`5eab48332cc48565864514e3bc6de89df091a7c4`, with 417 embedded default rules at
+ruleset identity
+`27ded783c81940d13c22cc46556a3f8184baf397bff08a69fcfae87991925f42`. It runs as a
+WebAssembly guest in the helper and evaluates regular expressions with RE2. A
+scan accepts 1 to 256 UTF-8 fields, with at most 256 KiB per field and 2 MiB in
+total. Invalid input, a timeout, cancellation, resource exhaustion, a helper
+fault or any remaining finding produces no remote dispatch.
+
+The scanner output and the durable receipt keep identities, counts, field roles,
+rule IDs and byte spans, and no field text, path, snippet or matched value. The
+spans reveal the location and length of a match, so limit access to receipts.
+The scanner does not guarantee that a request contains no secret: false
+negatives and false positives are possible, and a remote provider receives the
+sanitized request.
+
 ## Prerequisite 2: credentials by name only
 
 Every credential flag takes the **name** of an environment variable, and the
@@ -145,20 +169,22 @@ Those commits describe the change that existed at setup. Inside the repository, 
 change with the same configuration and fresh commits (see
 [getting started](getting-started.md#running-it-again)).
 
-When a request's output allowance gives it more than four minutes (see
-[OpenAI provider](openai-provider.md)), the timeout leaves room for two such
-requests plus two minutes, up to 15 minutes. An OpenRouter setup with the
-16384-token allowance, for example, uses `--timeout 12m`.
+The saved `--timeout` depends on the output allowance (see
+[Output allowance and request deadline](#output-allowance-and-request-deadline)).
+An OpenRouter setup with the 16384-token allowance, for example, uses
+`--timeout 12m`.
 
 `inspect` prints the same read-only report as `check`. A review that fails
 prints a failure detail such as `provider_request_rejected` or
-`provider_response_invalid`; see [failure details](failure-details.md).
+`provider_response_invalid`; see [Provider failures](#provider-failures).
 
 The exit codes of `check` are 0 for `ready`, 3 for `pending` and 4 for
 `refused`. Usage errors exit 2. Every refusal prints a reason on stderr and in
 `messages`. An input that fails validation writes nothing. If you repeat `init`
-with identical inputs, it accepts the existing files, which are byte-identical.
-If the inputs differ, it refuses, so use a new directory.
+with identical inputs, it accepts the existing files when they are byte-identical.
+OpenRouter files embed the time the model and endpoint lists were fetched, so a
+repeat at a later time differs and is refused. If the files differ, it refuses,
+so use a new directory.
 
 `check` reports these checks:
 
@@ -200,12 +226,10 @@ so the flag is your consent that each review sends the selected source to
 OpenRouter, and your statement that prompt logging is off for the key.
 
 Each review reserves the output allowance plus the actual size of the request
-against `--max-cost-micro-usd`. The output allowance is 4096 tokens unless
-`--max-output-tokens` sets it. For OpenRouter it is the allowance that setup
-chose. `init` refuses a cap that cannot cover the output reservation.
-(`trestle init` computes the reservation as the cost of a request that fills the
-whole context, rounded up to a cent.) The cap bounds each request. To limit
-spending over a week, a month or a year, set a per-key
+against `--max-cost-micro-usd`. `init` refuses a cap that cannot cover the
+output reservation. (`trestle init` computes the reservation as the cost of a
+request that fills the whole context, rounded up to a cent.) The cap bounds each
+request. To limit spending over a week, a month or a year, set a per-key
 [spending limit](spending-limits.md).
 
 Set the prices to the higher of the two models. Declare `0` prices only if your
@@ -215,6 +239,25 @@ in each evidence manifest.
 The generation and verification models must differ. The endpoints of the named
 profiles are fixed, so `--endpoint` is refused for them.
 
+### Output allowance and request deadline
+
+The output allowance is the most a model may write in one request (the runtime
+policy's `max_output_tokens`). It is 4096 tokens unless `--max-output-tokens N`
+raises it, up to the declared `--output-tokens`. For OpenRouter it is 16384 tokens
+unless the pinned endpoints allow less (see
+[OpenRouter zero data retention](openrouter-zdr-profile.md#the-output-allowance)).
+It is separate from the declared output capacity of each route. A reasoning model
+that spends the whole allowance on its reasoning fails with
+`model_output_exhausted`.
+
+The built-in HTTP client gives each request a deadline of two minutes for every
+4096 tokens of its output allowance, with a minimum of two minutes and a maximum
+of five. A 16384-token allowance therefore gets five minutes. A deadline that the
+caller sets earlier still wins, so the `--timeout` of the review ends a request
+earlier when it is shorter. When the allowance gives a request more than four
+minutes, setup saves a `--timeout` that leaves room for two such requests plus
+two minutes, up to 15 minutes.
+
 ## OpenRouter
 
 Bootstrap reads `https://openrouter.ai/api/v1/endpoints/zdr` and
@@ -222,9 +265,8 @@ Bootstrap reads `https://openrouter.ai/api/v1/endpoints/zdr` and
 SHA-256 and the time of each response.
 
 For each model, bootstrap pins the zero-data-retention (ZDR) endpoints that
-allow the review output allowance, which is 16384 tokens unless
-`--max-output-tokens` sets it or `--output-tokens` caps it. It records the
-endpoints it leaves out. The pinning rules are in
+allow the review output allowance and records the endpoints it leaves out. The
+pinning rules are in
 [OpenRouter zero data retention](openrouter-zdr-profile.md#what-setup-reads).
 
 From the pinned endpoints, bootstrap fills in their routing slugs, the
@@ -249,12 +291,9 @@ The two OpenRouter providers differ as follows:
   result say so.
 
 If OpenRouter refuses a request with HTTP 404, Open Trestle records
-`provider_no_allowed_endpoint` with a hint that names the ZDR setting.
-
-`--*-upstream-evidence`, `--*-slug-evidence`, `--broker-evidence`,
-`--account-evidence`, the four times and `--declare-openrouter-zdr-account` are
-no longer used, and `init` refuses them. For how requests are pinned and what
-the witness records, see [OpenRouter zero data retention](openrouter-zdr-profile.md).
+`provider_no_allowed_endpoint` with a hint that names the ZDR setting. For how
+requests are pinned and what the witness records, see
+[OpenRouter zero data retention](openrouter-zdr-profile.md).
 
 ## OpenCode Go
 
@@ -266,8 +305,7 @@ that both models document zero-day retention without training. Supply
 [the OpenCode Go profile](opencode-go-profile.md).
 
 This bootstrap uses the brokered Go route for both roles on the direct path. It
-does not configure a daemon. The profile document describes a separate private
-direct verifier, which this bootstrap does not set up.
+does not configure a daemon.
 
 ## Ollama Cloud
 
@@ -302,11 +340,8 @@ trestle setup bootstrap check --directory "$HOME/.local/state/open-trestle/ollam
 
 Zero prices fit a plan without per-token billing. Plan quotas still apply, and
 Open Trestle does not check them. When the account has no usage credit, Ollama
-answers HTTP 402. For a retired model it answers HTTP 410. The review then fails
-as `policy (task candidates): provider_payment_required` or
-`provider_model_retired`, with a fixed hint (see
-[provider refusals](local-model-review.md#provider-refusals)). Open Trestle
-does not show or store Ollama's own message.
+answers HTTP 402, and for a retired model it answers HTTP 410 (see
+[Provider failures](#provider-failures)).
 
 `--endpoint` may replace the base with another remote HTTPS Ollama Cloud base.
 Open Trestle refuses loopback and private endpoints. For models that run on
@@ -339,12 +374,8 @@ remote routes:
   `https://ollama.com`. `check` repeats that read and sends no model request, so
   it cannot see a missing credit or a retired model.
 - Budget, usage and timeout handling are the same as for `ollama-cloud`. The
-  daemon relays Ollama Cloud's refusals. HTTP 402 (no usage credit) and 410
-  (retired model) fail a review as `provider_payment_required` and
-  `provider_model_retired`. HTTP 401 (not signed in) fails it as
-  `provider_authentication_failed`. Each comes with a fixed hint, and Open
-  Trestle does not show Ollama's own message (see
-  [provider refusals](local-model-review.md#provider-refusals)).
+  daemon relays Ollama Cloud's refusals. HTTP 401 (not signed in) fails a review
+  as `provider_authentication_failed` (see [Provider failures](#provider-failures)).
 
 `--declare-ollama-cloud-signin` is your explicit consent. It says that the daemon
 is signed in to an Ollama account you control, and that each review sends the
@@ -399,23 +430,72 @@ The wizard reacts to the daemon's answer as follows:
   your terminal attached, and runs it only if you answer `y`. It then sends the
   same message once more.
 - On 402, the wizard says that Ollama Cloud refused the message for billing. It
-  prints the review's hint ("the provider refused the request for billing: add
-  credit or a subscription to the provider account, or choose another route")
-  and asks whether to continue.
+  prints the review's hint and asks whether to continue.
 - On 404 or 410, the chosen model is not served or has been retired. The wizard
-  prints the review's hint (for 410, "the provider no longer serves this model:
-  choose a model the provider lists as available and re-run setup") and stops
-  before it writes anything.
+  prints the review's hint and stops before it writes anything.
 
-The wizard does not read or show the body of the answer.
+The wizard does not show the body of an error answer.
+
+## Provider failures
+
+A provider's HTTP refusal is classified by its status alone. Open Trestle discards
+the error body, so a provider's message never reaches a result, record or
+log. Every request profile, including OpenCode Console, uses the same mapping:
+
+| HTTP status | Route failure | Run failure | `failure_detail` |
+|---|---|---|---|
+| 400, 405, 415, 422 | `request_rejected` | `policy` | `provider_request_rejected` |
+| 401 | `authentication` | `policy` | `provider_authentication_failed` |
+| 402 | `payment_required` | `policy` | `provider_payment_required` |
+| 403 | `authorization` | `policy` | `provider_authorization_denied` |
+| 404 | `model_unavailable` | `policy` | `provider_model_unavailable` |
+| 410 | `model_retired` | `policy` | `provider_model_retired` |
+| 429, or 503 with a `Retry-After` in seconds | `rate_limited` | `transient` | `provider_rate_limited` |
+| 408, 504 | `timeout` | `transient` | none |
+| 413 | `budget_exhausted` | `policy` | none |
+| other 5xx | `provider_server` | `transient` | none |
+| 200 with a reply the adapter refuses, or a status no other row names (for example 409) | `invalid_response` | `internal` | `provider_response_invalid` |
+
+A `policy` run is `refused` with the CI disposition `blocked` and exit code 4. A
+`transient` run is `failed` with exit code 1. A review prints the failing task,
+the detail and a fixed one-line hint, for example
+`failure: policy (task candidates): provider_payment_required`. A 400 is usually
+an unknown model ID or a parameter that the model or endpoint does not accept. On
+an OpenRouter route a 404 records `provider_no_allowed_endpoint` instead (see
+[OpenRouter zero data retention](openrouter-zdr-profile.md#when-openrouter-refuses-a-request)).
+
+A rate limit is the only retried failure. The provider refused the request before
+processing it, so the model handler retries it on the same route at most twice
+inside the task attempt. Each retry waits for the `Retry-After` of the provider
+and at least one second. If the `Retry-After` is beyond 15 minutes or would end
+after the review's `--timeout`, the task fails at once. A retry takes over the
+cost reservation of the refused attempt, and the refused attempt records known
+zero usage. A 503 without a `Retry-After` in seconds is a `provider_server`
+failure and is not retried. When the second retry is rate-limited too, the review
+fails as `transient` with `provider_rate_limited`.
+
+A reply that the adapter accepted but the review then refuses records
+`model_output_invalid` with the `internal` failure. This covers an answer that is
+not one JSON document, a refusal, a document of the wrong shape and a document
+that breaks the review rules. Nothing is repaired. The one exception is on an
+OpenRouter or Ollama Cloud sign-in route: a single outer Markdown code fence
+(with no language or with `json`) around the whole answer is removed before the
+same strict checks. A reply that stops at the output limit records
+`model_output_exhausted` (see
+[Output allowance and request deadline](#output-allowance-and-request-deadline)).
+
+A daemon run classifies refusals the same way and records the same detail as its
+task failure reason. `trestle runs status` prints the detail and its hint on
+stderr.
 
 ## Limits
 
 - Bootstrap records your declarations and, for OpenRouter, what OpenRouter's API
   reported at setup time. It does not verify them.
-- The direct review runs in the foreground and leaves nothing behind. It has no
-  resume, no daemon state and no publication.
+- The direct review runs in the foreground. It keeps a repository index and
+  spending records. It has no resume, no daemon state and no publication.
 - The checkout source uses the Git reader with the `loose-and-pack-index-v1`
   profile. Open Trestle does not review content that is only in the dirty
   worktree or the index.
-- Nothing here provisions credentials or signs you in to Ollama.
+- Nothing here provisions credentials. The wizard runs `ollama signin` only if you
+  agree.

@@ -66,8 +66,8 @@ recommended and not required.
 ## Scripted checks run before model judgment
 
 Open Trestle analyses the change with scripted checks before it asks a model
-anything, and gives the results to the models. The [roadmap](roadmap.md) lists
-which of these checks exist today.
+anything, and gives the results to the models. The [architecture](architecture.md#canonical-flow)
+page lists which of these checks exist today.
 
 - A check with fixed rules gives the same answer for the same input, so its
   result can be reproduced and tested. A model's answer can change between

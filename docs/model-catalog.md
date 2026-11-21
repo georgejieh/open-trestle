@@ -66,70 +66,20 @@ An authenticated source on numeric-loopback HTTP sends the bearer token in plain
 
 Numeric loopback HTTP and HTTPS endpoints are accepted without remote permission. Hostnames such as `localhost` do not count as local. Every other endpoint requires HTTPS and the explicit `--allow-remote` flag. Proxy environment variables are ignored. For a remote endpoint, every DNS answer must be public, and the connection uses one checked numeric address. Private, loopback and link-local remote addresses are refused. Redirects are not followed. Refresh sends GET only to the metadata URLs you supply.
 
-## Named local runtime catalogs
+## Choosing sources
 
-The URLs below use the ports from [the named local runtime recipes](named-local-runtimes.md). Use them only for listeners that you configured. These mappings were checked against the runtimes' documentation on November 1, 2026, not against installed servers. Check your runtime version and listener before you refresh.
+Point each source at a metadata URL that you control or trust, and use the kind that matches its response. A local runtime listener at the ports of [the named local runtime recipes](named-local-runtimes.md) is a typical source. Check your runtime version and listener before you refresh, because response shapes differ between servers and versions.
 
-| Runtime | Metadata source | Scope and selector |
-| --- | --- | --- |
-| llama.cpp, direct single-model server | `openai_models`, `http://127.0.0.1:8080/v1/models` for generation and port `8081` for verification | The documented `data[].id` list has one loaded-model entry. `--alias` sets its ID; without an alias, the ID is the model-file path. It is not a disk inventory. |
-| Ollama local | `ollama_tags`, `http://127.0.0.1:11434/api/tags` | Read `models[].name` as is. This available-model list is not the running-model list at `/api/ps`. |
-| vLLM | `openai_models`, `http://127.0.0.1:8000/v1/models` for generation and port `8001` for verification | At retrieved upstream tree `3a90cc6fd0504b52bf47d58e8d70cff4b03f2c19`, GET `/v1/models` serializes `data[].id`: configured served names (or the model argument), plus registered LoRA names. The recipes use one served name per process. Verify the selected version and list authentication before refresh. |
-| LM Studio on Mac | `/v1/models` is documented; catalog kind not established here | The list contains models visible to the server and may include downloaded models with Just-In-Time loading. Confirm the response envelope and how loaded `--identifier` values appear before choosing a catalog kind. |
+- A server that lists models at `/v1/models` uses `openai_models`. Aliases are API selectors, not fixed weight identities, and an alias such as the llama.cpp `--alias` or a vLLM served name is what the list reports.
+- An Ollama server uses `ollama_tags` with `/api/tags`. That list is the available models, not the running models.
+- A hosted service that documents a public models list, such as the OpenCode Go and Ollama Cloud lists, can use the same kinds. Read IDs as the list gives them. Do not prepend a client namespace such as `opencode-go/`, and do not replace a tag with a CLI alias.
+- For a listener that you set up with authentication, use the schema version 2 credential reference described above. Do not add a dummy key or read a runtime's login cache.
 
-These are metadata mappings, not route approval. Aliases are API selectors, not fixed weight identities.
+These are metadata mappings, not route approval. Pricing, limits, capabilities and API base URLs in the metadata cannot change connection authority, download weights or enable inference.
 
-Ollama's local API does not require authentication. The llama.cpp recipes do not set a key. For a listener that you set up with authentication, verify its list contract and use the schema version 2 credential reference described above. Do not add a dummy key or read a runtime's login cache.
+Save the manifest in a protected directory that you own. Run `trestle config models refresh` with `--allow-remote` for public HTTPS sources and a new proposal path. Review the IDs, the metadata, the source failures and the two digests, and only then run `trestle config models apply`.
 
-Official sources:
-
-- [llama.cpp server](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md), direct `GET /v1/models` and `--alias`.
-- [Ollama list models](https://docs.ollama.com/api/tags) and [local API authentication](https://docs.ollama.com/api/authentication).
-- [vLLM serve options](https://docs.vllm.ai/en/stable/cli/serve), `--served-model-name`.
-  Retrieved tree evidence (not a commit/release pin):
-  [vLLM list router](https://raw.githubusercontent.com/vllm-project/vllm/3a90cc6fd0504b52bf47d58e8d70cff4b03f2c19/vllm/entrypoints/openai/models/api_router.py),
-  [vLLM list handler](https://raw.githubusercontent.com/vllm-project/vllm/3a90cc6fd0504b52bf47d58e8d70cff4b03f2c19/vllm/entrypoints/openai/models/serving.py),
-  [vLLM response classes](https://raw.githubusercontent.com/vllm-project/vllm/3a90cc6fd0504b52bf47d58e8d70cff4b03f2c19/vllm/entrypoints/serve/engine/protocol.py), and
-  [vLLM served-name initialization](https://raw.githubusercontent.com/vllm-project/vllm/3a90cc6fd0504b52bf47d58e8d70cff4b03f2c19/vllm/entrypoints/launchers/api_server/app_state.py).
-- [LM Studio model listing](https://lmstudio.ai/docs/developer/openai-compat/models) and [loaded identifiers](https://lmstudio.ai/docs/cli/local-models/load).
-
-## OpenCode Go and Ollama Cloud metadata examples
-
-These two services publish metadata endpoints that work with the existing source kinds. The example below selects metadata sources only. It does not configure inference.
-
-```json
-{
-  "schema_version": 1,
-  "sources": [
-    {
-      "id": "my-opencode-go-catalog",
-      "kind": "openai_models",
-      "url": "https://opencode.ai/inference/go/v1/models"
-    },
-    {
-      "id": "my-ollama-cloud-catalog",
-      "kind": "ollama_tags",
-      "url": "https://ollama.com/api/tags"
-    }
-  ]
-}
-```
-
-Save the manifest in a protected directory that you own. Run the manual `trestle config models refresh` command with `--allow-remote` and a new proposal path. Review the IDs, the metadata, the source failures and the two digests, and only then run `trestle config models apply`. Apply does not fetch or activate anything. The source IDs above are examples, so choose stable IDs for your own configuration.
-
-When last checked (see the retrieval date below), both documented endpoints returned public metadata without a key. Schema version 1 does not read credentials. Do not put inference keys into these URLs. If a service later documents authenticated discovery, use the schema version 2 credential reference.
-
-OpenCode Go reads `data[].id` as is, such as `glm-5.3-flash`. Do not prepend OpenCode's client configuration namespace `opencode-go/` to direct API IDs. Ollama Cloud reads `models[].name` as is, such as `gemma4:31b`. Do not replace it with the CLI alias `gemma4:cloud`. These are examples seen in metadata, not recommended defaults. Model availability and aliases can change.
-
-Pricing, model limits, reasoning fields, capabilities and API base URLs in the metadata cannot change connection authority, download weights or enable inference. OpenCode Go privacy differs by model.
-
-A 403 or a malformed response is reported as `metadata_unavailable`, not as an empty, successful catalog. The previous successful entries for that source are kept. Review `failures` even if refresh exits successfully. A failed metadata refresh does not mean that a model was removed, and a successful one does not allow its use.
-
-Official documentation (retrieved October 30, 2026):
-
-- [OpenCode Go](https://opencode.ai/v2/docs/console/go), Models and API sections.
-- [Ollama Cloud](https://docs.ollama.com/cloud), direct API and model catalog.
-- [Ollama list models API](https://docs.ollama.com/api/tags).
+A 403 or a malformed response is reported as `metadata_unavailable`, not as an empty, successful catalog, and the previous successful entries for that source are kept. Review `failures` even if refresh exits successfully. A failed metadata refresh does not mean that a model was removed, and a successful one does not allow its use.
 
 ## Review and apply
 

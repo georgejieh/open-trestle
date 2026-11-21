@@ -1,7 +1,8 @@
 # Environment variables and files
 
-This page lists every `OPEN_TRESTLE_*` variable that the programs read, and every
-path that they write. Open Trestle never puts a key value in a command line, a
+This page lists the `OPEN_TRESTLE_*` variables that you can set, and the paths
+that the programs write for you to use. The daemon's own storage under `--state-dir`
+is described in [the daemon API](daemon-api.md#what-the-state-directory-may-contain). Open Trestle never puts a key value in a command line, a
 result, a log or a setup file. Variables marked secret hold a credential, so set
 them from your shell or a secret manager, never in a file in the repository.
 
@@ -20,6 +21,8 @@ Other variables that change behavior:
 | `XDG_STATE_HOME` | Where the usage folder and the update-check cache live, when an absolute path. The setup folder does not follow it. |
 | `XDG_DATA_HOME` | Where the local update folder lives, when an absolute path. |
 | `HOME` | The base for the defaults below when an XDG variable is unset or not absolute. |
+| `USERPROFILE` | On Windows, the base for the scan cache when `XDG_CACHE_HOME` is unset or not absolute. |
+| `TMPDIR` | The folder where `trestle update` makes its private working folder and where the check sandbox keeps its scratch and Go seed folders. |
 | `NO_COLOR`, `TERM=dumb` | No color, and no home screen without a terminal on both sides. `COLORTERM=truecolor` or `24bit` selects 24-bit color. |
 | `HTTPS_PROXY` | Honored by the update check and the update download. |
 
@@ -53,6 +56,7 @@ absolute path.
 | `$XDG_DATA_HOME/open-trestle/updates/`, default `~/.local/share/open-trestle/updates/` | A development build handed over for `trestle update`. | folder `0700`, files `0600` or stricter, regular files owned by you |
 | `$XDG_CACHE_HOME/open-trestle/scan-cache/`, default `~/.cache/open-trestle/scan-cache/` (Windows: `%USERPROFILE%\.cache\open-trestle\scan-cache`) | The compiled secret scanner (about 110 MB). The first review fills it. Deleting the folder is safe; the next review fills it again. | `0700`, owned by you, every folder above it changeable only by you or root |
 | `<folder of the trestle program>/../libexec/open-trestle/open-trestle-scan-helper` (`.exe` on Windows) | The secret scan helper. The Linux package installs it at `/usr/local/libexec/open-trestle/open-trestle-scan-helper`. | not writable, owned by you or root (Windows: you or a system account) |
+| `$XDG_STATE_HOME/open-trestle/sandbox-grants`, default `~/.local/state/open-trestle/sandbox-grants` | On Windows, the folder grants made for the check sandbox. `trestle checks off` takes them back. See [repository checks](repository-checks.md#what-the-sandbox-allows). | |
 | `/usr/local/share/open-trestle/distribution/receipt.json` | The package receipt that marks the packaged install. | written by the package |
 
 On Windows the credential, setup, usage and scan-cache folders and files have an
