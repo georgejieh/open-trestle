@@ -93,7 +93,7 @@ The `run` member of the API response v1 envelope is the canonical receipt v1, v2
 
 The run-progress response v1 is a separate read-only HTTP envelope with exactly `contract`, `schema_version`, `request_id`, `run` and `progress`. It references the canonical receipt v1, v2 or v3. Its four axes are `change`, `deterministic`, `context` and `verification`. Each axis has a bounded state, an optional immutable artifact identity and only its declared count fields.
 
-The schema inventory contains 133 documents. The native client also validates the scope, the completed-task binding, the output identities other than context, the count equations and the checked-versus-applicable bounds. Schema validation cannot establish artifact lineage or consistency with the receipt head.
+The schema inventory contains 124 documents. The native client also validates the scope, the completed-task binding, the output identities other than context, the count equations and the checked-versus-applicable bounds. Schema validation cannot establish artifact lineage or consistency with the receipt head.
 
 The delivery-refusal response v1 is another read-only envelope, with exactly `contract`, `schema_version`, `request_id` and `refusal`. The `refusal` member is the canonical `open-trestle/webhook-delivery-refusal` v1 record. It describes an accepted webhook delivery that intake refused instead of opening its run. It holds the tenant, repository, source, deduplication key, delivery and planner identities, the reason token and the refusal time. It carries no delivery content. Errors use the api-response envelope.
 
@@ -280,8 +280,6 @@ Runtime policy v4 adds only the finite `opencode_go_chat_v1` Chat profile and it
 
 Native validation binds the exact Go route and effective model selector, the immutable typed `opencode_go_privacy` evidence, the derived account and credential-reference identity, the tenant and repository, and the validity window. Structure alone cannot validate these bindings. The native schema tests inspect structure and the frozen legacy bytes, and they do not run a JSON Schema validator.
 
-The setup checker supports an exact approved Go generation route and a distinct private direct verifier. Setup support grants no dispatch authority and implies no readiness. See [OpenCode Go profile](opencode-go-profile.md).
-
 Runtime policy v6 is a generic policy with the v2 exact verifier grant and an optional boolean `local_structured_output`. When the option is true, the policy requires these three things:
 
 - generic Chat Completions at a canonical numeric-loopback endpoint;
@@ -320,25 +318,13 @@ This startup pair is not authorization for an actual sanitized request, does not
 
 That failure is a refusal caused by the operator's configuration. It is not the explicit, durable abstention that is required when the verifier is lost or coverage has gaps after admission.
 
-Three schemas cover GitHub source brokering: the source-broker descriptor v1, the configuration-only permission-admin result v2 and the integration-only check request v2. The descriptor keeps its native 20 fields, `single_host_exclusive` ownership and explicit booleans for token creation and demand renewal. Its schema date pattern is structural. Native source parsing validates the dates and normalizes any trailing endpoint slashes it accepts. Setup and admin separately require an API year of 2000 or later.
+The source-broker descriptor v1 schema covers GitHub source brokering. The descriptor keeps its native 20 fields, `single_host_exclusive` ownership and explicit booleans for token creation and demand renewal. Its schema date pattern is structural. Native source parsing validates the dates and normalizes any trailing endpoint slashes it accepts.
 
 Setup schemas:
 
 - `schemas/setup/setup-command-result-v1.schema.json`
 - `schemas/setup/setup-plan-v1.schema.json`
 - `schemas/setup/setup-check-receipt-v1.schema.json`
-- `schemas/setup/setup-init-request-v1.schema.json`
-- `schemas/setup/setup-check-request-v1.schema.json`
-- `schemas/setup/setup-check-request-v2.schema.json`
-- `schemas/setup/setup-session-v1.schema.json`
-- `schemas/setup/setup-check-result-v1.schema.json`
-- `schemas/setup/setup-error-v1.schema.json`
-
-Integration request v2 has exactly nine required fields: `contract`, `schema_version`, `plan_identity`, `key`, `confirmation`, `approve_integration_permission_authority_identity`, `approve_github_source_broker_authority_identity`, `allow_github_installation_token_creation` and `approved_by`. Consent must be boolean true, and `confirmation` is exactly `create GitHub installation token and run integration_permissions_validated`. Credential creation is an explicitly approved effect, not authority that a bearer token alone carries. The host cap and the request approvals remain independent.
-
-Historical integration request v1 remains published but cannot be executed. Unrelated v1 requests keep their semantics. Current plans, receipts, sessions and results keep schema 1. An old Ready state remains readable and historical, and is not upgraded automatically into authority. Migration needs fresh protected state and a rerun of all nondeterministic checks, without importing old receipts.
-
-The admin v2 output has exactly seven fields: the contract, the schema version, the `configuration_only` status, the `identity` operation, and `broker_authority_identity`, `setup_issuance_authority_identity` and `permission_authority_identity`. It grants no observed or executable authority. See [GitHub integration permission evidence](github-integration-permissions.md) and [local setup API](daemon-api.md#local-setup-api).
 
 Diagnostic schemas:
 

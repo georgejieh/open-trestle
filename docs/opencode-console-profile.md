@@ -159,7 +159,7 @@ Manual authenticated metadata uses the existing refresh and apply path. A protec
 
 Remote refresh needs your explicit opt-in. Applying the result needs the reviewed proposal and current digests. The credential covers metadata only, not inference. Returned metadata cannot choose the dispatch endpoint or activate a route. A failed refresh keeps the last-known-good entries.
 
-The normal runtime catalog checks the current evidence before it resolves credential providers. Setup accepts an approved Console generator together with a distinct private direct verifier, which must differ in provider, origin, connection and credential. Setup checks do not create keys, payment methods, approvals or services.
+The normal runtime catalog checks the current evidence before it resolves credential providers.
 
 ## Official sources
 

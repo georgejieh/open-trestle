@@ -4,7 +4,7 @@ The OpenCode Go Chat profile, `opencode_go_chat_v1`, lets an operator route revi
 
 ## Status and activation boundary
 
-Runtime policy v4 defines the `opencode_go_chat_v1` profile alongside the generic and OpenRouter connections. The setup checker supports an approved Go generation route together with a distinct private direct verifier.
+Runtime policy v4 defines the `opencode_go_chat_v1` profile alongside the generic and OpenRouter connections.
 
 `trestle init --provider opencode-go` and `trestle setup bootstrap init --provider opencode-go` write this profile's policy and inventory from the evidence and declarations that you supply (see [remote model review](remote-model-review.md#opencode-go)). No command creates credentials, issues the approval or activates a route on its own. The daemon consumes the protected runtime policy and inventory.
 
@@ -271,7 +271,6 @@ Model catalog metadata does not approve privacy or entitlement, activate routes 
 
 These are separate requirements:
 
-- setup Go authority
 - separate eligibility for direct verification
 - admission by protected configuration
 - scanner proof

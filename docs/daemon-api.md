@@ -209,12 +209,6 @@ The daemon applies rate limits before authentication and per principal.
 
 An external ingress may add a stricter limit.
 
-## Local setup API
-
-`trestle setup web` serves a separate setup API with its own dedicated setup bearer token. The API listens on a numeric loopback address only, and it checks the Host. It is not an endpoint that issues credentials for the daemon.
-
-On shutdown, the handler allows HTTP Shutdown five seconds and forces a server Close if that fails.
-
 ## Go client
 
 The public `client`, `controlplane` and `runtimeadmin` packages expose types for plans, receipts, leases, completions, and runtime status without content. The client supports runtime inspection, submission, observation, cancellation, waiting for and acknowledging notifications, task claims, renewal, completion and finalization. It limits responses to 1 MiB, requires JSON media types, rejects unknown response fields, applies a request timeout and disables redirects.

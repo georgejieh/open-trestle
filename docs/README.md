@@ -50,10 +50,10 @@ no release yet, and each page describes what the code does today. The
 
 These pages are for running the daemon.
 
-- [Setup planning](setup.md) and [operations and recovery](operations.md).
+- [Setup plan](setup.md) and [operations and recovery](operations.md).
 - [Configuration validation](configuration-validation.md).
 - [Remote workers](remote-workers.md) and [webhook ingress](webhook-ingress.md).
-- GitHub: [source acquisition](github-source-acquisition.md), and [integration permissions](github-integration-permissions.md).
+- GitHub: [source acquisition](github-source-acquisition.md).
 - [Passive vulnerability gate](vulnerability-gate.md).
 
 ## Contribute

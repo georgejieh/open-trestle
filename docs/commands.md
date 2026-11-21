@@ -167,21 +167,9 @@ are documented in [setup](setup.md), [operations](operations.md) and
 
 | Command | Flags |
 | --- | --- |
-| `setup init` | `--profile`, `--tenant`, `--repository`, `--recovery-owner`, `--state` |
 | `setup inspect` | `--state`, `--expected-root-identity` |
-| `setup check storage` | `--state`, `--storage-root` |
-| `setup check observer` | `--state` |
-| `setup check integration` | `--state`, `--approve-integration-permission-authority-identity`, `--approve-github-source-broker-authority-identity`, `--allow-github-installation-token-creation`, `--approved-by`; or the older `--github-api-endpoint`, `--github-api-version`, `--github-installation-id`, `--github-repository-full-name` |
-| `setup check webhook` | `--state`, `--approve-webhook-authority-identity`, `--github-webhook-key-id`, `--approved-by` |
-| `setup check administrator` | `--state`, `--approved-by` |
-| `setup check backup` | `--state`, `--backup-snapshot` |
-| `setup check provider`, `policy`, `dry-run`, `inference` | `--state`, `--route-inventory`, `--runtime-policy`, `--approve-inventory-identity`, `--approve-runtime-policy-identity`, `--approve-review-policy-identity`, `--approved-by` |
 | `setup backup create` | `--state`, `--destination`, `--expected-plan-identity` |
 | `setup backup restore` | `--snapshot`, `--destination`, `--expected-root-identity`, `--expected-plan-identity` |
-| `setup tui` | `--state`, `--storage-root`, `--backup-snapshot`, `--administrator-approved-by`, `--approved-by` for the policy checks, `--width`, `--plain`, `--once` |
-| `setup web` | `--state`, `--listen LOOPBACK:PORT` (default `127.0.0.1:8742`) |
-
-The only profile is `local_single_node`. No current profile uses `setup check provider`, `integration` or `webhook`.
 
 ### `trestle setup bootstrap`
 
