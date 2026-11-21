@@ -83,8 +83,7 @@ available:
 
 Remote providers work with any build that has its secret scan helper. Each profile is tested offline with synthetic transports, and
 none is qualified against a live account. The OpenCode Console profile is
-offline protocol support only, and the Codex ChatGPT session profile is a
-disabled status report. See [remote model review](remote-model-review.md).
+offline protocol support only. See [remote model review](remote-model-review.md).
 
 ### Spending limits
 
