@@ -230,6 +230,10 @@ func platformArgs(check Check) []string {
 	return nil
 }
 
+// nodeInvalidArgument is the status Node exits with for an option it does
+// not know, as older versions do for the test runner's options.
+const nodeInvalidArgument = 9
+
 // runOnce runs the check once and returns its results, or the problem that
 // left it without any.
 func runOnce(ctx context.Context, runner Runner, spec checksandbox.Spec, check Check, trees trees) (map[string]Outcome, *problem) {
@@ -268,6 +272,8 @@ func runOnce(ctx context.Context, runner Runner, spec checksandbox.Spec, check C
 		return nil, &problem{text: "missing dependency: " + strings.Join(slices.Compact(parsed.missing), ", "), sided: true}
 	case outcome.ExitCode == 0:
 		return map[string]Outcome{}, nil
+	case check.Tool == "node" && outcome.ExitCode == nodeInvalidArgument:
+		return nil, &problem{text: "this Node.js version does not accept the test options the check uses"}
 	}
 	return nil, &problem{text: fmt.Sprintf("the runner exited with status %d and reported no results", outcome.ExitCode), sided: true,
 		headFailure: fmt.Sprintf("exit status %d without results", outcome.ExitCode)}
