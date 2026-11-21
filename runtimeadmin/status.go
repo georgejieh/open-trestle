@@ -30,39 +30,24 @@ var (
 
 type MetadataBackend string
 
-const (
-	MetadataLocal    MetadataBackend = "local"
-	MetadataPostgres MetadataBackend = "postgres"
-)
+const MetadataLocal MetadataBackend = "local"
 
 type ArtifactBackend string
 
-const (
-	ArtifactLocal ArtifactBackend = "local"
-	ArtifactS3    ArtifactBackend = "s3"
-)
+const ArtifactLocal ArtifactBackend = "local"
 
 type Protection string
 
-const (
-	ProtectionProcessPrivate    Protection = "process_private"
-	ProtectionEnvelopeEncrypted Protection = "envelope_encrypted"
-)
+const ProtectionProcessPrivate Protection = "process_private"
 
 type NotificationBackend string
 
-const (
-	NotificationProcessLocal NotificationBackend = "process_local"
-	NotificationPostgres     NotificationBackend = "postgres"
-)
+const NotificationProcessLocal NotificationBackend = "process_local"
 
-// RateLimitBackend identifies process-local or shared request coordination.
+// RateLimitBackend identifies how requests are coordinated.
 type RateLimitBackend string
 
-const (
-	RateLimitProcessLocal RateLimitBackend = "process_local"
-	RateLimitPostgres     RateLimitBackend = "postgres"
-)
+const RateLimitProcessLocal RateLimitBackend = "process_local"
 
 type ReviewMode string
 
@@ -85,24 +70,22 @@ type HandlerBinding struct {
 	Identity string `json:"identity"`
 }
 type ConfigurationOptions struct {
-	TenantID                   string
-	RepositoryIDs              []string
-	MetadataBackend            MetadataBackend
-	DatabaseAuthorityIdentity  string
-	ArtifactBackend            ArtifactBackend
-	ArtifactProtection         Protection
-	NotificationBackend        NotificationBackend
-	RateLimitBackend           RateLimitBackend
-	RateLimitAuthorityIdentity string
-	ReviewMode                 ReviewMode
-	WebhookIngress             bool
-	LocalWorkers               bool
-	PublicationEnabled         bool
-	PublicationFenceVerified   bool
-	RouteInventoryIdentity     string
-	RuntimePolicyIdentity      string
-	RouteCount                 uint32
-	Handlers                   []HandlerBinding
+	TenantID                 string
+	RepositoryIDs            []string
+	MetadataBackend          MetadataBackend
+	ArtifactBackend          ArtifactBackend
+	ArtifactProtection       Protection
+	NotificationBackend      NotificationBackend
+	RateLimitBackend         RateLimitBackend
+	ReviewMode               ReviewMode
+	WebhookIngress           bool
+	LocalWorkers             bool
+	PublicationEnabled       bool
+	PublicationFenceVerified bool
+	RouteInventoryIdentity   string
+	RuntimePolicyIdentity    string
+	RouteCount               uint32
+	Handlers                 []HandlerBinding
 }
 type Configuration struct {
 	identity string
@@ -131,25 +114,21 @@ func (c Configuration) TenantID() string { return c.options.TenantID }
 func (c Configuration) RepositoryIDs() []string {
 	return append([]string(nil), c.options.RepositoryIDs...)
 }
-func (c Configuration) MetadataBackend() MetadataBackend  { return c.options.MetadataBackend }
-func (c Configuration) DatabaseAuthorityIdentity() string { return c.options.DatabaseAuthorityIdentity }
-func (c Configuration) ArtifactBackend() ArtifactBackend  { return c.options.ArtifactBackend }
-func (c Configuration) ArtifactProtection() Protection    { return c.options.ArtifactProtection }
+func (c Configuration) MetadataBackend() MetadataBackend { return c.options.MetadataBackend }
+func (c Configuration) ArtifactBackend() ArtifactBackend { return c.options.ArtifactBackend }
+func (c Configuration) ArtifactProtection() Protection   { return c.options.ArtifactProtection }
 func (c Configuration) NotificationBackend() NotificationBackend {
 	return c.options.NotificationBackend
 }
 func (c Configuration) RateLimitBackend() RateLimitBackend { return c.options.RateLimitBackend }
-func (c Configuration) RateLimitAuthorityIdentity() string {
-	return c.options.RateLimitAuthorityIdentity
-}
-func (c Configuration) ReviewMode() ReviewMode         { return c.options.ReviewMode }
-func (c Configuration) WebhookIngress() bool           { return c.options.WebhookIngress }
-func (c Configuration) LocalWorkers() bool             { return c.options.LocalWorkers }
-func (c Configuration) PublicationEnabled() bool       { return c.options.PublicationEnabled }
-func (c Configuration) PublicationFenceVerified() bool { return c.options.PublicationFenceVerified }
-func (c Configuration) RouteInventoryIdentity() string { return c.options.RouteInventoryIdentity }
-func (c Configuration) RuntimePolicyIdentity() string  { return c.options.RuntimePolicyIdentity }
-func (c Configuration) RouteCount() uint32             { return c.options.RouteCount }
+func (c Configuration) ReviewMode() ReviewMode             { return c.options.ReviewMode }
+func (c Configuration) WebhookIngress() bool               { return c.options.WebhookIngress }
+func (c Configuration) LocalWorkers() bool                 { return c.options.LocalWorkers }
+func (c Configuration) PublicationEnabled() bool           { return c.options.PublicationEnabled }
+func (c Configuration) PublicationFenceVerified() bool     { return c.options.PublicationFenceVerified }
+func (c Configuration) RouteInventoryIdentity() string     { return c.options.RouteInventoryIdentity }
+func (c Configuration) RuntimePolicyIdentity() string      { return c.options.RuntimePolicyIdentity }
+func (c Configuration) RouteCount() uint32                 { return c.options.RouteCount }
 func (c Configuration) Handlers() []HandlerBinding {
 	return append([]HandlerBinding(nil), c.options.Handlers...)
 }
@@ -169,40 +148,10 @@ func (c Configuration) validContent() bool {
 			return false
 		}
 	}
-	if o.MetadataBackend != MetadataLocal && o.MetadataBackend != MetadataPostgres {
-		return false
-	}
-	if o.MetadataBackend == MetadataPostgres && !nonzeroDigest(o.DatabaseAuthorityIdentity) || o.MetadataBackend == MetadataLocal && o.DatabaseAuthorityIdentity != "" {
-		return false
-	}
-	if o.ArtifactBackend != ArtifactLocal && o.ArtifactBackend != ArtifactS3 {
-		return false
-	}
-	if o.ArtifactProtection != ProtectionProcessPrivate && o.ArtifactProtection != ProtectionEnvelopeEncrypted {
-		return false
-	}
-	if o.NotificationBackend != NotificationProcessLocal && o.NotificationBackend != NotificationPostgres {
-		return false
-	}
-	if o.RateLimitBackend != RateLimitProcessLocal && o.RateLimitBackend != RateLimitPostgres {
-		return false
-	}
-	if o.RateLimitBackend == RateLimitPostgres && (o.MetadataBackend != MetadataPostgres || !nonzeroDigest(o.RateLimitAuthorityIdentity)) || o.RateLimitBackend == RateLimitProcessLocal && o.RateLimitAuthorityIdentity != "" {
+	if o.MetadataBackend != MetadataLocal || o.ArtifactBackend != ArtifactLocal || o.ArtifactProtection != ProtectionProcessPrivate || o.NotificationBackend != NotificationProcessLocal || o.RateLimitBackend != RateLimitProcessLocal {
 		return false
 	}
 	if o.ReviewMode != ReviewDisabled && o.ReviewMode != ReviewLocal && o.ReviewMode != ReviewAdvisory && o.ReviewMode != ReviewRequired {
-		return false
-	}
-	if o.MetadataBackend == MetadataLocal && (o.ArtifactBackend != ArtifactLocal || o.ArtifactProtection != ProtectionProcessPrivate || o.NotificationBackend != NotificationProcessLocal || o.RateLimitBackend != RateLimitProcessLocal) {
-		return false
-	}
-	if o.ArtifactBackend == ArtifactLocal && o.ArtifactProtection != ProtectionProcessPrivate || o.ArtifactBackend == ArtifactS3 && (o.MetadataBackend != MetadataPostgres || o.ArtifactProtection != ProtectionEnvelopeEncrypted) {
-		return false
-	}
-	if o.NotificationBackend == NotificationPostgres && o.MetadataBackend != MetadataPostgres {
-		return false
-	}
-	if o.MetadataBackend == MetadataPostgres && o.RateLimitBackend != RateLimitPostgres {
 		return false
 	}
 	runtimeConfigured := o.RouteInventoryIdentity != "" || o.RuntimePolicyIdentity != "" || o.RouteCount != 0
@@ -212,7 +161,7 @@ func (c Configuration) validContent() bool {
 	if !runtimeConfigured && (o.RouteInventoryIdentity != "" || o.RuntimePolicyIdentity != "" || o.RouteCount != 0) {
 		return false
 	}
-	if o.PublicationEnabled != (o.ReviewMode == ReviewRequired) || o.PublicationEnabled && !o.PublicationFenceVerified || o.PublicationFenceVerified && o.MetadataBackend != MetadataPostgres {
+	if o.PublicationEnabled != (o.ReviewMode == ReviewRequired) || o.PublicationEnabled && !o.PublicationFenceVerified || o.PublicationFenceVerified {
 		return false
 	}
 	if o.ReviewMode == ReviewDisabled && (o.LocalWorkers || len(o.Handlers) > 0 || runtimeConfigured) {
@@ -230,28 +179,26 @@ func (c Configuration) validContent() bool {
 }
 
 type configurationWire struct {
-	TenantID                   string              `json:"tenant_id"`
-	RepositoryIDs              []string            `json:"repository_ids"`
-	MetadataBackend            MetadataBackend     `json:"metadata_backend"`
-	DatabaseAuthorityIdentity  string              `json:"database_authority_identity,omitempty"`
-	ArtifactBackend            ArtifactBackend     `json:"artifact_backend"`
-	ArtifactProtection         Protection          `json:"artifact_protection"`
-	NotificationBackend        NotificationBackend `json:"notification_backend"`
-	RateLimitBackend           RateLimitBackend    `json:"rate_limit_backend"`
-	RateLimitAuthorityIdentity string              `json:"rate_limit_authority_identity,omitempty"`
-	ReviewMode                 ReviewMode          `json:"review_mode"`
-	WebhookIngress             bool                `json:"webhook_ingress"`
-	LocalWorkers               bool                `json:"local_workers"`
-	PublicationEnabled         bool                `json:"publication_enabled"`
-	PublicationFenceVerified   bool                `json:"publication_fence_verified"`
-	RouteInventoryIdentity     string              `json:"route_inventory_identity,omitempty"`
-	RuntimePolicyIdentity      string              `json:"runtime_policy_identity,omitempty"`
-	RouteCount                 uint32              `json:"route_count"`
-	Handlers                   []HandlerBinding    `json:"handlers"`
+	TenantID                 string              `json:"tenant_id"`
+	RepositoryIDs            []string            `json:"repository_ids"`
+	MetadataBackend          MetadataBackend     `json:"metadata_backend"`
+	ArtifactBackend          ArtifactBackend     `json:"artifact_backend"`
+	ArtifactProtection       Protection          `json:"artifact_protection"`
+	NotificationBackend      NotificationBackend `json:"notification_backend"`
+	RateLimitBackend         RateLimitBackend    `json:"rate_limit_backend"`
+	ReviewMode               ReviewMode          `json:"review_mode"`
+	WebhookIngress           bool                `json:"webhook_ingress"`
+	LocalWorkers             bool                `json:"local_workers"`
+	PublicationEnabled       bool                `json:"publication_enabled"`
+	PublicationFenceVerified bool                `json:"publication_fence_verified"`
+	RouteInventoryIdentity   string              `json:"route_inventory_identity,omitempty"`
+	RuntimePolicyIdentity    string              `json:"runtime_policy_identity,omitempty"`
+	RouteCount               uint32              `json:"route_count"`
+	Handlers                 []HandlerBinding    `json:"handlers"`
 }
 
 func wireConfiguration(o ConfigurationOptions) configurationWire {
-	return configurationWire{TenantID: o.TenantID, RepositoryIDs: append([]string(nil), o.RepositoryIDs...), MetadataBackend: o.MetadataBackend, DatabaseAuthorityIdentity: o.DatabaseAuthorityIdentity, ArtifactBackend: o.ArtifactBackend, ArtifactProtection: o.ArtifactProtection, NotificationBackend: o.NotificationBackend, RateLimitBackend: o.RateLimitBackend, RateLimitAuthorityIdentity: o.RateLimitAuthorityIdentity, ReviewMode: o.ReviewMode, WebhookIngress: o.WebhookIngress, LocalWorkers: o.LocalWorkers, PublicationEnabled: o.PublicationEnabled, PublicationFenceVerified: o.PublicationFenceVerified, RouteInventoryIdentity: o.RouteInventoryIdentity, RuntimePolicyIdentity: o.RuntimePolicyIdentity, RouteCount: o.RouteCount, Handlers: append([]HandlerBinding(nil), o.Handlers...)}
+	return configurationWire{TenantID: o.TenantID, RepositoryIDs: append([]string(nil), o.RepositoryIDs...), MetadataBackend: o.MetadataBackend, ArtifactBackend: o.ArtifactBackend, ArtifactProtection: o.ArtifactProtection, NotificationBackend: o.NotificationBackend, RateLimitBackend: o.RateLimitBackend, ReviewMode: o.ReviewMode, WebhookIngress: o.WebhookIngress, LocalWorkers: o.LocalWorkers, PublicationEnabled: o.PublicationEnabled, PublicationFenceVerified: o.PublicationFenceVerified, RouteInventoryIdentity: o.RouteInventoryIdentity, RuntimePolicyIdentity: o.RuntimePolicyIdentity, RouteCount: o.RouteCount, Handlers: append([]HandlerBinding(nil), o.Handlers...)}
 }
 func configurationIdentity(o ConfigurationOptions) string {
 	encoded, _ := json.Marshal(wireConfiguration(o))
@@ -404,7 +351,7 @@ func DecodeSnapshot(payload []byte) (Snapshot, error) {
 	if decoder.Decode(&wire) != nil || decoder.Decode(&struct{}{}) == nil {
 		return Snapshot{}, ErrInvalidSnapshot
 	}
-	options := ConfigurationOptions{TenantID: wire.Configuration.TenantID, RepositoryIDs: wire.Configuration.RepositoryIDs, MetadataBackend: wire.Configuration.MetadataBackend, DatabaseAuthorityIdentity: wire.Configuration.DatabaseAuthorityIdentity, ArtifactBackend: wire.Configuration.ArtifactBackend, ArtifactProtection: wire.Configuration.ArtifactProtection, NotificationBackend: wire.Configuration.NotificationBackend, RateLimitBackend: wire.Configuration.RateLimitBackend, RateLimitAuthorityIdentity: wire.Configuration.RateLimitAuthorityIdentity, ReviewMode: wire.Configuration.ReviewMode, WebhookIngress: wire.Configuration.WebhookIngress, LocalWorkers: wire.Configuration.LocalWorkers, PublicationEnabled: wire.Configuration.PublicationEnabled, PublicationFenceVerified: wire.Configuration.PublicationFenceVerified, RouteInventoryIdentity: wire.Configuration.RouteInventoryIdentity, RuntimePolicyIdentity: wire.Configuration.RuntimePolicyIdentity, RouteCount: wire.Configuration.RouteCount, Handlers: wire.Configuration.Handlers}
+	options := ConfigurationOptions{TenantID: wire.Configuration.TenantID, RepositoryIDs: wire.Configuration.RepositoryIDs, MetadataBackend: wire.Configuration.MetadataBackend, ArtifactBackend: wire.Configuration.ArtifactBackend, ArtifactProtection: wire.Configuration.ArtifactProtection, NotificationBackend: wire.Configuration.NotificationBackend, RateLimitBackend: wire.Configuration.RateLimitBackend, ReviewMode: wire.Configuration.ReviewMode, WebhookIngress: wire.Configuration.WebhookIngress, LocalWorkers: wire.Configuration.LocalWorkers, PublicationEnabled: wire.Configuration.PublicationEnabled, PublicationFenceVerified: wire.Configuration.PublicationFenceVerified, RouteInventoryIdentity: wire.Configuration.RouteInventoryIdentity, RuntimePolicyIdentity: wire.Configuration.RuntimePolicyIdentity, RouteCount: wire.Configuration.RouteCount, Handlers: wire.Configuration.Handlers}
 	configuration, err := NewConfiguration(options)
 	if err != nil {
 		return Snapshot{}, ErrInvalidSnapshot

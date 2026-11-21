@@ -92,26 +92,22 @@
         },
         "metadata_backend": {
           "enum": [
-            "local",
-            "postgres"
+            "local"
           ]
         },
         "artifact_backend": {
           "enum": [
-            "local",
-            "s3"
+            "local"
           ]
         },
         "artifact_protection": {
           "enum": [
-            "process_private",
-            "envelope_encrypted"
+            "process_private"
           ]
         },
         "notification_backend": {
           "enum": [
-            "process_local",
-            "postgres"
+            "process_local"
           ]
         },
         "review_mode": {
@@ -132,7 +128,7 @@
           "type": "boolean"
         },
         "publication_fence_verified": {
-          "type": "boolean"
+          "const": false
         },
         "route_inventory_identity": {
           "$ref": "#/$defs/digest"
@@ -176,168 +172,14 @@
           },
           "uniqueItems": true
         },
-        "database_authority_identity": {
-          "$ref": "#/$defs/digest"
-        },
         "rate_limit_backend": {
           "type": "string",
           "enum": [
-            "process_local",
-            "postgres"
+            "process_local"
           ]
-        },
-        "rate_limit_authority_identity": {
-          "$ref": "#/$defs/digest"
         }
       },
       "allOf": [
-        {
-          "if": {
-            "properties": {
-              "metadata_backend": {
-                "const": "local"
-              }
-            },
-            "required": [
-              "metadata_backend"
-            ]
-          },
-          "then": {
-            "properties": {
-              "artifact_backend": {
-                "const": "local"
-              },
-              "artifact_protection": {
-                "const": "process_private"
-              },
-              "notification_backend": {
-                "const": "process_local"
-              },
-              "rate_limit_backend": {
-                "const": "process_local"
-              }
-            },
-            "not": {
-              "anyOf": [
-                {
-                  "required": [
-                    "database_authority_identity"
-                  ]
-                },
-                {
-                  "required": [
-                    "rate_limit_authority_identity"
-                  ]
-                }
-              ]
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "metadata_backend": {
-                "const": "postgres"
-              }
-            },
-            "required": [
-              "metadata_backend"
-            ]
-          },
-          "then": {
-            "required": [
-              "database_authority_identity",
-              "rate_limit_authority_identity"
-            ],
-            "properties": {
-              "rate_limit_backend": {
-                "const": "postgres"
-              }
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "artifact_backend": {
-                "const": "local"
-              }
-            },
-            "required": [
-              "artifact_backend"
-            ]
-          },
-          "then": {
-            "properties": {
-              "artifact_protection": {
-                "const": "process_private"
-              }
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "artifact_backend": {
-                "const": "s3"
-              }
-            },
-            "required": [
-              "artifact_backend"
-            ]
-          },
-          "then": {
-            "properties": {
-              "metadata_backend": {
-                "const": "postgres"
-              },
-              "artifact_protection": {
-                "const": "envelope_encrypted"
-              }
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "notification_backend": {
-                "const": "postgres"
-              }
-            },
-            "required": [
-              "notification_backend"
-            ]
-          },
-          "then": {
-            "properties": {
-              "metadata_backend": {
-                "const": "postgres"
-              }
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "rate_limit_backend": {
-                "const": "postgres"
-              }
-            },
-            "required": [
-              "rate_limit_backend"
-            ]
-          },
-          "then": {
-            "properties": {
-              "metadata_backend": {
-                "const": "postgres"
-              }
-            },
-            "required": [
-              "rate_limit_authority_identity"
-            ]
-          }
-        },
         {
           "if": {
             "properties": {
@@ -375,25 +217,6 @@
               },
               "publication_fence_verified": {
                 "const": true
-              }
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "publication_fence_verified": {
-                "const": true
-              }
-            },
-            "required": [
-              "publication_fence_verified"
-            ]
-          },
-          "then": {
-            "properties": {
-              "metadata_backend": {
-                "const": "postgres"
               }
             }
           }

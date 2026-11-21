@@ -1047,25 +1047,20 @@ export async function parseRuntimeStatusEnvelope(
   const hasRoutes =
     "route_inventory_identity" in configuration ||
     "runtime_policy_identity" in configuration;
-  const hasDatabaseAuthority = "database_authority_identity" in configuration;
-  const hasRateLimitAuthority =
-    "rate_limit_authority_identity" in configuration;
-  const expected = ["tenant_id", "repository_ids", "metadata_backend"];
-  if (hasDatabaseAuthority) expected.push("database_authority_identity");
-  expected.push(
+  const expected = [
+    "tenant_id",
+    "repository_ids",
+    "metadata_backend",
     "artifact_backend",
     "artifact_protection",
     "notification_backend",
     "rate_limit_backend",
-  );
-  if (hasRateLimitAuthority) expected.push("rate_limit_authority_identity");
-  expected.push(
     "review_mode",
     "webhook_ingress",
     "local_workers",
     "publication_enabled",
     "publication_fence_verified",
-  );
+  ];
   if (hasRoutes)
     expected.push("route_inventory_identity", "runtime_policy_identity");
   expected.push("route_count", "handlers");
@@ -1075,17 +1070,11 @@ export async function parseRuntimeStatusEnvelope(
     !Array.isArray(configuration.repository_ids) ||
     configuration.repository_ids.length !== 1 ||
     configuration.repository_ids[0] !== scope.repository ||
-    !["local", "postgres"].includes(configuration.metadata_backend as string) ||
-    !["local", "s3"].includes(configuration.artifact_backend as string) ||
-    !["process_private", "envelope_encrypted"].includes(
-      configuration.artifact_protection as string,
-    ) ||
-    !["process_local", "postgres"].includes(
-      configuration.notification_backend as string,
-    ) ||
-    !["process_local", "postgres"].includes(
-      configuration.rate_limit_backend as string,
-    ) ||
+    configuration.metadata_backend !== "local" ||
+    configuration.artifact_backend !== "local" ||
+    configuration.artifact_protection !== "process_private" ||
+    configuration.notification_backend !== "process_local" ||
+    configuration.rate_limit_backend !== "process_local" ||
     !["disabled", "local", "advisory", "required"].includes(
       configuration.review_mode as string,
     ) ||
@@ -1101,13 +1090,6 @@ export async function parseRuntimeStatusEnvelope(
   const routeConfigured = Number(configuration.route_count) > 0;
   if (
     hasRoutes !== routeConfigured ||
-    hasDatabaseAuthority !== (configuration.metadata_backend === "postgres") ||
-    hasRateLimitAuthority !==
-      (configuration.rate_limit_backend === "postgres") ||
-    (hasRateLimitAuthority &&
-      !validDigest(configuration.rate_limit_authority_identity)) ||
-    (hasDatabaseAuthority &&
-      !validDigest(configuration.database_authority_identity)) ||
     (hasRoutes &&
       (!validDigest(configuration.route_inventory_identity) ||
         !validDigest(configuration.runtime_policy_identity))) ||
@@ -1124,24 +1106,7 @@ export async function parseRuntimeStatusEnvelope(
       configuration.publication_enabled ||
     (configuration.publication_enabled &&
       !configuration.publication_fence_verified) ||
-    (configuration.publication_fence_verified &&
-      configuration.metadata_backend !== "postgres") ||
-    (configuration.metadata_backend === "local" &&
-      (configuration.artifact_backend !== "local" ||
-        configuration.artifact_protection !== "process_private" ||
-        configuration.notification_backend !== "process_local" ||
-        configuration.rate_limit_backend !== "process_local")) ||
-    (configuration.artifact_backend === "local" &&
-      configuration.artifact_protection !== "process_private") ||
-    (configuration.notification_backend === "postgres" &&
-      configuration.metadata_backend !== "postgres") ||
-    (configuration.rate_limit_backend === "postgres" &&
-      configuration.metadata_backend !== "postgres") ||
-    (configuration.metadata_backend === "postgres" &&
-      configuration.rate_limit_backend !== "postgres") ||
-    (configuration.artifact_backend === "s3" &&
-      (configuration.metadata_backend !== "postgres" ||
-        configuration.artifact_protection !== "envelope_encrypted"))
+    configuration.publication_fence_verified
   )
     invalidResponse();
   const runtimeHandlers = handlers as unknown[];

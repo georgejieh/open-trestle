@@ -275,13 +275,11 @@ export interface RuntimeHandler {
 export interface RuntimeConfiguration {
   tenant_id: string;
   repository_ids: string[];
-  metadata_backend: "local" | "postgres";
-  database_authority_identity?: string;
-  artifact_backend: "local" | "s3";
-  artifact_protection: "process_private" | "envelope_encrypted";
-  notification_backend: "process_local" | "postgres";
-  rate_limit_backend: "process_local" | "postgres";
-  rate_limit_authority_identity?: string;
+  metadata_backend: "local";
+  artifact_backend: "local";
+  artifact_protection: "process_private";
+  notification_backend: "process_local";
+  rate_limit_backend: "process_local";
   review_mode: "disabled" | "local" | "advisory" | "required";
   webhook_ingress: boolean;
   local_workers: boolean;
