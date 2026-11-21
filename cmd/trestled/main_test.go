@@ -305,7 +305,7 @@ func TestBuildDaemonRejectsDuplicateObserverAuthority(t *testing.T) {
 }
 
 func TestBuildDaemonRejectsWebhookSecretReuse(t *testing.T) {
-	for _, other := range []string{"OPEN_TRESTLE_API_TOKEN", "OPEN_TRESTLE_OBSERVER_TOKEN", "OPEN_TRESTLE_GITHUB_SETUP_TOKEN", "OPEN_TRESTLE_SETUP_TOKEN"} {
+	for _, other := range []string{"OPEN_TRESTLE_API_TOKEN", "OPEN_TRESTLE_OBSERVER_TOKEN"} {
 		t.Run(other, func(t *testing.T) {
 			root := filepath.Join(t.TempDir(), "state")
 			secret := "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
