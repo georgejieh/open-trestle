@@ -48,7 +48,7 @@ func TestRunLocalGitChangeEmitsExactSupportedEvidence(t *testing.T) {
 
 func TestLocalGitChangeResultJSONSchema(t *testing.T) {
 	result := localGitChangeResult{
-		Contract: "open-trestle/local-git-change-result", SchemaVersion: 1, Status: localGitChangeStatusPartial,
+		Contract: "open-trestle/local-git-change-result", SchemaVersion: 2, Status: localGitChangeStatusPartial,
 		ChangeExecutionIdentity: "ce", AcquisitionPairIdentity: "pair", RepositoryIdentity: "repo", SourceAdapterIdentity: "adapter",
 		BaseRevisionIdentity: "base", HeadRevisionIdentity: "head", BaseEnvelopeIdentity: "be", HeadEnvelopeIdentity: "he",
 		ManifestDeltaIdentity: "delta", ChangePresent: true, ChangeIdentity: "change", ChangedFileCount: 1,
@@ -63,7 +63,7 @@ func TestLocalGitChangeResultJSONSchema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const want = `{"contract":"open-trestle/local-git-change-result","schema_version":1,"status":"partial","change_execution_identity":"ce","acquisition_pair_identity":"pair","repository_identity":"repo","source_adapter_identity":"adapter","base_revision_identity":"base","head_revision_identity":"head","base_envelope_identity":"be","head_envelope_identity":"he","manifest_delta_identity":"delta","change_present":true,"change_identity":"change","changed_file_count":1,"supported_file_count":0,"unsupported_file_count":1,"entries":[{"path":"file.go","kind":"added","status":"unsupported","reason":"added_file","repository_file_delta_identity":"fde","execution_identity":"execution","file_change_identity":"","line_map_identity":""}]}`
+	const want = `{"contract":"open-trestle/local-git-change-result","schema_version":2,"status":"partial","change_execution_identity":"ce","acquisition_pair_identity":"pair","repository_identity":"repo","source_adapter_identity":"adapter","base_revision_identity":"base","head_revision_identity":"head","base_envelope_identity":"be","head_envelope_identity":"he","manifest_delta_identity":"delta","change_present":true,"change_identity":"change","changed_file_count":1,"supported_file_count":0,"unsupported_file_count":1,"entries":[{"path":"file.go","kind":"added","status":"unsupported","reason":"added_file","repository_file_delta_identity":"fde","execution_identity":"execution","file_change_identity":"","line_map_identity":""}]}`
 	if string(encoded) != want {
 		t.Fatalf("JSON = %s, want %s", encoded, want)
 	}

@@ -19,7 +19,7 @@ The repository authority, namespace and name are labels that you supply to descr
 
 ## Output
 
-The command builds one `open-trestle/local-git-change-result` version 2 JSON object in memory. After it has closed the object root successfully, it writes the object followed by one newline. The schema is `schemas/review/local-git-change-result-v2.schema.json`. Version 1 stays published for the earlier behavior, which supported modified files only.
+The command builds one `open-trestle/local-git-change-result` version 2 JSON object in memory. After it has closed the object root successfully, it writes the object followed by one newline. The schema is `schemas/review/local-git-change-result-v2.schema.json`.
 
 The object contains only:
 
