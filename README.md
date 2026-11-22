@@ -63,7 +63,7 @@ not scanned and go only to a local server. It sends no telemetry. The
 
 ## Project status
 
-What works today, on Linux and Windows (macOS builds but is untested on a real Mac; see [platforms](docs/platforms.md)):
+What works today, on Linux and Windows (macOS is not supported; see [platforms](docs/platforms.md)):
 
 - `trestle init` sets up a repository in one guided pass. It asks where the two
   models run, takes API keys through hidden input, and can store them in an
@@ -87,7 +87,7 @@ What works today, on Linux and Windows (macOS builds but is untested on a real M
   servers (Ollama, llama.cpp, vLLM, LM Studio and other OpenAI-compatible
   servers) are supported. Every request except an investigation request (local only) is scanned for
   secrets twice by the secret scan helper before it is sent. A development build with the helper runs on
-  Linux, macOS and Windows; the packaged install is Linux amd64 only.
+  Linux and Windows; the packaged install is Linux amd64 only.
 - You can set a spending limit for each API key. Open Trestle warns you as you
   approach it and stops sending requests when you reach it. Its totals are
   estimates, so your provider's own limits remain the real safeguard.
@@ -110,7 +110,7 @@ The [roadmap](docs/roadmap.md) lists what is next.
 
 ## Getting started
 
-You need Git, Go 1.26.11 and Python 3, on Linux, macOS or Windows. Build a
+You need Git, Go 1.26.11 and Python 3, on Linux or Windows. Build a
 development build, which includes the secret scan helper:
 
 ```sh

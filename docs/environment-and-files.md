@@ -61,9 +61,7 @@ absolute path.
 
 On Windows the credential, setup, usage and scan-cache folders and files have an
 access control list in place of these modes, which gives only your account and
-the system's own accounts access. On macOS the scan cache must also carry no
-access-list entry; if it has one, Open Trestle refuses it and tells you to
-remove it with `chmod -N`. See
+the system's own accounts access. See
 [platforms](platforms.md#protected-files-on-windows).
 
 The setup folder holds:

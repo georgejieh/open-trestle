@@ -57,11 +57,11 @@ released.
   The labels await independent human adjudication, so no model quality has been
   measured. See [quality evaluation](quality-evaluation.md).
 - **Platforms.** Linux and Windows run the whole loop from a development build.
-  macOS builds but is untested. See [platforms](platforms.md).
+  macOS is not supported. See [platforms](platforms.md#macos).
 
 ## Next release
 
-- Installers or native packages for Linux, macOS and Windows, a signed release,
+- Installers or native packages for Linux and Windows, a signed release,
   and `trestle update` on each system.
 - A desktop app, built from the web console in a native shell, that opens a
   repository, runs the setup wizard, starts a review and shows the findings.

@@ -24,7 +24,7 @@ Protected packaging requires clean, committed source. It derives the revision an
 
 ## Package the secret scanner
 
-A normal root `go build` pins no scan helper. Such a `trestle` or `trestled` refuses every review that sends a request to a model, with `this build pins no secret scan helper; build trestle with its helper by python3 tools/package_secret_scanner.py --development DIR`. To build a working copy on Linux, macOS or Windows (needs Go 1.26.11 and Python 3), use development mode:
+A normal root `go build` pins no scan helper. Such a `trestle` or `trestled` refuses every review that sends a request to a model, with `this build pins no secret scan helper; build trestle with its helper by python3 tools/package_secret_scanner.py --development DIR`. To build a working copy on Linux or Windows (needs Go 1.26.11 and Python 3), use development mode:
 
 ```sh
 python3 tools/package_secret_scanner.py --development DIR [--target GOOS/GOARCH]
@@ -54,7 +54,7 @@ The helper is at `<folder of the trestle program>/../libexec/open-trestle/open-t
 
 `trestle review` and `trestle local-git model-review` run one helper process per review run, and each specialist member of a review set has its own. `trestled` runs each sanitization in a helper session of its own. A sanitization scans the request, then scans the masked request, which must be clean. Generation and verification sanitize separately.
 
-The cache is at `$XDG_CACHE_HOME/open-trestle/scan-cache/` when `XDG_CACHE_HOME` is an absolute path, otherwise `~/.cache/open-trestle/scan-cache/` (on Windows `%USERPROFILE%\.cache\open-trestle\scan-cache`). It holds the compiled guest and RE2 module, about 110 MB, and it must be private: owned by you, mode `0700`, with every folder above it changeable only by you or root. On Windows it needs an owner-only access control list. On macOS it must also carry no ACL entry, and a cache with one is refused with a message that tells you to remove it with `chmod -N`. The first review fills the cache and prints `Preparing the secret scanner for first use; this can take a minute.` and `trestled` fills it at start. Deleting the folder is safe.
+The cache is at `$XDG_CACHE_HOME/open-trestle/scan-cache/` when `XDG_CACHE_HOME` is an absolute path, otherwise `~/.cache/open-trestle/scan-cache/` (on Windows `%USERPROFILE%\.cache\open-trestle\scan-cache`). It holds the compiled guest and RE2 module, about 110 MB, and it must be private: owned by you, mode `0700`, with every folder above it changeable only by you or root. On Windows it needs an owner-only access control list. The first review fills the cache and prints `Preparing the secret scanner for first use; this can take a minute.` and `trestled` fills it at start. Deleting the folder is safe.
 
 A request frame holds 1 to 256 UTF-8 fields of at most 256 KiB each and 2 MiB in total. Request frames are capped at 3 MiB, response frames at 4 MiB, and a complete response at 8,192 findings. A limit, timeout, cancellation, nonzero exit, any byte on stderr, malformed or extra output, an incomplete scan or a finding left in the residual scan discards all matches and blocks dispatch. A secret is masked, and if the scan cannot complete the request is refused and nothing is sent.
 

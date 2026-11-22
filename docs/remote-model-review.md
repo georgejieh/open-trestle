@@ -39,7 +39,7 @@ Open Trestle refuses to send source to a remote provider unless every request
 passes two Betterleaks scans in the secret scan helper. A plain `go build` pins
 no helper, so it refuses every review. Use one of two builds.
 
-On Linux, macOS or Windows (needs Go 1.26.11 and Python 3), build a development
+On Linux or Windows (needs Go 1.26.11 and Python 3), build a development
 build and run `DIR/bin/trestle`:
 
 ```sh

@@ -1,27 +1,27 @@
 # Platforms
 
-The same review code builds for Linux, macOS and Windows. Linux and Windows are
-tested; macOS is not. This page says what each system can do now, so that you
+Open Trestle supports Linux and Windows. macOS is not supported; see
+[macOS](#macos). This page says what each system can do now, so that you
 can tell a missing feature from a mistake. See the
 [roadmap](roadmap.md#next-release) for what the release adds.
 
 ## What works today
 
-| Capability | Linux amd64 (packaged install) | Linux, development build | macOS | Windows |
-| --- | --- | --- | --- | --- |
-| Packaged install | Yes, [unsigned](install.md) | No | No | No |
-| `go build` of `trestle` (reviews refused, no scan helper) | Yes | Yes | Compiles | Compiles |
-| Development build with the scan helper | Yes | Yes | Builds, untested on a Mac | Yes |
-| Review with a model server on this machine | Yes | Yes | Untested | Yes |
-| Remote providers (OpenRouter, Ollama Cloud, OpenCode Go, `ollama-signin`) | Yes | Yes | Untested | Yes |
-| Secret scan helper | Yes | Yes | Untested | Yes |
-| Hidden key entry | Yes | Yes | Code present, untested | Code present, untested |
-| Saving a key with `trestle keys set` | Yes | Yes | Untested | Yes |
-| Protected setup, credential and usage files | Yes | Yes | Untested | Yes |
-| Repository index (`trestle index`) | Yes | Yes | Untested | Yes |
-| [Repository checks](repository-checks.md) sandbox | Yes, where unprivileged user namespaces are allowed | Same | Code present, untested | Yes; Go checks cannot run unless an administrator opens the `NUL` device to sandboxed apps |
-| `trestle update` | Yes | Refused | Refused | Refused |
-| Home screen | Yes | Yes | Untested | Untested |
+| Capability | Linux amd64 (packaged install) | Linux, development build | Windows |
+| --- | --- | --- | --- |
+| Packaged install | Yes, [unsigned](install.md) | No | No |
+| `go build` of `trestle` (reviews refused, no scan helper) | Yes | Yes | Compiles |
+| Development build with the scan helper | Yes | Yes | Yes |
+| Review with a model server on this machine | Yes | Yes | Yes |
+| Remote providers (OpenRouter, Ollama Cloud, OpenCode Go, `ollama-signin`) | Yes | Yes | Yes |
+| Secret scan helper | Yes | Yes | Yes |
+| Hidden key entry | Yes | Yes | Code present, untested |
+| Saving a key with `trestle keys set` | Yes | Yes | Yes |
+| Protected setup, credential and usage files | Yes | Yes | Yes |
+| Repository index (`trestle index`) | Yes | Yes | Yes |
+| [Repository checks](repository-checks.md) sandbox | Yes, where unprivileged user namespaces are allowed | Same | Yes; Go checks cannot run unless an administrator opens the `NUL` device to sandboxed apps |
+| `trestle update` | Yes | Refused | Refused |
+| Home screen | Yes | Yes | Untested |
 
 How to read the cells:
 
@@ -34,9 +34,8 @@ How to read the cells:
 - Refused means that the code stops and says why.
 
 Tested systems: end-to-end tests run a review through the real helper on Linux
-amd64 and Windows amd64 (with an offline fixture provider). On macOS the code
-builds and vets for amd64 and arm64, but the access-list check and the helper
-have not run on a real Mac. arm64 on Linux and Windows builds but is untested.
+amd64 and Windows amd64 (with an offline fixture provider). arm64 on Linux and
+Windows builds but is untested.
 The packaged install and `trestle update` are Linux amd64 only.
 
 ## Why each refusal happens
@@ -57,9 +56,8 @@ changing anything elsewhere. See [updates](updates.md).
 
 ## Paths
 
-The defaults use the XDG layout on Linux and macOS (`~/.config`,
-`~/.local/state`, `~/.local/share`). No separate locations exist yet for Windows
-or macOS. See [environment variables and files](environment-and-files.md#paths).
+The defaults use the XDG layout (`~/.config`, `~/.local/state`,
+`~/.local/share`). No separate locations exist yet for Windows. See [environment variables and files](environment-and-files.md#paths).
 
 ## Protected files on Windows
 
@@ -72,8 +70,32 @@ way. It refuses an existing folder or file that gives another account more
 access and does not change it. See
 [troubleshooting](troubleshooting.md#a-folder-is-refused-as-not-private).
 
+## macOS
+
+macOS is not supported. Nothing in Open Trestle has run on a Mac, so nothing is
+claimed to work there.
+
+The macOS code is kept as a starting point for a port. Continuous integration
+compiles the tree for macOS, so it keeps building. The parts that differ on
+macOS are in files named `*_darwin.go`:
+
+| Part | Files |
+| --- | --- |
+| Hidden key entry | `cmd/trestle/secret_input_darwin.go` |
+| Secret scan helper: private cache and helper start | `internal/secretscan/acl_darwin.go`, `session_darwin.go`; `workers/secret-scanner/internal/scanhelper/acl_darwin.go`, `re2cache_darwin.go` |
+| Syntax worker memory limit | `internal/syntaxworker/memory_darwin.go` |
+| Repository checks sandbox (`sandbox-exec`) | `internal/checksandbox/sandbox_darwin.go`, `hostscratch_darwin.go`, `unlock_darwin.go`, `seatbelt.go` |
+
+Repository checks are switched off on macOS, because a sandbox that has never
+run cannot be trusted to keep your files from the tests it runs. To turn them
+on, run the sandbox tests in `internal/checksandbox` on a Mac, fix what fails,
+and set `verified` in `sandbox_darwin.go` to `true`.
+
+A port also needs the whole test suite run on a Mac, and a package or
+installer. See [CONTRIBUTING](../CONTRIBUTING.md).
+
 ## For the first release
 
-The release has one goal: the same review loop on all three systems. That still
-needs native packages or installers for macOS and Windows, and `trestle update`
-on each. Until those exist, this page lists what works on macOS and Windows.
+The release needs a native package or installer for Windows, and
+`trestle update` there. Until those exist, this page lists what works on
+Windows.

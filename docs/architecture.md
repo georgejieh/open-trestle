@@ -168,7 +168,7 @@ Keep the historical-packet startup refusal and the prepared-to-success refusal u
 
 The deployment architecture uses a trusted control plane with local state, content-free task notifications, policy evaluation and scoped remote workers. The trusted CLI, snapshot, receipt, daemon, control-plane and remote-worker boundaries are implemented in Go.
 
-The following parts are planned design with no code, manifests or charts in the tree: OpenTelemetry observability, a Docker Compose profile for a single operator, and Helm charts or Kubernetes manifests for larger installations. None of this is a released deployment. The check sandbox for repository tests exists for Linux, Windows and macOS. Linux and Windows are tested, remote model providers work with any build that has its secret scan helper, and the packaged install is Linux amd64 only (see [platforms](platforms.md)).
+The following parts are planned design with no code, manifests or charts in the tree: OpenTelemetry observability, a Docker Compose profile for a single operator, and Helm charts or Kubernetes manifests for larger installations. None of this is a released deployment. The check sandbox for repository tests runs on Linux and Windows. Remote model providers work with any build that has its secret scan helper, and the packaged install is Linux amd64 only (see [platforms](platforms.md)).
 
 ## Non-goals
 
