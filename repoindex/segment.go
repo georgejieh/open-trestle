@@ -86,8 +86,6 @@ func (w *segmentWriter) add(key Key, flags byte, record []byte) error {
 	return nil
 }
 
-func (w *segmentWriter) bytes() int64 { return w.offset }
-
 // finish writes the directory and trailer and syncs the file.
 func (w *segmentWriter) finish() error {
 	directory := varcodec.AppendUvarint(nil, uint64(len(w.keys)))

@@ -154,9 +154,6 @@ const assertRuntimeDOM = async (page, status) => {
     authority: {
       Status: status.identity,
       Configuration: status.configuration_identity,
-      "Database authority": configuration.database_authority_identity ?? null,
-      "Rate-limit authority":
-        configuration.rate_limit_authority_identity ?? null,
       "Route inventory": configuration.route_inventory_identity ?? null,
       "Runtime policy": configuration.runtime_policy_identity ?? null,
     },

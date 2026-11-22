@@ -261,11 +261,7 @@ func recordedEntryValid(name string, info os.FileInfo, artifact bool) bool {
 		if name == ".artifact-writer.lock" {
 			return recordedPrivateSingleLink(info)
 		}
-		suffix := ".artifact.json"
-		if strings.HasSuffix(name, ".artifact-deleted.json") {
-			suffix = ".artifact-deleted.json"
-		}
-		prefix, ok := strings.CutSuffix(name, suffix)
+		prefix, ok := strings.CutSuffix(name, ".artifact.json")
 		if !ok || len(prefix) != 129 || prefix[64] != '-' || !recordedDigest(prefix[:64]) || !recordedDigest(prefix[65:]) {
 			return false
 		}

@@ -224,10 +224,8 @@ type Result struct {
 
 func (r Result) Identity() string                       { return r.identity }
 func (r Result) ArtifactIdentity() string               { return r.artifactIdentity }
-func (r Result) ScopeIdentity() string                  { return r.scopeIdentity }
 func (r Result) ChangeArtifactIdentity() string         { return r.changeArtifactIdentity }
 func (r Result) ChangeIdentity() string                 { return r.changeIdentity }
-func (r Result) HeadSnapshotArtifactIdentity() string   { return r.headSnapshotArtifactIdentity }
 func (r Result) HeadSnapshotIdentity() string           { return r.headSnapshotIdentity }
 func (r Result) HeadManifestIdentity() string           { return r.headManifestIdentity }
 func (r Result) SchemaVersion() int                     { return r.schemaVersion }

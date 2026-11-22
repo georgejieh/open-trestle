@@ -70,9 +70,9 @@ class TrackedBoundaryTest(unittest.TestCase):
             "agentprofile/skills/security_probe.md",
             "cmd/trestle/mcp.go",
             "mcpserver/server.go",
-            "adapters/providers/codexsession/session.go",
+            "adapters/providers/openai/adapter.go",
             "docs/mcp.md",
-            "docs/codex-chatgpt-session.md",
+            "docs/remote-model-review.md",
         )
         self.assertEqual(
             boundary.find_violations((*boundary.REQUIRED_PATHS, *accepted)), []

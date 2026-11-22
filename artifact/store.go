@@ -4,22 +4,21 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/georgejieh/open-trestle/audit"
-	"github.com/georgejieh/open-trestle/internal/fileauthority"
-	"github.com/georgejieh/open-trestle/internal/filelock"
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
+
+	"github.com/georgejieh/open-trestle/audit"
+	"github.com/georgejieh/open-trestle/internal/fileauthority"
+	"github.com/georgejieh/open-trestle/internal/filelock"
 )
 
 const (
 	maxStoreArtifacts  = 10000
 	artifactFileSuffix = ".artifact.json"
 	artifactLockName   = ".artifact-writer.lock"
-	deletionFileSuffix = ".artifact-deleted.json"
 )
 
 var (
@@ -55,26 +54,19 @@ type Store interface {
 	Get(context.Context, audit.ReviewScope, string, time.Time) (Artifact, error)
 }
 
-// RetentionStore adds authorized physical deletion to artifact storage.
-type RetentionStore interface {
-	Store
-	Delete(context.Context, DeletionAuthorization, time.Time) (DeletionReceipt, error)
-}
-
 // MemoryStore is a bounded concurrency-safe artifact store.
 type MemoryStore struct {
 	mu         sync.RWMutex
 	protection Protection
 	maximum    int
 	values     map[string]Artifact
-	deletions  map[string]DeletionReceipt
 }
 
 func NewMemoryStore(protection Protection, maximum int) (*MemoryStore, error) {
 	if protection.String() == "" || maximum <= 0 || maximum > maxStoreArtifacts {
 		return nil, ErrInvalidStore
 	}
-	return &MemoryStore{protection: protection, maximum: maximum, values: make(map[string]Artifact), deletions: make(map[string]DeletionReceipt)}, nil
+	return &MemoryStore{protection: protection, maximum: maximum, values: make(map[string]Artifact)}, nil
 }
 func (s *MemoryStore) Put(ctx context.Context, value Artifact, at time.Time) (bool, error) {
 	if err := validatePut(ctx, value, at); err != nil {
@@ -89,13 +81,10 @@ func (s *MemoryStore) Put(ctx context.Context, value Artifact, at time.Time) (bo
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	key := storeKey(value.Scope(), value.Identity())
-	if _, deleted := s.deletions[key]; deleted {
-		return false, ErrArtifactDeleted
-	}
 	if _, found := s.values[key]; found {
 		return false, nil
 	}
-	if len(s.values)+len(s.deletions) >= s.maximum {
+	if len(s.values) >= s.maximum {
 		return false, ErrStoreCapacity
 	}
 	s.values[key] = value
@@ -120,38 +109,6 @@ func (s *MemoryStore) Get(ctx context.Context, scope audit.ReviewScope, identity
 	return value, nil
 }
 
-func (s *MemoryStore) Delete(ctx context.Context, authorization DeletionAuthorization, at time.Time) (DeletionReceipt, error) {
-	if err := validateContext(ctx); err != nil {
-		return DeletionReceipt{}, err
-	}
-	if authorization.Validate() != nil {
-		return DeletionReceipt{}, ErrInvalidDeletionAuthorization
-	}
-	if s == nil {
-		return DeletionReceipt{}, ErrInvalidStore
-	}
-	key := storeKey(authorization.Scope(), authorization.ArtifactIdentity())
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if receipt, found := s.deletions[key]; found {
-		if receipt.AuthorizationIdentity() == authorization.Identity() {
-			return receipt, nil
-		}
-		return DeletionReceipt{}, ErrArtifactDeleted
-	}
-	value, found := s.values[key]
-	if !found {
-		return DeletionReceipt{}, ErrArtifactNotFound
-	}
-	if !authorization.Allows(value, at) {
-		return DeletionReceipt{}, ErrDeletionNotAllowed
-	}
-	receipt := newDeletionReceipt(value, authorization, at)
-	delete(s.values, key)
-	s.deletions[key] = receipt
-	return receipt, nil
-}
-
 // FileStore uses private paths and a cooperative exclusive writer lease.
 // Normal operations are path-based; startup root checks do not pin their lifetime.
 type FileStore struct {
@@ -163,7 +120,7 @@ type FileStore struct {
 	afterPersistRename func() error
 }
 
-// PendingFileStore holds an exclusive writer lock without running deletion recovery.
+// PendingFileStore holds an exclusive writer lock until it is activated or closed.
 // Activation does not validate ownership of historical artifacts.
 type PendingFileStore struct {
 	state *pendingFileStoreState
@@ -177,7 +134,7 @@ type pendingFileStoreState struct {
 	onOwnedRootPostcheck   func(pinErr, openedErr, leafErr error)
 }
 
-// OpenPendingFileStore prepares a root and locks it without recovering deletions.
+// OpenPendingFileStore prepares a root and locks it.
 // Root creation, permissions, lock acquisition, and root sync still take effect.
 func OpenPendingFileStore(root string) (*PendingFileStore, error) {
 	if root == "" {
@@ -308,8 +265,7 @@ func validatePendingOpenedRoot(root *os.Root, captured os.FileInfo) error {
 	return nil
 }
 
-// Activate recovers deletion receipts once, transferring the lock to the returned store.
-// Recovery may partially change disk before an error; it does not attest ownership.
+// Activate transfers the lock to the returned store once. It does not attest ownership.
 func (p *PendingFileStore) Activate() (*FileStore, error) {
 	if p == nil {
 		return nil, ErrInvalidStore
@@ -331,10 +287,6 @@ func (p *PendingFileStore) Activate() (*FileStore, error) {
 	}
 	store := p.state.store
 	if err := store.ensureOpen(); err != nil {
-		p.state.store = nil
-		return nil, errors.Join(err, store.Close())
-	}
-	if err := store.recoverDeletions(); err != nil {
 		p.state.store = nil
 		return nil, errors.Join(err, store.Close())
 	}
@@ -416,11 +368,6 @@ func (s *FileStore) Put(ctx context.Context, value Artifact, at time.Time) (bool
 		return false, err
 	}
 	destination := s.artifactPath(value.Scope(), value.Identity())
-	if _, _, found, deletionErr := s.loadDeletionExpected(s.deletionPath(value.Scope(), value.Identity()), value.Scope(), value.Identity()); deletionErr != nil {
-		return false, deletionErr
-	} else if found {
-		return false, ErrArtifactDeleted
-	}
 	existing, found, err := s.load(destination, value.Scope(), value.Identity())
 	if err != nil {
 		return false, err
@@ -458,13 +405,6 @@ func (s *FileStore) Get(ctx context.Context, scope audit.ReviewScope, identity s
 	if err := s.ensureOpen(); err != nil {
 		return Artifact{}, err
 	}
-	// A durable prepared deletion means removal is already authorized; an
-	// interrupted Delete must not leave the bytes readable until recovery.
-	if _, completed, deleting, deletionErr := s.loadDeletionExpected(s.deletionPath(scope, identity), scope, identity); deletionErr != nil {
-		return Artifact{}, deletionErr
-	} else if deleting && !completed {
-		return Artifact{}, ErrArtifactDeleted
-	}
 	value, found, err := s.load(s.artifactPath(scope, identity), scope, identity)
 	if err != nil {
 		return Artifact{}, err
@@ -480,149 +420,6 @@ func (s *FileStore) Get(ctx context.Context, scope audit.ReviewScope, identity s
 func (s *FileStore) artifactPath(scope audit.ReviewScope, identity string) string {
 	return filepath.Join(s.root, artifactFileName(scope, identity))
 }
-func (s *FileStore) deletionPath(scope audit.ReviewScope, identity string) string {
-	return filepath.Join(s.root, artifactDeletionFileName(scope, identity))
-}
-func (s *FileStore) Delete(ctx context.Context, authorization DeletionAuthorization, at time.Time) (DeletionReceipt, error) {
-	if err := validateContext(ctx); err != nil {
-		return DeletionReceipt{}, err
-	}
-	if authorization.Validate() != nil {
-		return DeletionReceipt{}, ErrInvalidDeletionAuthorization
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := s.ensureOpen(); err != nil {
-		return DeletionReceipt{}, err
-	}
-	deletionPath := s.deletionPath(authorization.Scope(), authorization.ArtifactIdentity())
-	if receipt, completed, found, err := s.loadDeletionExpected(deletionPath, authorization.Scope(), authorization.ArtifactIdentity()); err != nil {
-		return DeletionReceipt{}, err
-	} else if found {
-		if !completed {
-			if err := s.completeDeletion(receipt, deletionPath); err != nil {
-				return DeletionReceipt{}, err
-			}
-		}
-		if receipt.AuthorizationIdentity() != authorization.Identity() {
-			return DeletionReceipt{}, ErrArtifactDeleted
-		}
-		return receipt, nil
-	}
-	value, found, err := s.load(s.artifactPath(authorization.Scope(), authorization.ArtifactIdentity()), authorization.Scope(), authorization.ArtifactIdentity())
-	if err != nil {
-		return DeletionReceipt{}, err
-	}
-	if !found {
-		return DeletionReceipt{}, ErrArtifactNotFound
-	}
-	if !authorization.Allows(value, at) {
-		return DeletionReceipt{}, ErrDeletionNotAllowed
-	}
-	receipt := newDeletionReceipt(value, authorization, at)
-	prepared, _ := encodeDeletionRecord(receipt, false)
-	if err := s.persist(deletionPath, prepared); err != nil {
-		return DeletionReceipt{}, err
-	}
-	if err := s.completeDeletion(receipt, deletionPath); err != nil {
-		return DeletionReceipt{}, err
-	}
-	return receipt, nil
-}
-func (s *FileStore) completeDeletion(receipt DeletionReceipt, deletionPath string) error {
-	artifactPath := s.artifactPath(receipt.Scope(), receipt.ArtifactIdentity())
-	if value, found, err := s.load(artifactPath, receipt.Scope(), receipt.ArtifactIdentity()); err != nil {
-		return err
-	} else if found {
-		if value.PayloadDigest() != receipt.PayloadDigest() {
-			return ErrCorruptArtifact
-		}
-		if err := os.Remove(artifactPath); err != nil {
-			return ErrStorePersistence
-		}
-		if err := s.syncRoot(); err != nil {
-			return err
-		}
-	}
-	completed, _ := encodeDeletionRecord(receipt, true)
-	return s.persist(deletionPath, completed)
-}
-func (s *FileStore) loadDeletionExpected(filePath string, scope audit.ReviewScope, identity string) (DeletionReceipt, bool, bool, error) {
-	receipt, completed, found, err := s.loadDeletion(filePath)
-	if err != nil || !found {
-		return receipt, completed, found, err
-	}
-	if receipt.Scope().Identity() != scope.Identity() || receipt.ArtifactIdentity() != identity {
-		return DeletionReceipt{}, false, false, ErrCorruptArtifact
-	}
-	return receipt, completed, true, nil
-}
-
-func (s *FileStore) loadDeletion(filePath string) (DeletionReceipt, bool, bool, error) {
-	information, err := os.Lstat(filePath)
-	if errors.Is(err, os.ErrNotExist) {
-		return DeletionReceipt{}, false, false, nil
-	}
-	if err != nil {
-		return DeletionReceipt{}, false, false, ErrStorePersistence
-	}
-	if !information.Mode().IsRegular() || information.Mode().Perm() != 0o600 || information.Size() <= 0 || information.Size() > maxEncodedDeletionRecordBytes {
-		return DeletionReceipt{}, false, false, ErrCorruptArtifact
-	}
-	file, err := os.Open(filePath)
-	if err != nil {
-		return DeletionReceipt{}, false, false, ErrStorePersistence
-	}
-	opened, statErr := file.Stat()
-	if statErr != nil || !os.SameFile(information, opened) {
-		_ = file.Close()
-		return DeletionReceipt{}, false, false, ErrCorruptArtifact
-	}
-	encoded, readErr := io.ReadAll(io.LimitReader(file, maxEncodedDeletionRecordBytes+1))
-	closeErr := file.Close()
-	if readErr != nil || closeErr != nil {
-		return DeletionReceipt{}, false, false, ErrStorePersistence
-	}
-	receipt, completed, err := parseDeletionRecord(encoded)
-	if err != nil {
-		return DeletionReceipt{}, false, false, ErrCorruptArtifact
-	}
-	return receipt, completed, true, nil
-}
-func (s *FileStore) recoverDeletions() error {
-	entries, err := os.ReadDir(s.root)
-	if err != nil {
-		return ErrStorePersistence
-	}
-	for _, entry := range entries {
-		if !strings.HasSuffix(entry.Name(), deletionFileSuffix) {
-			continue
-		}
-		path := filepath.Join(s.root, entry.Name())
-		receipt, completed, found, err := s.loadDeletion(path)
-		if err != nil {
-			return err
-		}
-		if !found {
-			continue
-		}
-		if path != s.deletionPath(receipt.Scope(), receipt.ArtifactIdentity()) {
-			return ErrCorruptArtifact
-		}
-		artifactPath := s.artifactPath(receipt.Scope(), receipt.ArtifactIdentity())
-		_, artifactErr := os.Lstat(artifactPath)
-		if artifactErr != nil && !errors.Is(artifactErr, os.ErrNotExist) {
-			return ErrStorePersistence
-		}
-		if !completed || artifactErr == nil {
-			if err := s.completeDeletion(receipt, path); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
 func (s *FileStore) ensureOpen() error {
 	if s == nil {
 		return ErrInvalidStore

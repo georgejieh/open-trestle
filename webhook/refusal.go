@@ -134,16 +134,6 @@ func NewRefusalRecord(stored StoredDelivery, plannerIdentity, reason string, at 
 	return record, nil
 }
 
-// RestoreRefusalRecord rebuilds a stored refusal from its fields and accepts
-// it only when its recorded identity matches.
-func RestoreRefusalRecord(scope RepositoryScope, source Source, deduplicationKey, deliveryIdentity, plannerIdentity, reason string, refusedAtMillis int64, identity string) (RefusalRecord, error) {
-	record := RefusalRecord{identity: identity, deliveryIdentity: deliveryIdentity, deduplicationKey: deduplicationKey, plannerIdentity: plannerIdentity, reason: reason, scope: scope, source: source, refusedAtMillis: refusedAtMillis}
-	if record.Validate() != nil {
-		return RefusalRecord{}, ErrInvalidRefusalRecord
-	}
-	return record, nil
-}
-
 func (r RefusalRecord) Identity() string         { return r.identity }
 func (r RefusalRecord) DeliveryIdentity() string { return r.deliveryIdentity }
 func (r RefusalRecord) DeduplicationKey() string { return r.deduplicationKey }

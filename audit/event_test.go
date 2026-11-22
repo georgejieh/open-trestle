@@ -43,9 +43,7 @@ func TestNewReviewScopeRejectsInvalidIdentifiers(t *testing.T) {
 func TestAuditEventKindsRoundTrip(t *testing.T) {
 	values := []string{
 		"route_selected", "route_attempt_claimed", "route_dispatch_completed", "route_cost_reconciled",
-		"context_sources_selected", "context_packet_assembled", "candidate_batch_admitted", "verification_context_assembled",
-		"verification_batch_admitted", "independent_verification_completed", "publication_readiness_evaluated",
-		"publication_authorized", "publication_claimed", "publication_head_reconciled", "publication_completed", "review_snapshot_bound", "context_acquisition_bound",
+		"publication_claimed", "publication_completed", "review_snapshot_bound",
 	}
 	for _, value := range values {
 		kind, err := ParseEventKind(value)

@@ -43,7 +43,6 @@ import (
 
 const (
 	daemonFixtureToken       = "fixture-issued-installation-token"
-	daemonFixtureSetup       = "fixture-setup-sentinel-never-source"
 	daemonFixtureStatic      = "fixture-static-sentinel-never-source"
 	daemonFixturePublication = "fixture-publication-sentinel-never-source"
 	daemonFixtureOperator    = "fixture-operator-token-0123456789abcdef"
@@ -149,7 +148,7 @@ func (f *daemonBrokerFixture) headersSeparated(r *http.Request, issuer bool) boo
 	}
 	for name, values := range r.Header {
 		for _, value := range values {
-			for _, forbidden := range []string{daemonFixtureSetup, daemonFixtureStatic, daemonFixturePublication, daemonFixtureOperator, daemonFixtureWebhook, string(f.pem), "-----BEGIN RSA PRIVATE KEY-----"} {
+			for _, forbidden := range []string{daemonFixtureStatic, daemonFixturePublication, daemonFixtureOperator, daemonFixtureWebhook, string(f.pem), "-----BEGIN RSA PRIVATE KEY-----"} {
 				if strings.Contains(value, forbidden) {
 					return false
 				}
@@ -495,7 +494,6 @@ func TestDaemonSourceConsumesBrokerIssuedInstallationToken(t *testing.T) {
 				"OPEN_TRESTLE_GITHUB_WEBHOOK_SECRET":       daemonFixtureWebhook,
 				"OPEN_TRESTLE_GITHUB_SOURCE_BROKER_CONFIG": path,
 				"OPEN_TRESTLE_GITHUB_APP_PRIVATE_KEY":      string(f.pem),
-				"OPEN_TRESTLE_GITHUB_SETUP_TOKEN":          daemonFixtureSetup,
 				"OPEN_TRESTLE_GITHUB_PUBLICATION_TOKEN":    daemonFixturePublication,
 			}
 			if mixed {
@@ -613,7 +611,7 @@ func TestDaemonSourceConsumesBrokerIssuedInstallationToken(t *testing.T) {
 			if err != nil || len(entries) != 3 {
 				t.Fatal("expected one real owner, pending and terminal record")
 			}
-			forbidden := []string{daemonFixtureToken, daemonFixtureSetup, daemonFixtureStatic, daemonFixturePublication, daemonFixtureOperator, daemonFixtureWebhook, string(f.pem), "-----BEGIN RSA PRIVATE KEY-----"}
+			forbidden := []string{daemonFixtureToken, daemonFixtureStatic, daemonFixturePublication, daemonFixtureOperator, daemonFixtureWebhook, string(f.pem), "-----BEGIN RSA PRIVATE KEY-----"}
 			for _, jwt := range f.jwtHeaders {
 				forbidden = append(forbidden, strings.TrimPrefix(jwt, "Bearer "))
 			}

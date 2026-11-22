@@ -3,7 +3,6 @@ package gateway
 import (
 	"errors"
 	"fmt"
-	"sort"
 
 	"github.com/georgejieh/open-trestle/internal/provider"
 )
@@ -146,105 +145,6 @@ func (r RouteRejection) Format(state fmt.State, verb rune) {
 		formatted = "gateway.RouteRejection{<redacted>}"
 	}
 	_, _ = state.Write([]byte(formatted))
-}
-
-// RouteFilterResult contains every compatible record and typed rejection in canonical order.
-type RouteFilterResult struct {
-	requestIdentity   string
-	registryRevision  uint64
-	compatibleRecords []ResolvedRouteRegistryRecord
-	rejectedRoutes    []RouteRejection
-}
-
-// RequestIdentity returns the request identity bound to the filtering decision.
-func (r RouteFilterResult) RequestIdentity() string { return r.requestIdentity }
-
-// RegistryRevision returns the registry snapshot revision used by the filter.
-func (r RouteFilterResult) RegistryRevision() uint64 { return r.registryRevision }
-
-// CompatibleRecords returns a defensive copy in canonical record-identity order.
-func (r RouteFilterResult) CompatibleRecords() []ResolvedRouteRegistryRecord {
-	if len(r.compatibleRecords) == 0 {
-		return nil
-	}
-	return append([]ResolvedRouteRegistryRecord(nil), r.compatibleRecords...)
-}
-
-// RejectedRoutes returns a defensive copy in canonical record-identity order.
-func (r RouteFilterResult) RejectedRoutes() []RouteRejection {
-	if len(r.rejectedRoutes) == 0 {
-		return nil
-	}
-	return append([]RouteRejection(nil), r.rejectedRoutes...)
-}
-
-// String returns a redacted filter-result description.
-func (r RouteFilterResult) String() string { return "route filter result" }
-
-// GoString returns a redacted Go-syntax filter-result description.
-func (r RouteFilterResult) GoString() string { return "gateway.RouteFilterResult{<redacted>}" }
-
-// Format writes a redacted representation for verbs dispatched through fmt.Formatter.
-func (r RouteFilterResult) Format(state fmt.State, verb rune) {
-	formatted := "route filter result"
-	if verb == 'q' {
-		formatted = `"route filter result"`
-	} else if verb == 'v' && state.Flag('#') {
-		formatted = "gateway.RouteFilterResult{<redacted>}"
-	}
-	_, _ = state.Write([]byte(formatted))
-}
-
-// FilterCompatibleRouteRecords evaluates one bounded registry snapshot in canonical order.
-func FilterCompatibleRouteRecords(input ReviewRoutingInput, registryRevision uint64, records []ResolvedRouteRegistryRecord) (RouteFilterResult, error) {
-	if err := input.Validate(); err != nil {
-		return RouteFilterResult{}, err
-	}
-	if registryRevision == 0 {
-		return RouteFilterResult{}, ErrInvalidRouteFilterRevision
-	}
-	if len(records) > maxRouteFilterCandidates {
-		return RouteFilterResult{}, ErrTooManyRouteCandidates
-	}
-	canonicalRecords := append([]ResolvedRouteRegistryRecord(nil), records...)
-	for _, resolved := range canonicalRecords {
-		if err := resolved.Validate(); err != nil {
-			return RouteFilterResult{}, err
-		}
-		if resolved.RouteRegistryRecord().RegistryRevision() != registryRevision {
-			return RouteFilterResult{}, ErrRouteCandidateRevisionMismatch
-		}
-	}
-	sort.Slice(canonicalRecords, func(i, j int) bool {
-		return canonicalRecords[i].RouteRegistryRecord().Identity() < canonicalRecords[j].RouteRegistryRecord().Identity()
-	})
-	for index := 1; index < len(canonicalRecords); index++ {
-		previous := canonicalRecords[index-1].RouteRegistryRecord().Identity()
-		current := canonicalRecords[index].RouteRegistryRecord().Identity()
-		if previous == current {
-			return RouteFilterResult{}, ErrDuplicateRouteCandidate
-		}
-	}
-	result := RouteFilterResult{
-		requestIdentity:  input.RequestIdentity(),
-		registryRevision: registryRevision,
-	}
-	for _, resolved := range canonicalRecords {
-		err := CheckResolvedRouteRegistryRecordCompatibility(input, resolved)
-		if err == nil {
-			result.compatibleRecords = append(result.compatibleRecords, resolved)
-			continue
-		}
-		reason, ok := routeRejectionReason(err)
-		if !ok {
-			return RouteFilterResult{}, ErrUnexpectedRouteCompatibilityError
-		}
-		result.rejectedRoutes = append(result.rejectedRoutes, RouteRejection{
-			recordIdentity: resolved.RouteRegistryRecord().Identity(),
-			reason:         reason,
-		})
-	}
-	return result, nil
 }
 
 func routeRejectionReason(err error) (RouteRejectionReason, bool) {

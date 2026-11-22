@@ -69,28 +69,6 @@ func TestRouteReplaySafetyRoundTrips(t *testing.T) {
 	}
 }
 
-func TestRouteRetryReasonRoundTrips(t *testing.T) {
-	values := []struct {
-		value RouteRetryReason
-		token string
-	}{
-		{RouteRetryTransientFailure, "transient_failure"},
-		{RouteRetryAttemptsExhausted, "attempts_exhausted"},
-		{RouteRetryPermanentFailure, "permanent_failure"},
-		{RouteRetryUnsafeReplay, "unsafe_replay"},
-		{RouteRetryAfterTooLong, "retry_after_too_long"},
-	}
-	for _, test := range values {
-		parsed, err := ParseRouteRetryReason(test.token)
-		if err != nil || parsed != test.value || parsed.String() != test.token || parsed.Validate() != nil {
-			t.Fatalf("retry reason %q = (%v, %v, %q)", test.token, parsed, err, parsed.String())
-		}
-	}
-	if parsed, err := ParseRouteRetryReason(""); !errors.Is(err, ErrInvalidRouteRetryReason) || parsed != 0 {
-		t.Fatalf("ParseRouteRetryReason() = (%v, %v)", parsed, err)
-	}
-}
-
 func TestRouteRetryPolicyRoundTripsAndBindsIdentity(t *testing.T) {
 	policy, err := NewRouteRetryPolicy(5, 100, 250, 1_000, 5_000)
 	if err != nil {

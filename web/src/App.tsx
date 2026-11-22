@@ -980,14 +980,6 @@ function RuntimeView({
             value={status.configuration_identity}
           />
           <Identity
-            label="Database authority"
-            value={config.database_authority_identity ?? ""}
-          />
-          <Identity
-            label="Rate-limit authority"
-            value={config.rate_limit_authority_identity ?? ""}
-          />
-          <Identity
             label="Route inventory"
             value={config.route_inventory_identity ?? ""}
           />

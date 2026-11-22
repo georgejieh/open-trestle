@@ -24,12 +24,10 @@ export interface RuntimeConfigurationWire {
   tenant_id: string;
   repository_ids: string[];
   metadata_backend: string;
-  database_authority_identity?: string;
   artifact_backend: string;
   artifact_protection: string;
   notification_backend: string;
   rate_limit_backend: string;
-  rate_limit_authority_identity?: string;
   review_mode: string;
   webhook_ingress: boolean;
   local_workers: boolean;

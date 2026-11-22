@@ -33,12 +33,6 @@ func (l ServiceEndpointLocality) String() string {
 		return ""
 	}
 }
-func (l ServiceEndpointLocality) Validate() error {
-	if l.String() == "" {
-		return ErrInvalidServiceEndpoint
-	}
-	return nil
-}
 
 // ClassifyServiceEndpoint validates an endpoint and rejects ambiguous local or non-unicast authorities.
 func ClassifyServiceEndpoint(raw string) (ServiceEndpointLocality, error) {

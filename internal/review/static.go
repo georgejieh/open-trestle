@@ -76,11 +76,6 @@ func newDebugOutputFinding(source []byte, sourceRange evidence.SourceRange) (Fin
 	return finding, item, nil
 }
 
-func containsDebugOutput(source []byte, sourceRange evidence.SourceRange) (bool, error) {
-	ranges, err := debugOutputRanges(source, sourceRange)
-	return len(ranges) > 0, err
-}
-
 func debugOutputRanges(source []byte, selection evidence.SourceRange) ([]evidence.SourceRange, error) {
 	return debugOutputRangesForSelections(source, selection.Path(), []evidence.SourceRange{selection})
 }

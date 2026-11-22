@@ -889,18 +889,16 @@ describe("API client", () => {
     const configuration: RuntimeConfigurationWire = {
       tenant_id: "tenant-a",
       repository_ids: ["repo-a"],
-      metadata_backend: "postgres",
-      database_authority_identity: "d".repeat(64),
-      artifact_backend: "s3",
-      artifact_protection: "envelope_encrypted",
-      notification_backend: "postgres",
-      rate_limit_backend: "postgres",
-      rate_limit_authority_identity: "e".repeat(64),
-      review_mode: "required",
+      metadata_backend: "local",
+      artifact_backend: "local",
+      artifact_protection: "process_private",
+      notification_backend: "process_local",
+      rate_limit_backend: "process_local",
+      review_mode: "advisory",
       webhook_ingress: true,
       local_workers: true,
-      publication_enabled: true,
-      publication_fence_verified: true,
+      publication_enabled: false,
+      publication_fence_verified: false,
       route_inventory_identity: "f".repeat(64),
       runtime_policy_identity: "1".repeat(64),
       route_count: 2,
@@ -952,10 +950,6 @@ describe("API client", () => {
       (value: any) => (value.identity = "4".repeat(64)),
       (value: any) => (value.configuration_identity = "5".repeat(64)),
       (value: any) =>
-        (value.configuration.database_authority_identity = "6".repeat(64)),
-      (value: any) =>
-        (value.configuration.rate_limit_authority_identity = "7".repeat(64)),
-      (value: any) =>
         (value.configuration.route_inventory_identity = "8".repeat(64)),
       (value: any) =>
         (value.configuration.runtime_policy_identity = "9".repeat(64)),
@@ -994,14 +988,10 @@ describe("API client", () => {
         local_workers: signed.configuration.local_workers,
         webhook_ingress: signed.configuration.webhook_ingress,
         review_mode: signed.configuration.review_mode,
-        rate_limit_authority_identity:
-          signed.configuration.rate_limit_authority_identity,
         rate_limit_backend: signed.configuration.rate_limit_backend,
         notification_backend: signed.configuration.notification_backend,
         artifact_protection: signed.configuration.artifact_protection,
         artifact_backend: signed.configuration.artifact_backend,
-        database_authority_identity:
-          signed.configuration.database_authority_identity,
         metadata_backend: signed.configuration.metadata_backend,
         repository_ids: signed.configuration.repository_ids,
         tenant_id: signed.configuration.tenant_id,
@@ -1151,74 +1141,6 @@ describe("API client", () => {
     ).rejects.toThrow(ApiError);
   });
 
-  it("requires database authority exactly for PostgreSQL runtime status", async () => {
-    const configuration: RuntimeConfigurationWire = {
-      tenant_id: "tenant-a",
-      repository_ids: ["repo-a"],
-      metadata_backend: "postgres",
-      database_authority_identity: "d".repeat(64),
-      artifact_backend: "local",
-      artifact_protection: "process_private",
-      notification_backend: "process_local",
-      rate_limit_backend: "postgres",
-      rate_limit_authority_identity: "e".repeat(64),
-      review_mode: "disabled",
-      webhook_ingress: false,
-      local_workers: false,
-      publication_enabled: false,
-      publication_fence_verified: false,
-      route_count: 0,
-      handlers: null,
-    };
-    const configuration_identity =
-      await runtimeConfigurationIdentity(configuration);
-    const status = {
-      ...runtimeStatus,
-      configuration_identity,
-      identity: await runtimeStatusIdentity({
-        configuration_identity,
-        tenant_id: "tenant-a",
-        repository_id: "repo-a",
-        observed_at: runtimeStatus.observed_at,
-        ready: true,
-        configuration,
-        components: [],
-      }),
-      configuration,
-      components: [],
-    };
-    expect(
-      await parseRuntimeStatusEnvelope(
-        {
-          contract: "open-trestle/runtime-status-response",
-          schema_version: 1,
-          request_id: "request-a",
-          status,
-        },
-        { tenant: "tenant-a", repository: "repo-a" },
-      ),
-    ).toEqual({
-      ...status,
-      configuration: { ...configuration, handlers: [] },
-    });
-    const missing = {
-      ...status,
-      configuration: { ...status.configuration },
-    } as any;
-    delete missing.configuration.database_authority_identity;
-    delete missing.configuration.rate_limit_authority_identity;
-    await expect(
-      parseRuntimeStatusEnvelope(
-        {
-          contract: "open-trestle/runtime-status-response",
-          schema_version: 1,
-          request_id: "request-a",
-          status: missing,
-        },
-        { tenant: "tenant-a", repository: "repo-a" },
-      ),
-    ).rejects.toThrow(ApiError);
-  });
   it("parses deterministic diagnostics without promoting observations to verified findings", () => {
     const digest = (value: string) => value.repeat(64);
     const check = {

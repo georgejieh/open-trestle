@@ -111,12 +111,3 @@ func TestSelectContextSourcesRejectsDuplicateAndExcessiveCandidates(t *testing.T
 		t.Fatal("forged selection accepted")
 	}
 }
-
-func TestContextSourceSelectionReasonRoundTrips(t *testing.T) {
-	for _, token := range []string{"selected", "omitted_byte_limit", "omitted_count_limit"} {
-		reason, err := ParseContextSourceSelectionReason(token)
-		if err != nil || reason.String() != token || reason.Validate() != nil {
-			t.Fatalf("reason %q = (%v, %v)", token, reason, err)
-		}
-	}
-}

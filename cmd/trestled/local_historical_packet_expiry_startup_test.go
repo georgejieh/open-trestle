@@ -5,16 +5,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/georgejieh/open-trestle/artifact"
-	"github.com/georgejieh/open-trestle/audit"
-	"github.com/georgejieh/open-trestle/controlplane"
-	"github.com/georgejieh/open-trestle/runtimecatalog"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/georgejieh/open-trestle/artifact"
+	"github.com/georgejieh/open-trestle/audit"
+	"github.com/georgejieh/open-trestle/controlplane"
+	"github.com/georgejieh/open-trestle/runtimecatalog"
 )
 
 // Seed actual prepared-nine bytes into an enrolled synthetic owner's state.
@@ -163,7 +164,7 @@ func controlplaneCoordinator(t *testing.T, o *localPacketOwner) *controlplane.Co
 
 func TestCompleteV4ExpiryStartupTimeAndPhysicalRefusals(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"live", "retention-equality", "orphan", "missing", "corrupt", "marker", "deletion-receipt", "wrong-tail"} {
+	for _, mode := range []string{"live", "retention-equality", "orphan", "missing", "corrupt", "marker", "wrong-tail"} {
 		t.Run(mode, func(t *testing.T) {
 			f := expiryStartupFixture(t)
 			at := f.fact.LeaseEvent().LeaseExpiresAt()
@@ -191,11 +192,6 @@ func TestCompleteV4ExpiryStartupTimeAndPhysicalRefusals(t *testing.T) {
 			case "marker":
 				preserved = filepath.Join(state, f.fact.Plan().Scope().Identity()+".scope-intent.json")
 				if err := os.WriteFile(preserved, []byte("unknown"), 0600); err != nil {
-					t.Fatal(err)
-				}
-			case "deletion-receipt":
-				preserved = filepath.Join(state, "artifacts", f.fact.Plan().Scope().Identity()+"-"+f.a.Packet.Identity()+".artifact-deleted.json")
-				if err := os.WriteFile(preserved, []byte("receipt"), 0600); err != nil {
 					t.Fatal(err)
 				}
 			case "wrong-tail":
