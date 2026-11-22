@@ -71,7 +71,8 @@ const (
 	originUnproven
 	// originPreExisting: on unchanged lines of an unchanged Go file, citing no
 	// change evidence, in a run whose profile proves that nothing outside the
-	// changed declarations reaches them. It never blocks.
+	// changed declarations reaches them, none of which is a method, an init
+	// function or a package variable. It never blocks.
 	originPreExisting
 )
 
@@ -150,9 +151,10 @@ func (c changeLines) withImpact(profile semanticimpact.Profile, manifest review.
 //
 //   - the semantic-impact profile records no coverage gap: every changed
 //     path was analysed as Go;
-//   - no changed declaration is a method or an init function, which code can
-//     reach without naming them (an interface call from another package, a
-//     method set that satisfies an interface, package initialization);
+//   - no changed declaration is a method, an init function or a package
+//     variable, which code can reach without naming them (an interface call
+//     from another package, a method set that satisfies an interface, an
+//     init function or variable initializer run at package initialization);
 //   - the context manifest shows a complete repository index that found no
 //     dependent of any changed definition outside the changed definitions.
 //
@@ -164,7 +166,7 @@ func isolatedChange(profile semanticimpact.Profile, manifest review.ContextManif
 		return false
 	}
 	for _, declaration := range profile.Declarations() {
-		if declaration.Kind() == "method" || declaration.Kind() == "function" && declaration.Name() == "init" {
+		if declaration.Kind() == "method" || declaration.Kind() == "var" || declaration.Kind() == "function" && declaration.Name() == "init" {
 			return false
 		}
 	}

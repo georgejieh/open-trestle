@@ -132,8 +132,9 @@ func indexManifest(state string, complete bool, dependents int) review.ContextMa
 }
 
 // A change is isolated only when the semantic-impact profile records no gap
-// and no changed method or init function, and the context manifest shows a
-// complete analysis that records value uses and found no dependent.
+// and no changed method, init function or package variable, and the context
+// manifest shows a complete analysis that records value uses and found no
+// dependent.
 func TestIsolatedChangeNeedsAProfileAndACompleteIndexWithoutDependents(t *testing.T) {
 	const base = "package p\n\nfunc Avg(xs []int) int {\n\treturn 0\n}\n"
 	const head = "package p\n\nfunc Avg(xs []int) int {\n\treturn 1\n}\n"
@@ -162,6 +163,7 @@ func TestIsolatedChangeNeedsAProfileAndACompleteIndexWithoutDependents(t *testin
 		"a changed method":           goProfile(t, "p.go", "package p\n\ntype T struct{}\n\nfunc (T) String() string { return \"a\" }\n", "package p\n\ntype T struct{}\n\nfunc (T) String() string { return \"b\" }\n"),
 		"a changed init function":    goProfile(t, "p.go", "package p\n\nvar x int\n\nfunc init() { x = 1 }\n", "package p\n\nvar x int\n\nfunc init() { x = 2 }\n"),
 		"an unparsable changed file": goProfile(t, "p.go", base, "package p\n\nfunc {\n"),
+		"a changed package variable": goProfile(t, "p.go", "package p\n\nvar x = setup(1)\n", "package p\n\nvar x = setup(2)\n"),
 	} {
 		if isolatedChange(changed, complete) {
 			t.Fatalf("%s: the change was proved isolated", name)
