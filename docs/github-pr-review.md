@@ -5,7 +5,7 @@ There are two ways to run Open Trestle on a GitHub pull request. They differ in 
 | | GitHub Actions path | Daemon and GitHub App path |
 | --- | --- | --- |
 | What runs | `trestle local-git model-review` inside a workflow job | `trestled` with webhook ingress, source acquisition and local workers |
-| Who posts | Existing tools: `github/codeql-action/upload-sarif` and `reviewdog`, using the job's own `GITHUB_TOKEN` | Nobody. The daemon does not publish reviews to GitHub. Read results through the daemon API, the TUI, the console, MCP, LSP or ACP |
+| Who posts | Existing tools: `github/codeql-action/upload-sarif` and `reviewdog`, using the job's own `GITHUB_TOKEN` | Nobody. The daemon does not publish reviews to GitHub. Read results through the daemon API, the console, MCP or LSP |
 | State | None. Each job makes one foreground, short-lived run | Durable runs and journals under the daemon's state directory |
 | Setup | A workflow file, a provider secret and a packaged `trestle` binary | A GitHub App for webhooks and read-only source access, a webhook endpoint with its secret, and the daemon's source and runtime configuration |
 | Output | SARIF (code scanning alerts), inline review comments and a job summary | Run receipts and review diagnostics |

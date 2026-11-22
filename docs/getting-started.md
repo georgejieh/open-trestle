@@ -300,8 +300,8 @@ run `trestle init` again.
 
 ### How it looks
 
-Every line fits in 60 columns, the narrowest width the terminal interface
-supports. The only exceptions are commands meant for copying and links too long
+Every line fits in 60 columns, the narrowest terminal
+the wizard supports. The only exceptions are commands meant for copying and links too long
 for one line. The
 wizard shortens long paths on screen (`~` for your home folder, `...` in the
 middle), while commands and `NEXT-STEPS.txt` keep full paths.

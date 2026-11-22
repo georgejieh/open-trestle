@@ -43,6 +43,9 @@ type pathChange struct {
 	// deletions holds, for each block of removed base lines, the first head
 	// line after it (one past the last head line at the end of the file).
 	deletions []uint32
+	// blankVariablesKept is true for a Go path whose blank package variables
+	// (var _ = register()) were read and are the same in base and head.
+	blankVariablesKept bool
 }
 
 // changeLines is the accounting of every path in the recorded change model,
@@ -72,7 +75,8 @@ const (
 	// originPreExisting: on unchanged lines of an unchanged Go file, citing no
 	// change evidence, in a run whose profile proves that nothing outside the
 	// changed declarations reaches them, none of which is a method, an init
-	// function or a package variable. It never blocks.
+	// function or a package variable, and no blank package variable changed.
+	// It never blocks.
 	originPreExisting
 )
 
@@ -140,9 +144,16 @@ func (c changeLines) preExisting(finding ReportFinding) bool {
 }
 
 // withImpact records whether the run's semantic-impact profile and context
-// manifest prove the change isolated (see isolatedChange).
+// manifest prove the change isolated (see isolatedChange). A change to the
+// blank package variables of a Go path, which the profile does not record,
+// or a Go path whose blank variables were not read, is not isolated.
 func (c changeLines) withImpact(profile semanticimpact.Profile, manifest review.ContextManifestSummary) changeLines {
 	c.isolated = isolatedChange(profile, manifest)
+	for filePath, lines := range c.paths {
+		if path.Ext(filePath) == ".go" && !lines.blankVariablesKept {
+			c.isolated = false
+		}
+	}
 	return c
 }
 
@@ -155,6 +166,8 @@ func (c changeLines) withImpact(profile semanticimpact.Profile, manifest review.
 //     variable, which code can reach without naming them (an interface call
 //     from another package, a method set that satisfies an interface, an
 //     init function or variable initializer run at package initialization);
+//     withImpact also checks blank package variables, which the profile
+//     does not record;
 //   - the context manifest shows a complete repository index that found no
 //     dependent of any changed definition outside the changed definitions.
 //
@@ -224,6 +237,9 @@ func (s *Session) changeLineAccounting(ctx context.Context, scope audit.ReviewSc
 				continue
 			}
 			count := lineCount(content)
+			if path.Ext(entry.Path()) == ".go" {
+				value.blankVariablesKept = !semanticimpact.GoBlankVariablesChanged(nil, content)
+			}
 			clear(content)
 			value.known, value.added = true, count
 			if count > 0 {
@@ -239,6 +255,9 @@ func (s *Session) changeLineAccounting(ctx context.Context, scope audit.ReviewSc
 				continue
 			}
 			value.known, value.removed = true, lineCount(content)
+			if path.Ext(entry.Path()) == ".go" {
+				value.blankVariablesKept = !semanticimpact.GoBlankVariablesChanged(content, nil)
+			}
 			clear(content)
 		case string(evidence.RepositoryFileDeltaModified):
 			baseReference, hasBase := baseFiles[entry.Path()]
@@ -279,13 +298,17 @@ func (c changeLines) withContextEvidence(contextPayload []byte) changeLines {
 }
 
 // diffModifiedFile fills a modified path's lines from the canonical bounded
-// diff. A file the diff cannot represent keeps unknown lines.
-func diffModifiedFile(value *pathChange, path string, baseContent, headContent []byte) {
-	patch, err := evidence.GenerateUnifiedFileDiff(path, baseContent, headContent)
+// diff, and compares the blank package variables of a Go path. A file the
+// diff cannot represent keeps unknown lines.
+func diffModifiedFile(value *pathChange, filePath string, baseContent, headContent []byte) {
+	if path.Ext(filePath) == ".go" {
+		value.blankVariablesKept = !semanticimpact.GoBlankVariablesChanged(baseContent, headContent)
+	}
+	patch, err := evidence.GenerateUnifiedFileDiff(filePath, baseContent, headContent)
 	if err != nil {
 		return
 	}
-	_, lineMap, err := evidence.ParseUnifiedFileDiff(path, baseContent, headContent, patch)
+	_, lineMap, err := evidence.ParseUnifiedFileDiff(filePath, baseContent, headContent, patch)
 	if err != nil {
 		return
 	}

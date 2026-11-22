@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/georgejieh/open-trestle/spending"
-	"github.com/georgejieh/open-trestle/tui"
 )
 
 // `trestle` with no arguments, in an interactive terminal, is a home screen:
@@ -97,7 +96,7 @@ type homeAction struct {
 func runHomeScreen(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer) int {
 	notice := startUpdateNotice(ctx)
 	w := latestReviewPrinter(ctx, stdout, "")
-	mark := tui.AmbassadorBridgeCompactMark
+	mark := bridgeCompactMark
 	for i, line := range []string{strings.TrimRight(mark[0], " "), mark[1], strings.TrimRight(mark[2], " ")} {
 		if i == 1 {
 			line = w.style.paint(initToneRule, line) + "  " + w.style.paint(initToneHeading, "Open Trestle")

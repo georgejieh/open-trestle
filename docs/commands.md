@@ -167,10 +167,8 @@ The daemon is `trestled`, a separate binary.
 
 | Command | Flags | Page |
 | --- | --- | --- |
-| `trestle tui` | `--tenant`, `--repository`, `--run`, `--server`, `--refresh DURATION`, `--width COLUMNS`, `--plain`, `--once` | [terminal UI](tui.md) |
 | `trestle mcp` | `--server URL` | [MCP](mcp.md) |
 | `trestle lsp` | `--diagnostics PATH`, `--server URL` | [LSP](lsp.md) |
-| `trestle acp` | `--tenant`, `--repository`, `--run`, `--server` | [ACP](acp.md) |
 
 ## Operators
 

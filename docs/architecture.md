@@ -30,7 +30,7 @@ There are two ways to run this flow.
 - The direct path is `trestle local-git model-review`, which `trestle review`, the VS Code extension and the first review in `trestle init` also run. It executes the review task graph inside the `trestle` process with process-private stores. It keeps the repository index on disk for later reviews, and the `review` and `init` wrappers also keep last-review metadata.
 - The daemon path runs the same handlers inside `trestled` with durable runs. The GitHub webhook planner, `trestle local-git submit-review`, `trestle runs submit` and the MCP `open_trestle.submit_run` tool submit reviews to it.
 
-The TUI, `trestle lsp`, the web console and ACP observe one daemon run. They cannot start a review. On both paths the runtime, not the surface, owns authorization, policy, provider routing, execution safety, evidence retention and audit receipts.
+`trestle lsp` and the web console observe one daemon run. They cannot start a review. On both paths the runtime, not the surface, owns authorization, policy, provider routing, execution safety, evidence retention and audit receipts.
 
 A direct review prepares its context before any model call:
 
@@ -139,13 +139,11 @@ Open Trestle has three integration paths:
 
 1. The event path uses authenticated GitHub webhooks. Webhooks and service hooks from other forges are planned.
 2. The command path covers local terminals, CI jobs and scripts that use a declared Git state or a local fixture file. Git-hook integration is planned.
-3. The protocol path covers web console, REST, LSP, MCP and ACP clients. A gRPC API is planned.
+3. The protocol path covers web console, REST, LSP and MCP clients. A gRPC API is planned.
 
 The [roadmap](roadmap.md) lists the planned items. None of them has code in the tree.
 
 An integration counts as supported only after it passes common conformance checks for identity, immutable revision selection, cancellation, retry, deduplication, evidence parity, privacy behavior and safe degradation.
-
-The current terminal interface is a foreground observer over authenticated daemon receipts and canonical review diagnostics. It tells apart two kinds of result. Finding contracts in versions 5 and 8 are verified findings. Version 6 holds unverified deterministic observations. Version 7 is the final full-review result and keeps the two as separate sections. The terminal interface has no worker, model, source, policy or publication authority. Its only change to state is a run cancellation, which you must confirm and which goes through the canonical API.
 
 The embedded web console is a read-only, same-origin client. It reads exact run receipts, canonical review diagnostics and content-free runtime status for one repository. It shows versions 5 and 8 as verified-finding state. It shows version 6 as deterministic observations that need human review, not as verified findings. A run that ended successfully in the terminal sense stays secondary to the review disposition.
 

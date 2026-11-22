@@ -108,4 +108,4 @@ The first review inside `trestle init` uses these codes, not the table for
 | `trestle evaluate deterministic-corpus-candidate` | `3` mismatch; `4` matched; `1` failure. |
 | `trestle evaluate model-contract-candidate` | `4` after printing the report; `1` failure. |
 
-The observers (`trestle tui`, `mcp`, `lsp`, `acp`) run until their input closes. The terminal UI also exits on `q` or `quit`, and after one snapshot with `--once`.
+The observers (`mcp`, `lsp`) run until their input closes.
