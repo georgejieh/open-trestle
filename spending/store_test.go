@@ -152,13 +152,17 @@ func TestStoreLedgerToleratesOnlyATornFinalLine(t *testing.T) {
 	if spend, err := store.Spent(scope, start, end); err != nil || spend.MicroUSD != 100 {
 		t.Fatalf("a torn final line must be ignored: %+v %v", spend, err)
 	}
-	// The next entry closes the torn line, so it starts on a line of its own;
-	// the torn line is then a complete, invalid line.
+	// The next entry drops the torn line and takes its place.
 	if err := store.Append(ctx, testEntry(t, "2026-11-13T10:00:02Z", 200, true, scope)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Spent(scope, start, end); !errors.Is(err, ErrLedgerUnreadable) {
-		t.Fatalf("an invalid complete line must make the ledger unreadable, not be skipped: %v", err)
+	if spend, err := store.Spent(scope, start, end); err != nil || spend.MicroUSD != 300 || spend.Entries != 2 {
+		t.Fatalf("the append after a torn line made the ledger read %+v %v", spend, err)
+	}
+	first, _ := EncodeEntry(testEntry(t, "2026-11-13T10:00:00Z", 100, true, scope))
+	next, _ := EncodeEntry(testEntry(t, "2026-11-13T10:00:02Z", 200, true, scope))
+	if data, _ := os.ReadFile(path); string(data) != string(first)+string(next) {
+		t.Fatalf("the ledger after a torn line holds:\n%s", data)
 	}
 	// A line that is not an entry, such as one hand-edited to lower the total,
 	// is refused rather than ignored.

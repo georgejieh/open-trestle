@@ -301,8 +301,9 @@ func ledgerName(at time.Time) string {
 }
 
 // Append adds one entry to its month's ledger file under the ledger lock. A
-// final line left without a newline by an interrupted write is closed first,
-// so the new entry starts on its own line; readers ignore such a torn line.
+// final line left without a newline by an interrupted write is cut off first,
+// so the new entry takes its place; readers ignore a torn line only while it
+// is the final line.
 func (s *Store) Append(ctx context.Context, entry Entry) error {
 	line, err := EncodeEntry(entry)
 	if err != nil {
@@ -329,7 +330,9 @@ func (s *Store) Append(ctx context.Context, entry Entry) error {
 	if statErr != nil && !created {
 		return ErrUnavailable
 	}
-	file, err := root.OpenFile(name, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0o600)
+	// No O_APPEND: on Windows it denies the truncation below. The ledger lock
+	// keeps other writers out, so the entry is written at the end explicitly.
+	file, err := root.OpenFile(name, os.O_RDWR|os.O_CREATE, 0o600)
 	if err != nil {
 		return fmt.Errorf("%w: cannot open %s", ErrUnavailable, name)
 	}
@@ -340,22 +343,25 @@ func (s *Store) Append(ctx context.Context, entry Entry) error {
 		return fmt.Errorf("%w: %s is not a protected file", ErrUnavailable, name)
 	}
 	size := opened.Size()
-	if size > 0 {
-		last := make([]byte, 1)
-		if _, err := file.ReadAt(last, size-1); err != nil {
-			return ErrUnavailable
-		}
-		if last[0] != '\n' {
-			line = append([]byte{'\n'}, line...)
-		}
-	}
 	if size+int64(len(line)) > MaxLedgerFileBytes {
 		return ErrLedgerFull
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if n, err := file.Write(line); err != nil || n != len(line) {
+	end := size
+	if size > 0 {
+		data := make([]byte, size)
+		if _, err := file.ReadAt(data, 0); err != nil {
+			return ErrUnavailable
+		}
+		if end = int64(bytes.LastIndexByte(data, '\n') + 1); end != size {
+			if err := file.Truncate(end); err != nil {
+				return fmt.Errorf("%w: cannot write %s", ErrUnavailable, name)
+			}
+		}
+	}
+	if n, err := file.WriteAt(line, end); err != nil || n != len(line) {
 		return fmt.Errorf("%w: cannot write %s", ErrUnavailable, name)
 	}
 	if err := file.Sync(); err != nil {

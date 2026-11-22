@@ -192,7 +192,7 @@ folder or file that is not private or not owned by your account.
   holds no key, source, prompt or model reply.
 
 Open Trestle ignores a final line that an interrupted write left incomplete, and
-the next append closes it. Any other line that is not a canonical entry makes the
+the next append removes it. Any other line that is not a canonical entry makes the
 ledger unreadable instead of being skipped, so a hand edit cannot quietly lower
 the total. See [protocol contracts](protocol-contracts.md).
 
