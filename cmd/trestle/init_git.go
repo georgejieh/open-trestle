@@ -103,17 +103,17 @@ func initDefaultBranchName(ctx context.Context, directory string) string {
 	return ""
 }
 
-// initDefaultMergeBase proposes the base a pull request is compared against:
-// the newest commit HEAD shares with the default branch, as this repository
-// has it or as origin has it, whichever is newer. It runs only the read-only
-// `git merge-base HEAD BRANCH [origin/BRANCH]`, which finds the merge base of
-// HEAD and both copies at once, so a local branch that is behind origin (or
-// ahead of it) does not pull commits that are already on the other into the
-// review. On the default branch itself only origin's copy counts, so commits
-// not yet pushed are the change. Without a default branch it returns
-// nothing; when Git finds no merge base it falls back to the local branch
-// itself.
-func initDefaultMergeBase(ctx context.Context, directory string) (base, label string) {
+// initDefaultMergeBase proposes the base a pull request from head is compared
+// against: the newest commit head shares with the default branch, as this
+// repository has it or as origin has it, whichever is newer. It runs only the
+// read-only `git merge-base HEAD BRANCH [origin/BRANCH]` with head in place of
+// HEAD, which finds the merge base of head and both copies at once, so a
+// local branch that is behind origin (or ahead of it) does not pull commits
+// that are already on the other into the review. When head is the local
+// default branch tip only origin's copy counts, so commits not yet pushed are
+// the change. Without a default branch it returns nothing; when Git finds no
+// merge base it falls back to the local branch itself.
+func initDefaultMergeBase(ctx context.Context, directory, head string) (base, label string) {
 	name := initDefaultBranchName(ctx, directory)
 	if name == "" {
 		return "", ""
@@ -124,12 +124,16 @@ func initDefaultMergeBase(ctx context.Context, directory string) (base, label st
 			refs = append(refs, ref)
 		}
 	}
-	// On the default branch itself, its own commits not yet on origin are
+	// On the default branch tip itself, its own commits not yet on origin are
 	// the change, so only origin's copy is the base.
-	if current, _, err := initGit(ctx, directory, "symbolic-ref", "-q", "HEAD"); err == nil && current == "refs/heads/"+name && len(refs) == 2 {
-		refs = refs[1:]
+	if len(refs) == 2 {
+		headCommit, _, headErr := initGit(ctx, directory, "rev-parse", "--verify", "--quiet", "--end-of-options", head+"^{commit}")
+		tipCommit, _, tipErr := initGit(ctx, directory, "rev-parse", "--verify", "--quiet", "--end-of-options", refs[0]+"^{commit}")
+		if headErr == nil && tipErr == nil && headCommit == tipCommit {
+			refs = refs[1:]
+		}
 	}
-	if commit, _, err := initGit(ctx, directory, append([]string{"merge-base", "HEAD"}, refs...)...); err == nil && checkoutSelection.MatchString(commit) && commit != "HEAD" {
+	if commit, _, err := initGit(ctx, directory, append([]string{"merge-base", head}, refs...)...); err == nil && checkoutSelection.MatchString(commit) && commit != "HEAD" {
 		return commit, "merge base with " + name
 	}
 	if refs[0] == "refs/heads/"+name {

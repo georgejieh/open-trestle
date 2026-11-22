@@ -503,7 +503,8 @@ or garbage-collected.
   the default branch itself, the base is `origin`'s copy, so your unpushed
   commits are the change. The default branch is the one `origin/HEAD` names,
   otherwise `main`, otherwise `master`. `--base REF` and `--head REF` pick
-  commits exactly, as in `trestle init`.
+  commits exactly, as in `trestle init`. With `--head REF` alone, the base is
+  the newest commit that REF shares with the default branch.
 - Uncommitted changes are not included. Only committed work is reviewed. When
   you have uncommitted changes or untracked files, the review says they are not
   included and that committing them includes them. It writes nothing into your

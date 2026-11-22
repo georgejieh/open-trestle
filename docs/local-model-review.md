@@ -83,7 +83,7 @@ After `trestle init` (see [getting started](getting-started.md)), `trestle revie
 - the head is `HEAD`;
 - the base is the newest commit that `HEAD` shares with the default branch.
 
-`--base REF` and `--head REF` pick the commits exactly. A new setup saves `--format text` and, unless you set it up with `--specialists none`, `--specialists auto`.
+`--base REF` and `--head REF` pick the commits exactly. With `--head REF` alone, the base is the newest commit that REF shares with the default branch. A new setup saves `--format text` and, unless you set it up with `--specialists none`, `--specialists auto`.
 
 The result goes to standard output in the saved format or in the one you pass with `--format`. Every other line, including the commits, where the source is sent and the spending and scanning messages, goes to standard error. These flags pass through: `--directory`, `--timeout`, `--profile`, `--specialists`, `--max-specialists`, `--exit-code-policy`, `--all`, `--verbose`, `--checks` and `--no-checks`.
 

@@ -517,18 +517,24 @@ func initValidateDirectory(value string) (string, error) {
 func (w *initWizard) stepSelection() error {
 	w.header(1, "What will be reviewed")
 	normalize := func(value string) (string, error) { return initNormalizeSelection(w.ctx, w.checkout, value) }
-	base, proposedLabel := initDefaultMergeBase(w.ctx, w.checkout)
-	proposedBase, head := base, "HEAD"
 	_, baseGiven := w.flags["base"]
 	_, headGiven := w.flags["head"]
-	for name, target := range map[string]*string{"base": &base, "head": &head} {
-		if raw, ok := w.flags[name]; ok {
-			value, err := normalize(raw)
-			if err != nil {
-				return initStopf(initExitUsage, "--%s: %v", name, err)
-			}
-			*target = value
+	head := "HEAD"
+	if headGiven {
+		value, err := normalize(w.flags["head"])
+		if err != nil {
+			return initStopf(initExitUsage, "--head: %v", err)
 		}
+		head = value
+	}
+	base, proposedLabel := initDefaultMergeBase(w.ctx, w.checkout, head)
+	proposedBase := base
+	if baseGiven {
+		value, err := normalize(w.flags["base"])
+		if err != nil {
+			return initStopf(initExitUsage, "--base: %v", err)
+		}
+		base = value
 	}
 	askBoth := false
 	for range initMaxTries {

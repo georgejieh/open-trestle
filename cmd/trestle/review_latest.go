@@ -28,9 +28,9 @@ import (
 //
 // Which commits:
 //   - head: HEAD, the commit checked out now (--head REF picks another);
-//   - base: the newest commit HEAD shares with the default branch, as this
-//     repository has it or as origin has it, whichever is newer (git merge-base
-//     HEAD BRANCH origin/BRANCH). The default branch is the one origin/HEAD
+//   - base: the newest commit the head shares with the default branch, as
+//     this repository has it or as origin has it, whichever is newer (git
+//     merge-base HEAD BRANCH origin/BRANCH). The default branch is the one origin/HEAD
 //     names, else main, else master. --base REF picks the base exactly.
 //
 // Uncommitted changes are never included and nothing is written into the
@@ -334,7 +334,7 @@ func latestChange(ctx context.Context, w *initWizard, options latestReviewOption
 		}
 		base = value
 	} else {
-		base, label = initDefaultMergeBase(ctx, w.checkout)
+		base, label = initDefaultMergeBase(ctx, w.checkout, head)
 		if base == "" {
 			return "", "", "", source, 3, "no main or master branch was found here (locally or on origin), so there is no default branch to compare against. Pass --base REF, for example --base main."
 		}
