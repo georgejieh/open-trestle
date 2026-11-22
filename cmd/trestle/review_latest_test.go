@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/georgejieh/open-trestle/spending"
 )
 
 // Every repository below is a temporary Git checkout made with git itself;
@@ -400,5 +403,48 @@ func TestReviewFindsASetupSavedUnderAnotherFolderName(t *testing.T) {
 	}
 	if _, ok := readLastReview(renamed); !ok {
 		t.Fatal("the review was not recorded in the discovered setup folder")
+	}
+}
+
+// stdinClosingTransport closes the review's standard input when the first
+// model request arrives and holds that request until the review is canceled.
+type stdinClosingTransport struct{ close func() error }
+
+func (s stdinClosingTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	_ = s.close()
+	<-request.Context().Done()
+	return nil, request.Context().Err()
+}
+
+// With --stop-on-stdin-close, end of standard input cancels the review the
+// way Ctrl-C does: the canceled result, the last review and the usage ledger
+// entry are still written.
+func TestReviewStopsWhenStandardInputCloses(t *testing.T) {
+	checkout := latestChangeCheckout(t)
+	dir := latestChangeSetup(t, checkout)
+	input, closer := io.Pipe()
+	previous := reviewChecksInput
+	reviewChecksInput = input
+	t.Cleanup(func() { reviewChecksInput = previous })
+	localReviewModelHTTPClient = &http.Client{Transport: stdinClosingTransport{close: closer.Close}}
+	localReviewModelHTTPClientIdentity = localModelDigest([]byte("stdin closing fixture transport"))
+	t.Cleanup(func() { localReviewModelHTTPClient, localReviewModelHTTPClientIdentity = nil, "" })
+	code, stdout, stderr := runReviewCommand(t, checkout, "--format", "json", "--stop-on-stdin-close")
+	var result map[string]any
+	if code != 3 || json.Unmarshal([]byte(stdout), &result) != nil || result["status"] != "canceled" {
+		t.Fatalf("exit=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	if !initHas(stderr, "The review was stopped before it finished.") {
+		t.Fatalf("stderr lacks the canceled line:\n%s", stderr)
+	}
+	if review, ok := readLastReview(dir); !ok || review.Status != "canceled" {
+		t.Fatalf("last review %+v %v", review, ok)
+	}
+	store, err := spending.NewStore(filepath.Join(os.Getenv("XDG_STATE_HOME"), "open-trestle", "usage"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entries := spendingMonthEntries(t, store); len(entries) != 1 || entries[0].RequestsSent == 0 {
+		t.Fatalf("ledger entries %+v, want the canceled review", entries)
 	}
 }

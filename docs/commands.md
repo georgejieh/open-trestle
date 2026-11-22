@@ -41,6 +41,7 @@ Reviews the latest committed change with the setup that `trestle init` made.
 | `--max-specialists N` | Cap the specialists a set runs. |
 | `--exit-code-policy default\|findings\|strict\|always-zero` | Map a completed review to an exit status. See [exit codes](exit-codes.md#exit-code-policy). |
 | `--checks`, `--no-checks` | Run, or skip, the [repository checks](repository-checks.md) for this review, whatever the saved answer. |
+| `--stop-on-stdin-close` | Stop the review, as Ctrl-C does, when standard input reaches end of file. For a program that starts the review and cancels it by closing its input. The checks question is not asked. |
 
 You cannot combine `--profile` and `--specialists`. `trestle review PATH`
 reviews a local fixture file instead.
