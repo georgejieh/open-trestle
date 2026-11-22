@@ -166,7 +166,7 @@ func ParseGenerationResultArtifact(
 		input.ReviewScopeIdentity() != contextArtifact.Scope().Identity() ||
 		!hasProvenance(inputArtifact.Provenance(), contextArtifact.Identity()) ||
 		!hasProvenance(inputArtifact.Provenance(), input.Authorization().Identity()) ||
-		review.ValidateRecordedContextPacketRequest(
+		review.ValidateContextPacketRequest(
 			contextArtifact.Payload(), input.ContextIdentity(), input.ReviewScopeIdentity(), input.MemoryScopeIdentity(), input.MemoryIdentity(),
 			input.Snapshot(), input.EvidenceItems(),
 		) != nil || !contextOutputSchemaMatches(input, contextArtifact.Payload()) {

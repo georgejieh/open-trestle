@@ -3,60 +3,11 @@ package gateway
 import (
 	"bytes"
 	"context"
-	"os"
 	"strconv"
 	"testing"
 
 	"github.com/georgejieh/open-trestle/internal/provider"
 )
-
-func TestInvestigationTurnEstimateVersion1RecordedBytesReadBackWithTheVersion1Formula(t *testing.T) {
-	recorded, err := os.ReadFile("testdata/investigation-turn-estimate-v1.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if bytes.Contains(recorded, []byte(`"system_channel_bytes"`)) || !bytes.Contains(recorded, []byte(`"estimate_version":1,`)) {
-		t.Fatal("fixture is not a version 1 recording")
-	}
-	record, err := ParseInvestigationTurnRecord(recorded)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if record.EstimateVersion() != 1 || record.SystemChannelBytes() != 0 {
-		t.Fatal("version 1 readback gained a system channel count")
-	}
-	turnEncodingAssertRoundTrip(t, record)
-	// The recorded reservation is the version 1 formula: payload plus framing only.
-	want := max(uint64(record.declaredInput), uint64(len(record.request.Payload()))+256)
-	if got := uint64(record.Selection().CostBudget().EstimatedInputTokens()); got != want {
-		t.Fatalf("version 1 reservation = %d, want %d", got, want)
-	}
-	// A recorded version 1 budget is never re-derived with the version 2
-	// formula: relabeling it as version 2 with a system channel fails, and a
-	// version 1 record cannot carry a count.
-	for name, change := range map[string]func(*InvestigationTurnRecord){
-		"version 2 with system channel": func(r *InvestigationTurnRecord) {
-			r.estimateVersion, r.systemBytes = InvestigationBudgetEstimateVersion, investigationOwnerSystemBytes
-		},
-		"version 1 with system channel": func(r *InvestigationTurnRecord) { r.systemBytes = investigationOwnerSystemBytes },
-	} {
-		t.Run(name, func(t *testing.T) {
-			changed := record
-			change(&changed)
-			changed.identity = changed.deriveIdentity()
-			if changed.Validate() == nil {
-				t.Fatal("version 1 reservation re-derived under a system channel")
-			}
-		})
-	}
-	trimmed := bytes.TrimSuffix(recorded, []byte("}"))
-	for name, encoded := range map[string][]byte{
-		"zero count":     append(append([]byte(nil), trimmed...), []byte(`,"system_channel_bytes":0}`)...),
-		"non-zero count": append(append([]byte(nil), trimmed...), []byte(`,"system_channel_bytes":1000}`)...),
-	} {
-		t.Run(name, func(t *testing.T) { turnEncodingRefuse(t, encoded) })
-	}
-}
 
 func TestInvestigationTurnEstimateVersion2RecordsAndReadsBackTheSystemChannel(t *testing.T) {
 	options, _, _, _ := investigationOwnerOptionsFixture(t, "", 100000, 2)
@@ -172,10 +123,7 @@ func TestInvestigationTurnEstimateVersion2RecordsTheStructuredOutputResponseForm
 	}
 	for name, change := range map[string]func(*InvestigationTurnRecord){
 		"standard turn with a count": func(r *InvestigationTurnRecord) { r.structuredOutput = false },
-		"version 1 structured turn": func(r *InvestigationTurnRecord) {
-			r.estimateVersion, r.systemBytes, r.responseFormatBytes = investigationBudgetEstimateVersionV1, 0, 0
-		},
-		"changed count": func(r *InvestigationTurnRecord) { r.responseFormatBytes++ },
+		"changed count":              func(r *InvestigationTurnRecord) { r.responseFormatBytes++ },
 	} {
 		t.Run(name, func(t *testing.T) {
 			tampered := record

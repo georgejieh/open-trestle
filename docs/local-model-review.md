@@ -228,7 +228,7 @@ Dispatch refuses an approved reservation that is below the larger of two values,
 
 Route planning counts the same `response_format` bytes, which are deterministic from the pinned schema, whenever the candidate routes of a planning step include a connection with this option. The generation and verification route authorizers, the local generation route plan and each investigation turn reserve the payload, the system channel and the schema framing, so `estimated_input_tokens` does not need to carry that margin. A step reserves once for all of its candidate routes, so a route without the option that is planned in the same step is reserved the same way. An investigation decides per role, from the pinned generation route and from the verification routes.
 
-Such an authorizer binds `input_transport: local_structured_output` into its identity, and the verification authorizer moves to identity version 3 for it. Such an investigation binds the transports of its roles into the route owner and pipeline profile identities, in version 2 of each. Without the option, every estimate and identity is unchanged. This estimate is conservative byte accounting, not exact tokenization. Set a justified reservation that fits the approved context capacity of the route. No budget is increased after authorization.
+Such an authorizer binds `input_transport: local_structured_output` into its identity. Such an investigation binds the transports of its roles into the route owner and pipeline profile identities. This estimate is conservative byte accounting, not exact tokenization. Set a justified reservation that fits the approved context capacity of the route. No budget is increased after authorization.
 
 The command does not assume that a server supports these schema keywords. Requests that the server does not support fail through the existing transport and response checks, without a simplified schema, retry or fallback. The checks on candidate coverage, evidence, usage, tool calls and authorization stay unchanged.
 
@@ -245,7 +245,7 @@ trestle config inventory-identity \
   --route-inventory /protected/routes.json
 ```
 
-The `decoded` result reports structural identities of the inventory and of its route records only. It says nothing about policy binding or live health. For a policy template, bind its identities with `trestle config bind` (see [named local runtimes](named-local-runtimes.md#use-the-existing-configuration-and-setup-caller)). The shipped example pair is already structurally bound. For a historical v1 policy, copy the reported `inventory_identity` into `runtime-policy.json` after you edit the inventory, and leave `preferred_route_record_identities` empty unless you intend to pin or prefer records that the same command reports.
+The `decoded` result reports structural identities of the inventory and of its route records only. It says nothing about policy binding or live health. For a policy template, bind its identities with `trestle config bind` (see [named local runtimes](named-local-runtimes.md#use-the-existing-configuration-and-setup-caller)). The shipped example pair is already structurally bound. For a v1 policy, copy the reported `inventory_identity` into `runtime-policy.json` after you edit the inventory, and leave `preferred_route_record_identities` empty unless you intend to pin or prefer records that the same command reports.
 
 After binding, validate the pair:
 

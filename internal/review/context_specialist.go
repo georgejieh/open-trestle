@@ -116,24 +116,14 @@ func contextSpecialistFromWire(wire *contextSpecialistWire) (ContextSpecialist, 
 	return value, true
 }
 
-// validGenerationContextSpecialist binds the specialist block to the context
-// version: versions 7 and 8 permit one, which must re-derive exactly from the
-// embedded catalog. Every other version forbids the block.
+// validGenerationContextSpecialist requires a specialist block, when present,
+// to re-derive exactly from the embedded catalog.
 func validGenerationContextSpecialist(wire contextPacketWire) bool {
 	if wire.Specialist == nil {
 		return true
 	}
-	if !systemChannelGenerationVersion(wire.SchemaVersion) {
-		return false
-	}
 	_, ok := contextSpecialistFromWire(wire.Specialist)
 	return ok
-}
-
-// executableGenerationContextVersion reports whether a generation context may
-// start a new model attempt. Versions 2, 3, 5 and 7 are recorded readback only.
-func executableGenerationContextVersion(version int) bool {
-	return version == modelGenerationContextVersion
 }
 
 // RecordedContextSpecialist returns the specialist bound into exact recorded
@@ -144,8 +134,8 @@ func RecordedContextSpecialist(payload []byte) (ContextSpecialist, bool, error) 
 	}
 	wire, err := decodeGenerationContextWire(payload)
 	if err != nil || wire.Contract != "open-trestle/review-context-packet" || !validGenerationContextSpecialist(wire) ||
-		!validRecordedModelOutputContract(wire.SchemaVersion, wire.Instructions, wire.InstructionsIdentity, wire.OutputSchema, false) ||
-		wire.OutputSchemaIdentity != candidateSchemaIdentityForContextVersion(wire.SchemaVersion) {
+		!validModelOutputContract(wire.SchemaVersion, wire.Instructions, wire.InstructionsIdentity, wire.OutputSchema, false) ||
+		wire.OutputSchemaIdentity != ModelCandidateBatchSchemaIdentity {
 		return ContextSpecialist{}, false, ErrInvalidContextPacketRequest
 	}
 	if wire.Specialist == nil {

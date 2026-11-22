@@ -205,7 +205,7 @@ func TestCheckRunsTravelInVersionElevenAndReachTheVerifierUnchanged(t *testing.T
 	plainRequest, _ := plain.ProviderRequest()
 	system, err := TrustedModelRequestInstructions(payload)
 	plainSystem, plainErr := TrustedModelRequestInstructions(plainRequest.Payload())
-	if err != nil || plainErr != nil || system != plainSystem || system != candidateOutputInstructionsV11 || !strings.Contains(system, checkRunsGenerationSentence) || strings.Contains(system, "approve") {
+	if err != nil || plainErr != nil || system != plainSystem || system != candidateOutputInstructions || !strings.Contains(system, checkRunsGenerationSentence) || strings.Contains(system, "approve") {
 		t.Fatal("the generation system channel is not the pinned version 11 contract")
 	}
 	if bytes.Contains(plainRequest.Payload(), []byte("check_runs")) {
@@ -233,7 +233,7 @@ func TestCheckRunsTravelInVersionElevenAndReachTheVerifierUnchanged(t *testing.T
 		t.Fatal("the verifier does not receive the generation's check runs unchanged")
 	}
 	verifierSystem, err := TrustedModelRequestInstructions(request.Payload())
-	if err != nil || verifierSystem != verificationOutputInstructionsV10 || !strings.Contains(verifierSystem, checkRunsVerificationSentence) || !strings.Contains(verifierSystem, indexContextVerificationSentence) {
+	if err != nil || verifierSystem != verificationOutputInstructions || !strings.Contains(verifierSystem, checkRunsVerificationSentence) || !strings.Contains(verifierSystem, indexContextVerificationSentence) {
 		t.Fatal("the verifier system channel is not the pinned version 10 contract")
 	}
 	if err := ValidateVerificationModelRequest(request, generation.ReviewScopeIdentity()); err != nil {
@@ -250,7 +250,7 @@ func TestRecordedCheckRunsAreCheckedOnReadback(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return ValidateRecordedContextPacketRequest(encoded, modelContractDigest(encoded), generation.ReviewScopeIdentity(), generation.MemoryScopeIdentity(), generation.MemoryIdentity(), snapshot, generation.EvidenceItems())
+		return ValidateContextPacketRequest(encoded, modelContractDigest(encoded), generation.ReviewScopeIdentity(), generation.MemoryScopeIdentity(), generation.MemoryIdentity(), snapshot, generation.EvidenceItems())
 	}
 	summarized := func(value contextPacketWire) bool {
 		encoded, _ := json.Marshal(value)
@@ -310,56 +310,6 @@ func TestRecordedCheckRunsAreCheckedOnReadback(t *testing.T) {
 	}
 	if readback(wire) != nil {
 		t.Fatal("the untouched context does not read back")
-	}
-	// The object is refused in every version before 11. Version 10 differs
-	// from version 11 only in its contract, so the same bytes without the
-	// object read back as version 10.
-	recordedV10 := wire
-	recordedV10.SchemaVersion, recordedV10.InstructionsIdentity, recordedV10.CheckRuns = modelGenerationContextVersionV10, modelInstructionsIdentity(candidateOutputInstructionsV10), nil
-	if err := readback(recordedV10); err != nil {
-		t.Fatalf("the same context without check runs does not read back as version 10: %v", err)
-	}
-	recordedV10.CheckRuns = wire.CheckRuns
-	earlier := []contextPacketWire{recordedV10}
-	for _, version := range []int{2, 3, 5, 7, 8, 9} {
-		legacy := legacyGenerationWire(t, wire, version)
-		legacy.CheckRuns = wire.CheckRuns
-		earlier = append(earlier, legacy)
-	}
-	for _, legacy := range earlier {
-		if readback(legacy) == nil {
-			t.Fatalf("a version %d context read back with check runs", legacy.SchemaVersion)
-		}
-		if summarized(legacy) {
-			t.Fatalf("a version %d context summarized check runs", legacy.SchemaVersion)
-		}
-	}
-}
-
-// A verification context before version 10 never carries check runs.
-func TestEarlierVerifierRequestsRefuseCheckRuns(t *testing.T) {
-	generation, payload := checkRunsPacket(t, sampleCheckRuns(t))
-	_, _, snapshot, _, _ := contextPacketFixture(t, "line ten\n")
-	_, candidates := verificationContextFixture(t)
-	verifier, err := NewVerificationRequestContext(payload, generation.Identity(), generation.ReviewScopeIdentity(), generation.MemoryScopeIdentity(), generation.MemoryIdentity(), snapshot, generation.EvidenceItems(), candidates)
-	if err != nil {
-		t.Fatal(err)
-	}
-	wire, err := decodeVerificationContextWire(verifier.Payload())
-	if err != nil || wire.CheckRuns == nil {
-		t.Fatalf("the version 10 verifier request lacks check runs: %v", err)
-	}
-	for _, version := range []int{modelVerificationContextVersionV9, modelVerificationContextVersionV8, modelVerificationContextVersionV7, modelVerificationContextVersionV6} {
-		legacy := wire
-		legacy.SchemaVersion = version
-		encoded, _ := json.Marshal(legacy)
-		if _, err := decodeVerificationContextWire(encoded); err == nil {
-			t.Fatalf("a version %d verifier request read back with check runs", version)
-		}
-		legacy.CheckRuns = nil
-		if encoded, _ = json.Marshal(legacy); func() bool { _, err := decodeVerificationContextWire(encoded); return err != nil }() {
-			t.Fatalf("a version %d verifier request without check runs does not decode", version)
-		}
 	}
 }
 

@@ -74,7 +74,7 @@ func ParseRecordedContext(payload []byte, scope audit.ReviewScope, head sourceou
 	digest := sha256.Sum256(payload)
 	identity := hex.EncodeToString(digest[:])
 	memoryIdentity := deriveContextMemoryIdentityFromWire(wire)
-	if ValidateRecordedContextPacketRequest(payload, identity, scope.Identity(), wire.MemoryScopeIdentity, memoryIdentity, snapshot, items) != nil {
+	if ValidateContextPacketRequest(payload, identity, scope.Identity(), wire.MemoryScopeIdentity, memoryIdentity, snapshot, items) != nil {
 		return RecordedContext{}, ErrInvalidContextPacketRequest
 	}
 	if _, err := summarizeContextSourceOmissions(wire.SourceOmissions, wire.SourceCoverage.Omitted-wire.SourceCoverage.PreselectionOmitted); err != nil {

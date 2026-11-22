@@ -9,7 +9,7 @@ The profile records:
 - source ranges and normalized syntax and API digests; and
 - typed gaps for unsupported languages, unavailable source, parser failure and resource limits.
 
-Declaration differences have the `structural` grade. Uses of changed definitions, related tests and the rest of a review's context come from the [repository index](repository-index.md), for every language it analyses. A profile reads only the changed Go files of each side. The graph contract is `open-trestle/semantic-impact/go-ast-graph/v2`; a recorded version 1 profile, which also held name-matched reference candidates, is still read back.
+Declaration differences have the `structural` grade. Uses of changed definitions, related tests and the rest of a review's context come from the [repository index](repository-index.md), for every language it analyses. A profile reads only the changed Go files of each side. The graph contract is `open-trestle/semantic-impact/go-ast-graph/v2`.
 
 Every profile binds the base snapshot, head snapshot, change model, input file digests, adapter identity and graph schema. Binding means the profile records these identities, so it is valid only for that combination. The order of the inputs does not matter. They are limited to 4,096 files per side, 2 MiB per file and 128 MiB in total. Outputs are limited to 8,192 declaration changes, 4,096 gaps and 16 MiB of encoded JSON. The profile rejects:
 

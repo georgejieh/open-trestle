@@ -362,14 +362,13 @@ func (p ContextPacket) WithCheckRuns(runs CheckRuns) (ContextPacket, error) {
 }
 
 // ContextCheckRuns reads the check runs of exact recorded generation context
-// bytes. A context before version 11, or one recorded without the object, has
-// none: the zero value.
+// bytes. A context recorded without the object has none: the zero value.
 func ContextCheckRuns(payload []byte) (CheckRuns, error) {
 	if len(payload) == 0 || len(payload) > maxProviderContextPacketBytes {
 		return CheckRuns{}, ErrInvalidContextPacketRequest
 	}
 	wire, err := decodeGenerationContextWire(payload)
-	if err != nil || wire.Contract != "open-trestle/review-context-packet" || wire.CheckRuns != nil && !checkRunsGenerationVersion(wire.SchemaVersion) || !validCheckRunsWire(wire.CheckRuns) {
+	if err != nil || wire.Contract != "open-trestle/review-context-packet" || wire.CheckRuns != nil && wire.SchemaVersion != modelGenerationContextVersion || !validCheckRunsWire(wire.CheckRuns) {
 		return CheckRuns{}, ErrInvalidContextPacketRequest
 	}
 	return checkRunsFromWire(wire.CheckRuns), nil

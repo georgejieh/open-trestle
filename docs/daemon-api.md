@@ -154,11 +154,7 @@ Every endpoint requires exactly one `Authorization: Bearer <credential>` header.
 
 The diagnostic set comes in these versions:
 
-- Versions 1 through 5 and 8 contain the state of verified findings.
-- Version 2 includes counts of candidates, verified, rejected and inconclusive results.
-- Version 3 also includes the identity of the verification context that supplied the result, and counts of analyzed, selected and omitted sources.
-- Version 4 adds sorted reasons for omissions. They are aggregates that contain no content, and their counts equal the total omitted.
-- Version 5 adds one deterministic check, bound to its analysis result and the change.
+- Version 5 contains the state of verified findings: counts of candidates, verified, rejected and inconclusive results, the identity of the verification context that supplied the result, counts of analyzed, selected and omitted sources, and sorted reasons for omissions. The reasons are aggregates that contain no content, and their counts equal the total omitted. It also has one deterministic check, bound to its analysis result and the change.
 - Version 6 instead contains one deterministic check and observations, bound to an analysis-result identity. It has no verified-finding set.
 - Version 7 is a set for the end of a full review only. It has a final outcome and optional evidence: deterministic evidence in the version 6 form and verified evidence in the version 5 form. Its top-level snapshot identifies the physical head source. The nested verified snapshot identifies the selected review snapshot, and the two need not be equal. An absent verified section means unknown, not zero findings.
 - Version 8 is version 5 plus findings on removed base lines, which are marked `"side":"base"` and carry an optional `head_line`. A final version 7 set may embed it in place of version 5.

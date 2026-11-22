@@ -60,7 +60,7 @@ The runtime view shows the local storage and artifact protection posture for the
 
 The review view is a queue for human review. How it presents a result depends on the diagnostic-set version.
 
-For versions 1 through 5 and 8, the verified finding totals stay separate from the outcomes of deterministic checks:
+For versions 5 and 8, the verified finding totals stay separate from the outcomes of deterministic checks:
 
 - Version 2 also shows the exact counts of accepted, verified, rejected and
   inconclusive candidates. The console calls accepted candidates admitted
@@ -72,7 +72,7 @@ For versions 1 through 5 and 8, the verified finding totals stay separate from t
 
 The check appears as a `Cleared gate`, `Failed check`, `Incomplete check` or `Abstention`. Only a pass with full coverage and zero matches counts as cleared, and only for that rule. Not applicable means that no changed Go range could be checked, and it does not clear the rule. The console does not present rejected candidates as cleared deterministic gates. It labels any inconclusive candidate or omitted source count as incomplete. Source counts and reasons do not claim coverage of the whole repository and do not expose paths.
 
-When the verified set is empty, the console states that zero findings and terminal coverage do not approve the change. Versions 1 through 4 remain readable and show no check outcomes.
+When the verified set is empty, the console states that zero findings and terminal coverage do not approve the change.
 
 Versions 6 and 7 are different:
 

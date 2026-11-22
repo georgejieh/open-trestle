@@ -326,7 +326,8 @@ func TestServerReturnsScopedVerifiedDiagnostics(t *testing.T) {
 	coordinator, _ := controlplane.NewCoordinator(controlplane.NewMemoryRunJournal())
 	scope, _ := audit.NewReviewScope("tenant-a", "repo-a", "run-a")
 	omission, _ := diagnostics.NewOmissionSummary(diagnostics.OmissionSelectionLimit, 172)
-	set, _ := diagnostics.NewSetWithOmissionReasons(scope, strings.Repeat("d", 64), strings.Repeat("1", 40), strings.Repeat("e", 64), strings.Repeat("f", 64), 2, 1, 1, 173, 1, 172, []diagnostics.OmissionSummary{omission}, nil)
+	check, _ := diagnostics.NewDeterministicCheck("3f01f93e51003eb3a0deca04719a3957d6e367c97c33bdfea105174d95698092", strings.Repeat("8", 64), strings.Repeat("7", 64), diagnostics.CheckPassed, 1, 2, 1, 2, 0)
+	set, _ := diagnostics.NewSetWithDeterministicChecks(scope, strings.Repeat("d", 64), strings.Repeat("1", 40), strings.Repeat("e", 64), strings.Repeat("f", 64), 2, 1, 1, 173, 1, 172, []diagnostics.OmissionSummary{omission}, []diagnostics.DeterministicCheck{check}, nil)
 	store := diagnostics.NewMemoryStore()
 	_, _ = store.PutDiagnosticSet(context.Background(), set)
 	server, err := NewServerWithDiagnostics(coordinator, authenticator, fixedClock{at: time.UnixMilli(1000)}, store)
@@ -345,7 +346,7 @@ func TestServerReturnsScopedVerifiedDiagnostics(t *testing.T) {
 		t.Fatal(err)
 	}
 	parsed, err := diagnostics.ParseSet(envelope.Diagnostics)
-	if err != nil || parsed.Identity() != set.Identity() || parsed.SchemaVersion() != 4 || len(parsed.OmissionSummaries()) != 1 || parsed.OmissionSummaries()[0].Count() != 172 || parsed.CandidateCount() != 2 || parsed.RejectedCount() != 1 || parsed.InconclusiveCount() != 1 || parsed.SourceAnalyzedCount() != 173 || parsed.SourceSelectedCount() != 1 || parsed.SourceOmittedCount() != 172 {
+	if err != nil || parsed.Identity() != set.Identity() || parsed.SchemaVersion() != 5 || len(parsed.OmissionSummaries()) != 1 || parsed.OmissionSummaries()[0].Count() != 172 || parsed.CandidateCount() != 2 || parsed.RejectedCount() != 1 || parsed.InconclusiveCount() != 1 || parsed.SourceAnalyzedCount() != 173 || parsed.SourceSelectedCount() != 1 || parsed.SourceOmittedCount() != 172 {
 		t.Fatalf("set=(%#v,%v)", parsed, err)
 	}
 }

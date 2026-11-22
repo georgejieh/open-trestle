@@ -204,15 +204,6 @@ func TestFrozenVersionMutationAndParserRejections(t *testing.T) {
 		})
 		rejectResult(t, output, change, base, head, payload)
 	})
-	for _, scenario := range []string{"synthetic-v2-no-checks-observations", "synthetic-v3-check-no-observations"} {
-		t.Run(scenario, func(t *testing.T) {
-			b, h, c, o, _ := frozenClosure(t, scenario)
-			rejectResult(t, o, c, b, h, bytes.Replace(o.Payload(), []byte(`"semantic_impact":`), []byte(`"observations":[],"semantic_impact":`), 1))
-			if scenario == "synthetic-v2-no-checks-observations" {
-				rejectResult(t, o, c, b, h, bytes.Replace(o.Payload(), []byte(`"semantic_impact":`), []byte(`"checks":[],"semantic_impact":`), 1))
-			}
-		})
-	}
 }
 func TestFrozenAlternateObservationFingerprintParity(t *testing.T) {
 	base, head, change, output, result := frozenClosure(t, "produced-v4-failed-one-observation")
@@ -305,7 +296,7 @@ func TestFrozenContainmentAndTypedConstructors(t *testing.T) {
 	}
 }
 func TestFrozenEnvelopeAndGapRejections(t *testing.T) {
-	base, head, change, output, _ := frozenClosure(t, "produced-v4-removed-file-gap")
+	base, head, change, output, _ := frozenClosure(t, "synthetic-v4-removed-file-gap")
 	parsed, err := ParseResultArtifact(output, change, base, head)
 	if err != nil {
 		t.Fatal(err)
@@ -359,7 +350,7 @@ func profileRehash(t *testing.T, profile []byte, changes func(map[string]any)) [
 	preimage := struct {
 		Adapter, Graph, Input, Base, Head, Change string
 		Declarations, References, Gaps            []string
-	}{p["adapter_identity"].(string), p["graph_schema"].(string), p["input_identity"].(string), p["base_snapshot_identity"].(string), p["head_snapshot_identity"].(string), p["change_model_identity"].(string), identities("declarations"), identities("references"), identities("gaps")}
+	}{p["adapter_identity"].(string), p["graph_schema"].(string), p["input_identity"].(string), p["base_snapshot_identity"].(string), p["head_snapshot_identity"].(string), p["change_model_identity"].(string), identities("declarations"), nil, identities("gaps")}
 	encoded, err := json.Marshal(preimage)
 	if err != nil {
 		t.Fatal(err)
@@ -374,27 +365,11 @@ func profileRehash(t *testing.T, profile []byte, changes func(map[string]any)) [
 			encodedProfile = bytes.Replace(encodedProfile, []byte(`"`+key+`":"`+old+`"`), []byte(`"`+key+`":"`+current+`"`), 1)
 		}
 	}
-	if refs := p["references"].([]any); len(refs) > 0 {
-		changed := refs[0].(map[string]any)
-		var before map[string]any
-		var previous map[string]any
-		if err := json.Unmarshal(profile, &before); err != nil {
-			t.Fatal(err)
-		}
-		previous = before["references"].([]any)[0].(map[string]any)
-		for _, key := range []string{"declaration_identity", "identity"} {
-			old := previous[key].(string)
-			current := changed[key].(string)
-			if old != current {
-				encodedProfile = bytes.Replace(encodedProfile, []byte(`"`+key+`":"`+old+`"`), []byte(`"`+key+`":"`+current+`"`), 1)
-			}
-		}
-	}
 	encodedProfile = bytes.Replace(encodedProfile, []byte(`"identity":"`+lookupProfileField(t, profile, "identity")+`"`), []byte(`"identity":"`+p["identity"].(string)+`"`), 1)
 	return encodedProfile
 }
-func TestFrozenSemanticIdentityLinksAndGraphOrphan(t *testing.T) {
-	base, head, change, output, _ := frozenClosure(t, "produced-v4-go-affected-test")
+func TestFrozenSemanticIdentityLinks(t *testing.T) {
+	base, head, change, output, _ := frozenClosure(t, "produced-v4-go-modified-function")
 	var wire resultWire
 	if err := json.Unmarshal(output.Payload(), &wire); err != nil {
 		t.Fatal(err)
@@ -408,19 +383,6 @@ func TestFrozenSemanticIdentityLinksAndGraphOrphan(t *testing.T) {
 		{"base model link", func(p map[string]any) { p["base_snapshot_identity"] = strings.Repeat("a", 64) }, true},
 		{"head model link", func(p map[string]any) { p["head_snapshot_identity"] = strings.Repeat("a", 64) }, true},
 		{"change model link", func(p map[string]any) { p["change_model_identity"] = strings.Repeat("a", 64) }, true},
-		{"graph reference orphan", func(p map[string]any) {
-			ref := p["references"].([]any)[0].(map[string]any)
-			ref["declaration_identity"] = strings.Repeat("a", 64)
-			preimage := struct {
-				Declaration, Path string
-				Line, Column      int
-				Test              bool
-				Grade             string
-			}{ref["declaration_identity"].(string), ref["path"].(string), int(ref["line"].(float64)), int(ref["column"].(float64)), ref["affected_test"].(bool), ref["grade"].(string)}
-			data, _ := json.Marshal(preimage)
-			hash := sha256.Sum256(data)
-			ref["identity"] = hex.EncodeToString(hash[:])
-		}, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			candidate := wire
@@ -436,11 +398,8 @@ func TestFrozenSemanticIdentityLinksAndGraphOrphan(t *testing.T) {
 				candidate.SemanticImpact = bytes.Replace(candidate.SemanticImpact, []byte(`"identity":"`+wire.SemanticImpactIdentity(t)+`"`), []byte(`"identity":"`+strings.Repeat("a", 64)+`"`), 1)
 			}
 			_, profileErr := semanticimpact.DecodeProfile(candidate.SemanticImpact)
-			if test.rehash && test.name != "graph reference orphan" && profileErr != nil {
+			if test.rehash && profileErr != nil {
 				t.Fatalf("valid rehashed profile rejected before analysis link: %v", profileErr)
-			}
-			if test.name == "graph reference orphan" && !errors.Is(profileErr, semanticimpact.ErrInvalidInput) {
-				t.Fatalf("orphan profile not rejected: %v", profileErr)
 			}
 			candidate.Identity = ""
 			data, err := json.Marshal(candidate)

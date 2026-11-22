@@ -20,7 +20,6 @@ import (
 	"github.com/georgejieh/open-trestle/internal/memory"
 	"github.com/georgejieh/open-trestle/internal/policy"
 	"github.com/georgejieh/open-trestle/internal/provider"
-	reviewschema "github.com/georgejieh/open-trestle/schemas/review"
 )
 
 func v4Check(t *testing.T, err error) {
@@ -210,7 +209,7 @@ func TestInvestigationContextCurrentControlAndCanonicalV4Contract(t *testing.T) 
 	v4Check(t, err)
 	trusted, err := TrustedModelRequestInstructions(request.Payload())
 	v4Check(t, err)
-	if trusted != investigationInstructionsV6 || !strings.HasPrefix(trusted, "Instruction hierarchy:") || !strings.HasSuffix(trusted, InvestigationInstructions()) || !strings.Contains(trusted, removedLinesInvestigationSentence) || v4Hash([]byte(trusted)) != investigationInstructionsV6Identity {
+	if trusted != investigationContract || !strings.HasPrefix(trusted, "Instruction hierarchy:") || !strings.HasSuffix(trusted, InvestigationInstructions()) || !strings.Contains(trusted, removedLinesInvestigationSentence) || v4Hash([]byte(trusted)) != investigationContractIdentity {
 		t.Fatal("investigation request lost its pinned host instructions")
 	}
 	if v4.Validate() != nil || v4.Identity() != v4Hash(request.Payload()) || request.Identity() == before.Identity() {
@@ -230,7 +229,7 @@ func TestInvestigationContextCurrentControlAndCanonicalV4Contract(t *testing.T) 
 		} `json:"investigation"`
 	}
 	v4Check(t, json.Unmarshal(request.Payload(), &wire))
-	if wire.Version != 6 || wire.Instructions != nil || wire.IdentityBind != modelInstructionsIdentity(investigationInstructionsV6) || wire.Tools != "host_admitted_snapshot_read_v1" || wire.Investigation.Mode != "fixed_generation_route_v1" || wire.Investigation.Memory != "empty_not_ingested" || wire.Investigation.Head != f.binding.HeadSnapshotIdentity {
+	if wire.Version != 6 || wire.Instructions != nil || wire.IdentityBind != modelInstructionsIdentity(investigationContract) || wire.Tools != "host_admitted_snapshot_read_v1" || wire.Investigation.Mode != "fixed_generation_route_v1" || wire.Investigation.Memory != "empty_not_ingested" || wire.Investigation.Head != f.binding.HeadSnapshotIdentity {
 		t.Fatal("explicit v4 profile or claimed fixed head changed")
 	}
 	if !bytes.Equal(wire.Schema, InvestigationOutputSchema()) || wire.SchemaID != v4Hash(wire.Schema) || wire.SchemaID != "77367fd94611f87d36e4490729096db927b8d27b9d687a4b6ab515db70e2bbc4" || v4Hash([]byte(InvestigationInstructions())) != "990e881d4038ea3c222c4c0aed5b6dad7dbff547faa5f30ff067b3ac18072c8c" || bytes.Contains(request.Payload(), []byte("Return only one JSON object")) {
@@ -262,7 +261,9 @@ func TestInvestigationSchemaAndHostParserHaveExplicitDifferentBoundaries(t *test
 	var schema map[string]any
 	v4Check(t, json.Unmarshal(InvestigationOutputSchema(), &schema))
 	var candidate map[string]any
-	v4Check(t, json.Unmarshal(reviewschema.CandidateBatch(), &candidate))
+	encoded, err := os.ReadFile("../../schemas/review/model-candidate-batch-v1.schema.json")
+	v4Check(t, err)
+	v4Check(t, json.Unmarshal(encoded, &candidate))
 	if !reflect.DeepEqual(schema["$defs"], candidate["$defs"]) {
 		t.Fatal("candidate definitions changed")
 	}

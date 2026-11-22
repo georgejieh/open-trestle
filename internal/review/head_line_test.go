@@ -52,7 +52,7 @@ func TestRemovedLinesHeadLineIsBoundToItsDeletionPoint(t *testing.T) {
 		t.Fatalf("head line not recorded once on the removed_lines source: %s", payload)
 	}
 	validate := func(payload []byte) error {
-		return ValidateRecordedContextPacketRequest(payload, modelContractDigest(payload), packet.ReviewScopeIdentity(), packet.MemoryScopeIdentity(), packet.MemoryIdentity(), snapshot, packet.EvidenceItems())
+		return ValidateContextPacketRequest(payload, modelContractDigest(payload), packet.ReviewScopeIdentity(), packet.MemoryScopeIdentity(), packet.MemoryIdentity(), snapshot, packet.EvidenceItems())
 	}
 	if err := ValidateContextPacketRequest(payload, packet.Identity(), packet.ReviewScopeIdentity(), packet.MemoryScopeIdentity(), packet.MemoryIdentity(), snapshot, packet.EvidenceItems()); err != nil {
 		t.Fatalf("head line inside the deletion-point window rejected: %v", err)

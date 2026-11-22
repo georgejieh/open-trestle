@@ -463,17 +463,9 @@ func validCandidateFix(value string) bool {
 	return len(value) <= maxCandidateFixBytes && validCandidateFreeText(value, maxCandidateFixRunes)
 }
 
-// candidateBatchMatchesContextVersion reports whether a candidate batch can be the
-// output of a generation context version. A categorized v2 batch requires a
-// version 7 to 11 context. An uncategorized v1 batch is accepted for every version so
-// that recorded readback and investigation projections keep their v1 candidates.
-func candidateBatchMatchesContextVersion(version int, batch CandidateBatch) bool {
-	return !batch.categorized || systemChannelGenerationVersion(version)
-}
-
 // CandidateBatchMatchesContext reports whether a batch is exactly the candidate
-// schema the recorded generation context requested: v2 for a version 7 or 8
-// context and v1 for every earlier generation context. For a v2 batch it also
+// schema the recorded context requested: v2 for a generation context and v1
+// for an investigation context. For a v2 batch it also
 // checks every recorded location and side against the context source it
 // names: admission drops a proposal located in a repository_context source; a
 // finding is on base lines, with that source's head line, exactly when it is
@@ -489,7 +481,7 @@ func CandidateBatchMatchesContext(contextPayload []byte, batch CandidateBatch) b
 	if len(contextPayload) == 0 || len(contextPayload) > maxProviderContextPacketBytes || json.Unmarshal(contextPayload, &header) != nil || header.Contract != "open-trestle/review-context-packet" {
 		return false
 	}
-	if batch.categorized != systemChannelGenerationVersion(header.SchemaVersion) || batch.sided {
+	if batch.categorized != (header.SchemaVersion == modelGenerationContextVersion) || batch.sided {
 		return false
 	}
 	if !batch.categorized {
@@ -530,32 +522,29 @@ func CandidateBatchMatchesContext(contextPayload []byte, batch CandidateBatch) b
 }
 
 // ParseCandidateBatch strictly decodes one model-candidate-batch-v1 response
-// against exact snapshot evidence. New generation contexts request v2; use
+// against exact snapshot evidence. Generation contexts request v2; use
 // ParseContextCandidateBatch for their responses.
 func ParseCandidateBatch(response provider.Response, snapshot ReviewSnapshot, evidenceItems []evidence.EvidenceItem) (CandidateBatch, error) {
 	return parseCandidateBatch(response, snapshot, evidenceItems, 1, candidateAnchorRules{})
 }
 
 // ParseContextCandidateBatch strictly decodes one response against the output
-// contract of the exact generation context bytes it answers. A version 7 to 11
-// context requires model-candidate-batch-v2 and drops, and counts, each
+// contract of the exact generation context bytes it answers. It requires
+// model-candidate-batch-v2 and drops, and counts, each
 // candidate whose source_range names a repository_context source: repository
 // instruction files are advisory preferences, not reviewed code, and changed
-// instruction lines are a separate changed_hunk source. From version 8 a
-// candidate located in a removed_lines source is a base-side finding: its
+// instruction lines are a separate changed_hunk source. A candidate located
+// in a removed_lines source is a base-side finding: its
 // lines are base lines inside that source, it records the source's head line,
 // and only cited removed_lines evidence can cover it. Base and head lines
-// never cover each other. Earlier versions require v1.
+// never cover each other.
 func ParseContextCandidateBatch(response provider.Response, contextPayload []byte, snapshot ReviewSnapshot, evidenceItems []evidence.EvidenceItem) (CandidateBatch, error) {
 	if len(contextPayload) == 0 || len(contextPayload) > maxProviderContextPacketBytes {
 		return CandidateBatch{}, ErrInvalidContextPacketRequest
 	}
 	wire, err := decodeGenerationContextWire(contextPayload)
-	if err != nil || wire.Contract != "open-trestle/review-context-packet" || !validRecordedModelOutputContract(wire.SchemaVersion, wire.Instructions, wire.InstructionsIdentity, wire.OutputSchema, false) {
+	if err != nil || wire.Contract != "open-trestle/review-context-packet" || !validModelOutputContract(wire.SchemaVersion, wire.Instructions, wire.InstructionsIdentity, wire.OutputSchema, false) {
 		return CandidateBatch{}, ErrInvalidContextPacketRequest
-	}
-	if !systemChannelGenerationVersion(wire.SchemaVersion) {
-		return ParseCandidateBatch(response, snapshot, evidenceItems)
 	}
 	if len(wire.Sources) != len(evidenceItems) {
 		return CandidateBatch{}, ErrInvalidCandidateEvidenceSet

@@ -92,7 +92,7 @@ func ParseGenerationRejectionArtifact(value, inputArtifact, contextArtifact arti
 		return fail()
 	}
 	input, err := ParseGenerationInput(inputArtifact.Payload())
-	if err != nil || !input.IsSanitized() || input.ContextArtifactIdentity() != contextArtifact.Identity() || input.ReviewScopeIdentity() != value.Scope().Identity() || review.ValidateRecordedContextPacketRequest(contextArtifact.Payload(), input.ContextIdentity(), input.ReviewScopeIdentity(), input.MemoryScopeIdentity(), input.MemoryIdentity(), input.Snapshot(), input.EvidenceItems()) != nil {
+	if err != nil || !input.IsSanitized() || input.ContextArtifactIdentity() != contextArtifact.Identity() || input.ReviewScopeIdentity() != value.Scope().Identity() || review.ValidateContextPacketRequest(contextArtifact.Payload(), input.ContextIdentity(), input.ReviewScopeIdentity(), input.MemoryScopeIdentity(), input.MemoryIdentity(), input.Snapshot(), input.EvidenceItems()) != nil {
 		return fail()
 	}
 	for _, id := range []string{contextArtifact.Identity(), input.Authorization().Identity(), input.SanitizedRequestArtifactIdentity(), input.SanitizedEgressReceiptArtifactIdentity()} {

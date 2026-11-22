@@ -53,11 +53,11 @@ func TestRunLocalGitReviewEmitsExactFindings(t *testing.T) {
 
 func TestLocalGitReviewResultJSONSchema(t *testing.T) {
 	result := localGitReviewResult{
-		Contract: "open-trestle/local-git-review-result", SchemaVersion: 1, Status: localGitReviewStatusFindings,
+		Contract: "open-trestle/local-git-review-result", SchemaVersion: 2, Status: localGitReviewStatusFindings,
 		ReviewExecutionIdentity: "review-execution", ReviewPresent: true, ReviewResultIdentity: "review-result", RuleVersion: "1",
 		Limits: localGitReviewLimitsResult{MaxFiles: 64, MaxBytesPerFile: 1048576, MaxTotalBytes: 67108864, MaxFindings: 1024},
 		Change: localGitChangeResult{
-			Contract: "open-trestle/local-git-change-result", SchemaVersion: 1, Status: localGitChangeStatusComplete,
+			Contract: "open-trestle/local-git-change-result", SchemaVersion: 2, Status: localGitChangeStatusComplete,
 			ChangeExecutionIdentity: "change-execution", AcquisitionPairIdentity: "pair", RepositoryIdentity: "repository",
 			SourceAdapterIdentity: "adapter", BaseRevisionIdentity: "base", HeadRevisionIdentity: "head",
 			BaseEnvelopeIdentity: "base-envelope", HeadEnvelopeIdentity: "head-envelope", ManifestDeltaIdentity: "delta",
@@ -72,7 +72,7 @@ func TestLocalGitReviewResultJSONSchema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const want = `{"contract":"open-trestle/local-git-review-result","schema_version":1,"status":"findings","review_execution_identity":"review-execution","review_present":true,"review_result_identity":"review-result","rule_version":"1","limits":{"max_files":64,"max_bytes_per_file":1048576,"max_total_bytes":67108864,"max_findings":1024},"change":{"contract":"open-trestle/local-git-change-result","schema_version":1,"status":"complete","change_execution_identity":"change-execution","acquisition_pair_identity":"pair","repository_identity":"repository","source_adapter_identity":"adapter","base_revision_identity":"base","head_revision_identity":"head","base_envelope_identity":"base-envelope","head_envelope_identity":"head-envelope","manifest_delta_identity":"delta","change_present":true,"change_identity":"change","changed_file_count":1,"supported_file_count":1,"unsupported_file_count":0,"entries":[]},"files":[{"path":"file.go","outcome":"analyzed","reason":"none","head_digest":"head-digest","match_count":1}],"findings":[{"id":"finding","title":"title","severity":"medium","path":"file.go","start_line":2,"end_line":2,"evidence_ids":["evidence"]}],"evidence":[{"id":"evidence","kind":"source","digest":"evidence-digest","path":"file.go","start_line":2,"end_line":2}]}`
+	const want = `{"contract":"open-trestle/local-git-review-result","schema_version":2,"status":"findings","review_execution_identity":"review-execution","review_present":true,"review_result_identity":"review-result","rule_version":"1","limits":{"max_files":64,"max_bytes_per_file":1048576,"max_total_bytes":67108864,"max_findings":1024},"change":{"contract":"open-trestle/local-git-change-result","schema_version":2,"status":"complete","change_execution_identity":"change-execution","acquisition_pair_identity":"pair","repository_identity":"repository","source_adapter_identity":"adapter","base_revision_identity":"base","head_revision_identity":"head","base_envelope_identity":"base-envelope","head_envelope_identity":"head-envelope","manifest_delta_identity":"delta","change_present":true,"change_identity":"change","changed_file_count":1,"supported_file_count":1,"unsupported_file_count":0,"entries":[]},"files":[{"path":"file.go","outcome":"analyzed","reason":"none","head_digest":"head-digest","match_count":1}],"findings":[{"id":"finding","title":"title","severity":"medium","path":"file.go","start_line":2,"end_line":2,"evidence_ids":["evidence"]}],"evidence":[{"id":"evidence","kind":"source","digest":"evidence-digest","path":"file.go","start_line":2,"end_line":2}]}`
 	if string(encoded) != want {
 		t.Fatalf("JSON = %s, want %s", encoded, want)
 	}

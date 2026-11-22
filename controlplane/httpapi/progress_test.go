@@ -202,7 +202,7 @@ func TestProgressCanonicalEvidenceCounts(t *testing.T) {
 	for _, tc := range []struct {
 		scenario     string
 		observations int
-	}{{"produced-v4-failed-one-observation", 1}, {"synthetic-v4-zero-match", 0}, {"produced-v4-removed-file-gap", 0}} {
+	}{{"produced-v4-failed-one-observation", 1}, {"synthetic-v4-zero-match", 0}, {"synthetic-v4-removed-file-gap", 0}} {
 		t.Run(tc.scenario, func(t *testing.T) {
 			server, plan, reader := progressFixture(t, tc.scenario, "analysis")
 			before, _ := server.coordinator.Receipt(context.Background(), plan.Scope())
@@ -303,7 +303,7 @@ func TestProgressOptionRejectsNil(t *testing.T) {
 }
 
 func BenchmarkRunProgressCanonicalEvidence(b *testing.B) {
-	for _, scenario := range []string{"produced-v4-failed-one-observation", "synthetic-v4-zero-match", "produced-v4-removed-file-gap"} {
+	for _, scenario := range []string{"produced-v4-failed-one-observation", "synthetic-v4-zero-match", "synthetic-v4-removed-file-gap"} {
 		b.Run(scenario, func(b *testing.B) {
 			server, plan, reader := progressFixture(b, scenario, "analysis")
 			receipt, err := server.coordinator.Receipt(context.Background(), plan.Scope())
@@ -365,21 +365,6 @@ func TestProgressLoadBound(t *testing.T) {
 	}
 	if reader.reads != maxProgressArtifacts {
 		t.Fatalf("loads=%d", reader.reads)
-	}
-}
-
-func TestProgressLegacyMissingObservationFieldIsUnknown(t *testing.T) {
-	for _, scenario := range []string{"synthetic-v2-no-checks-observations", "synthetic-v3-check-no-observations"} {
-		t.Run(scenario, func(t *testing.T) {
-			server, _, _ := progressFixture(t, scenario, "analysis")
-			p, response := progressResponse(t, server)
-			if response.Code != 200 || p.Deterministic.State != "available" || p.Deterministic.Observations != nil {
-				t.Fatalf("body=%s", response.Body.String())
-			}
-			if scenario == "synthetic-v2-no-checks-observations" && p.Deterministic.CheckedRanges != nil {
-				t.Fatal("legacy check count fabricated")
-			}
-		})
 	}
 }
 

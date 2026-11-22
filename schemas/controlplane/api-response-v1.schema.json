@@ -67,18 +67,6 @@
     "diagnostics": {
       "oneOf": [
         {
-          "$ref": "urn:open-trestle:schema:diagnostics:set:v1"
-        },
-        {
-          "$ref": "urn:open-trestle:schema:diagnostics:set:v2"
-        },
-        {
-          "$ref": "urn:open-trestle:schema:diagnostics:set:v3"
-        },
-        {
-          "$ref": "urn:open-trestle:schema:diagnostics:set:v4"
-        },
-        {
           "$ref": "urn:open-trestle:schema:diagnostics:set:v5"
         },
         {

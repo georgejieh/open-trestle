@@ -2,7 +2,7 @@
 
 `trestle tui` is a terminal screen for watching one review run through the
 authenticated daemon API. It is for operators who run the daemon and want to see
-a run's progress, its task state and its review diagnostics. It shows the run receipt, task state, and review diagnostics. Diagnostic versions 1 through 5 and 8 contain verified findings, version 6 contains unverified deterministic observations, and version 7 is the final full-review result. The interface does not schedule work, read repository files, execute commands, claim work leases, change policy, invoke models, or publish results.
+a run's progress, its task state and its review diagnostics. It shows the run receipt, task state, and review diagnostics. Diagnostic versions 5 and 8 contain verified findings, version 6 contains unverified deterministic observations, and version 7 is the final full-review result. The interface does not schedule work, read repository files, execute commands, claim work leases, change policy, invoke models, or publish results.
 
 ## Start
 

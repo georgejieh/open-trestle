@@ -10,45 +10,45 @@ import (
 	"github.com/georgejieh/open-trestle/audit"
 )
 
-func TestParseSetRetainsHistoricalMixedTiedFindingOrderAcrossVersions(t *testing.T) {
-	versions := []int{1, 2, 3, 4, 5, 7}
+func TestParseSetRetainsMixedTiedFindingOrderAcrossVersions(t *testing.T) {
+	versions := []int{5, 7}
 	wantTiedTitles := []string{"tied finding 5", "tied finding 1", "tied finding 2", "tied finding 3", "tied finding 0", "tied finding 4"}
 	identities := make(map[string]bool, len(versions))
 	for _, version := range versions {
-		payload, err := os.ReadFile(fmt.Sprintf("testdata/historical-tied-findings-v%d.json", version))
+		payload, err := os.ReadFile(fmt.Sprintf("testdata/tied-findings-v%d.json", version))
 		if err != nil {
 			t.Fatal(err)
 		}
 		set, err := ParseSet(payload)
 		if err != nil {
-			t.Fatalf("historical V%d tied order was rejected: %v", version, err)
+			t.Fatalf("V%d tied order was rejected: %v", version, err)
 		}
 		if set.SchemaVersion() != version || set.Validate() != nil {
-			t.Fatalf("historical V%d set=%#v", version, set)
+			t.Fatalf("V%d set=%#v", version, set)
 		}
 		if version == 7 && (set.VerifiedSetIdentity() == "" || len(set.DeterministicChecks()) != 1) {
-			t.Fatalf("historical V7 lost embedded V5 lineage: %#v", set)
+			t.Fatalf("V7 lost embedded V5 lineage: %#v", set)
 		}
 		if roundTrip, err := EncodeSet(set); err != nil || !bytes.Equal(roundTrip, payload) {
-			t.Fatalf("historical V%d changed on readback: %v", version, err)
+			t.Fatalf("V%d changed on readback: %v", version, err)
 		}
 		if got := tiedFindingTitles(set.Findings()); !sameStrings(got, wantTiedTitles) {
-			t.Fatalf("historical V%d tied titles=%v want=%v", version, got, wantTiedTitles)
+			t.Fatalf("V%d tied titles=%v want=%v", version, got, wantTiedTitles)
 		}
 		identities[set.Identity()] = true
 	}
 	if len(identities) != len(versions) {
-		t.Fatalf("historical identities were collapsed: %d", len(identities))
+		t.Fatalf("identities were collapsed: %d", len(identities))
 	}
 }
 
 func TestNewSetPreservesRelativeOrderForMixedTiedFindings(t *testing.T) {
-	findings, wantTiedTitles := historicalMixedTiedFindings(t)
-	scope, err := audit.NewReviewScope("tenant-a", "repo-a", "historical-mixed-ties")
+	findings, wantTiedTitles := mixedTiedFindings(t)
+	scope, err := audit.NewReviewScope("tenant-a", "repo-a", "mixed-ties")
 	if err != nil {
 		t.Fatal(err)
 	}
-	set, err := NewSet(scope, strings.Repeat("d", 64), strings.Repeat("1", 40), strings.Repeat("e", 64), findings)
+	set, err := verifiedTestSet(t, scope, findings)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestNewSetPreservesRelativeOrderForMixedTiedFindings(t *testing.T) {
 	}
 }
 
-func historicalMixedTiedFindings(t *testing.T) ([]Finding, []string) {
+func mixedTiedFindings(t *testing.T) ([]Finding, []string) {
 	t.Helper()
 	layout := []struct {
 		rank, tieID int

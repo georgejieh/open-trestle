@@ -127,13 +127,9 @@ func verifyOldCodeGolden(t *testing.T, frozen analysisGolden) (artifact.Artifact
 		if parsed.SchemaVersion() != 4 || len(checks) != 1 || len(observations) != 1 || parsed.Checks()[0].State() != CheckFailed {
 			t.Fatal("produced v4 shape changed")
 		}
-	case "produced-v4-removed-file-gap":
+	case "synthetic-v4-removed-file-gap":
 		if parsed.SchemaVersion() != 4 || len(checks) != 1 || len(observations) != 0 || len(parsed.Gaps()) != 1 || len(parsed.Items()) != 0 || parsed.Checks()[0].State() != CheckNotApplicable {
 			t.Fatal("removed-file v4 shape changed")
-		}
-	case "produced-v4-go-affected-test":
-		if parsed.SchemaVersion() != 4 || len(checks) != 1 || len(observations) != 0 || len(parsed.Items()) != 1 || len(parsed.Gaps()) != 0 || parsed.SemanticImpact().GraphSchema() != "open-trestle/semantic-impact/go-ast-graph/v1" || parsed.Checks()[0].State() != CheckPassed {
-			t.Fatal("Go affected-test v4 shape changed")
 		}
 	case "produced-v4-go-modified-function":
 		if parsed.SchemaVersion() != 4 || len(checks) != 1 || len(observations) != 0 || len(parsed.Items()) != 1 || len(parsed.Gaps()) != 0 || parsed.SemanticImpact().GraphSchema() != "open-trestle/semantic-impact/go-ast-graph/v2" || len(parsed.SemanticImpact().Declarations()) != 1 || parsed.Checks()[0].State() != CheckPassed {
@@ -143,21 +139,13 @@ func verifyOldCodeGolden(t *testing.T, frozen analysisGolden) (artifact.Artifact
 		if parsed.SchemaVersion() != 4 || len(checks) != 1 || len(observations) != 0 || !bytes.Contains(evidence.Payload(), []byte(`"observations":[]`)) {
 			t.Fatal("zero-match v4 shape changed")
 		}
-	case "synthetic-v3-check-no-observations":
-		if parsed.SchemaVersion() != 3 || len(checks) != 1 || len(observations) != 0 || bytes.Contains(evidence.Payload(), []byte(`"observations"`)) {
-			t.Fatal("legacy v3 shape changed")
-		}
-	case "synthetic-v2-no-checks-observations":
-		if parsed.SchemaVersion() != 2 || len(checks) != 0 || len(observations) != 0 || bytes.Contains(evidence.Payload(), []byte(`"checks"`)) || bytes.Contains(evidence.Payload(), []byte(`"observations"`)) || parsed.Identity() != "9b51d2bfc59feabac5deb4f8b49f40ae89a7cc6b969fe07542b4a8a6b19b88a1" {
-			t.Fatal("legacy v2 shape or retained identity changed")
-		}
 	default:
 		t.Fatalf("unknown golden scenario %s", frozen.Scenario)
 	}
 	return base, head, change, evidence
 }
 func TestOldCodeAnalysisGoldenFixtures(t *testing.T) {
-	for _, name := range []string{"produced-v4-failed-one-observation", "produced-v4-removed-file-gap", "produced-v4-go-affected-test", "produced-v4-go-modified-function", "synthetic-v4-zero-match", "synthetic-v3-check-no-observations", "synthetic-v2-no-checks-observations"} {
+	for _, name := range []string{"produced-v4-failed-one-observation", "synthetic-v4-removed-file-gap", "produced-v4-go-modified-function", "synthetic-v4-zero-match"} {
 		t.Run(name, func(t *testing.T) { verifyOldCodeGolden(t, readOldCodeGolden(t, name)) })
 	}
 }

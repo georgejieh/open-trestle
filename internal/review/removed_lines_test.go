@@ -135,21 +135,15 @@ func TestRemovedLinesReachTheGenerationRequestAsBaseEvidence(t *testing.T) {
 	if _, err := parseSanitizableRequest(request, packet.ReviewScopeIdentity()); err != nil {
 		t.Fatalf("removed_lines context is not sanitizable: %v", err)
 	}
-	if system, err := TrustedModelRequestInstructions(payload); err != nil || system != candidateOutputInstructionsV11 || !strings.Contains(system, removedLinesGenerationSentence) {
+	if system, err := TrustedModelRequestInstructions(payload); err != nil || system != candidateOutputInstructions || !strings.Contains(system, removedLinesGenerationSentence) {
 		t.Fatal("generation system channel does not explain removed_lines")
-	}
-	// A recorded version 7 context never carried removed_lines.
-	wire, _ := decodeGenerationContextWire(payload)
-	recorded, _ := json.Marshal(legacyGenerationWire(t, wire, modelGenerationContextVersionV7))
-	if ValidateRecordedContextPacketRequest(recorded, modelContractDigest(recorded), packet.ReviewScopeIdentity(), packet.MemoryScopeIdentity(), packet.MemoryIdentity(), snapshot, packet.EvidenceItems()) == nil {
-		t.Fatal("removed_lines source accepted in a recorded version 7 context")
 	}
 	// Removed text is repository-controlled; it cannot claim another taint.
 	if _, err := NewContextSource(ContextStageRemovedLines, memory.TaintTrusted, removed.EvidenceItem(), removed.Content()); !errors.Is(err, ErrInvalidContextSource) {
 		t.Fatalf("trusted removed_lines source accepted: %v", err)
 	}
 	forged := bytes.Replace(payload, []byte(`"stage":"removed_lines","taint":"repository_controlled"`), []byte(`"stage":"removed_lines","taint":"trusted"`), 1)
-	if bytes.Equal(forged, payload) || ValidateRecordedContextPacketRequest(forged, modelContractDigest(forged), packet.ReviewScopeIdentity(), packet.MemoryScopeIdentity(), packet.MemoryIdentity(), snapshot, packet.EvidenceItems()) == nil {
+	if bytes.Equal(forged, payload) || ValidateContextPacketRequest(forged, modelContractDigest(forged), packet.ReviewScopeIdentity(), packet.MemoryScopeIdentity(), packet.MemoryIdentity(), snapshot, packet.EvidenceItems()) == nil {
 		t.Fatal("removed_lines source with another taint accepted on readback")
 	}
 }
@@ -214,7 +208,7 @@ func TestVerifierReceivesRemovedLinesAtADeletionPoint(t *testing.T) {
 		t.Fatal("verifier request for a removed_lines context is not version 9")
 	}
 	requireRemovedLinesSource(t, "verification", verifier, removed, []string{})
-	if system, err := TrustedModelRequestInstructions(verifier); err != nil || system != verificationOutputInstructionsV10 || !strings.Contains(system, removedLinesVerificationSentence) {
+	if system, err := TrustedModelRequestInstructions(verifier); err != nil || system != verificationOutputInstructions || !strings.Contains(system, removedLinesVerificationSentence) {
 		t.Fatal("verifier system channel does not explain removed_lines")
 	}
 	var wire verificationContextWire
@@ -222,11 +216,7 @@ func TestVerifierReceivesRemovedLinesAtADeletionPoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !verificationSourcesMatch(wire, packet.EvidenceItems(), snapshot) {
-		t.Fatal("version 7 verifier sources rejected")
-	}
-	wire.SchemaVersion = modelVerificationContextVersionV6
-	if verificationSourcesMatch(wire, packet.EvidenceItems(), snapshot) {
-		t.Fatal("removed_lines source accepted in a version 6 verifier request")
+		t.Fatal("verifier sources rejected")
 	}
 }
 
@@ -273,7 +263,7 @@ func TestInvestigationRequestCarriesRemovedLines(t *testing.T) {
 	if !ok || source.Stage != "removed_lines" || source.Path != "a.go" || source.StartLine != 1 || source.EndLine != 1 || len(source.RiskFlags) != 0 || string(modelContractFields(t, payload)["schema_version"]) != "6" {
 		t.Fatalf("investigation removed_lines source=%+v", source)
 	}
-	if system, err := TrustedModelRequestInstructions(payload); err != nil || system != investigationInstructionsV6 {
+	if system, err := TrustedModelRequestInstructions(payload); err != nil || system != investigationContract {
 		t.Fatal("investigation system channel is not the version 6 contract")
 	}
 	if len(f.initialSnapshot.Ranges()) != 1 {

@@ -31,7 +31,7 @@ A prompt returns the current run receipt, which contains no secrets, and the can
 
 The label on the diagnostics depends on the diagnostic-set version:
 
-- Versions 1 through 5 and 8 are labeled `Verified diagnostics`. For version 8 the message also says how many findings are on removed base lines, whose lines are base-revision lines, not head lines.
+- Versions 5 and 8 are labeled `Verified diagnostics`. For version 8 the message also says how many findings are on removed base lines, whose lines are base-revision lines, not head lines.
 - Version 6 is labeled `Deterministic review observations`. It is not described as verified.
 - Version 7 is labeled `Final review diagnostics` and states the terminal outcome. A failed result that records a context route refusal adds a `Context refusal` line. For `route_context_insufficient` it also adds a `Hint` line, with the same text as the local review.
 - A result recorded after its evidence expired adds an `Evidence expired` line.

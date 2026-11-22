@@ -293,36 +293,48 @@ type Set struct {
 	evidenceExpired bool
 }
 
-// NewSet constructs the version 1 diagnostic contract for compatibility.
-func NewSet(scope audit.ReviewScope, snapshotIdentity, headRevision, verifiedSetIdentity string, findings []Finding) (Set, error) {
-	return newSet(scope, snapshotIdentity, headRevision, verifiedSetIdentity, 1, uint16(len(findings)), 0, 0, "", 0, 0, 0, nil, nil, findings)
-}
-
-// NewSetWithCoverage constructs the version 2 diagnostic contract with exact verification accounting.
-func NewSetWithCoverage(scope audit.ReviewScope, snapshotIdentity, headRevision, verifiedSetIdentity string, candidateCount, rejectedCount, inconclusiveCount uint16, findings []Finding) (Set, error) {
-	return newSet(scope, snapshotIdentity, headRevision, verifiedSetIdentity, 2, candidateCount, rejectedCount, inconclusiveCount, "", 0, 0, 0, nil, nil, findings)
-}
-
-// NewSetWithSourceCoverage constructs the version 3 diagnostic contract with verification and source-selection accounting.
-func NewSetWithSourceCoverage(scope audit.ReviewScope, snapshotIdentity, headRevision, verifiedSetIdentity, sourceContextIdentity string, candidateCount, rejectedCount, inconclusiveCount uint16, sourceAnalyzedCount, sourceSelectedCount, sourceOmittedCount uint32, findings []Finding) (Set, error) {
-	return newSet(scope, snapshotIdentity, headRevision, verifiedSetIdentity, 3, candidateCount, rejectedCount, inconclusiveCount, sourceContextIdentity, sourceAnalyzedCount, sourceSelectedCount, sourceOmittedCount, nil, nil, findings)
-}
-
-// NewSetWithOmissionReasons constructs version 4 with exact aggregate omission accounting.
-func NewSetWithOmissionReasons(scope audit.ReviewScope, snapshotIdentity, headRevision, verifiedSetIdentity, sourceContextIdentity string, candidateCount, rejectedCount, inconclusiveCount uint16, sourceAnalyzedCount, sourceSelectedCount, sourceOmittedCount uint32, omissionSummaries []OmissionSummary, findings []Finding) (Set, error) {
-	return newSet(scope, snapshotIdentity, headRevision, verifiedSetIdentity, 4, candidateCount, rejectedCount, inconclusiveCount, sourceContextIdentity, sourceAnalyzedCount, sourceSelectedCount, sourceOmittedCount, omissionSummaries, nil, findings)
-}
-
 // NewSetWithDeterministicChecks constructs version 5 with one exact
 // content-free check, or version 8 exactly when at least one finding is on
 // base lines. Version 8 is version 5 plus a recorded side on such findings, so
 // a set of head findings keeps its version 5 bytes and identity.
 func NewSetWithDeterministicChecks(scope audit.ReviewScope, snapshotIdentity, headRevision, verifiedSetIdentity, sourceContextIdentity string, candidateCount, rejectedCount, inconclusiveCount uint16, sourceAnalyzedCount, sourceSelectedCount, sourceOmittedCount uint32, omissionSummaries []OmissionSummary, deterministicChecks []DeterministicCheck, findings []Finding) (Set, error) {
-	version := 5
+	schemaVersion := 5
 	if hasBaseFinding(findings) {
-		version = 8
+		schemaVersion = 8
 	}
-	return newSet(scope, snapshotIdentity, headRevision, verifiedSetIdentity, version, candidateCount, rejectedCount, inconclusiveCount, sourceContextIdentity, sourceAnalyzedCount, sourceSelectedCount, sourceOmittedCount, omissionSummaries, deterministicChecks, findings)
+	verifiedCount := uint16(len(findings))
+	totalCount := uint32(verifiedCount) + uint32(rejectedCount) + uint32(inconclusiveCount)
+	validCandidateCoverage := candidateCount <= maxDiagnostics && totalCount == uint32(candidateCount)
+	validSourceCoverage := sourceAnalyzedCount > 0 && sourceAnalyzedCount <= maxDiagnosticSourceCount && sourceSelectedCount > 0 && sourceSelectedCount <= maxDiagnosticSelectedCount && sourceOmittedCount <= maxDiagnosticSourceCount && uint64(sourceSelectedCount)+uint64(sourceOmittedCount) == uint64(sourceAnalyzedCount)
+	canonicalOmissions := append([]OmissionSummary(nil), omissionSummaries...)
+	sort.Slice(canonicalOmissions, func(i, j int) bool {
+		return canonicalOmissions[i].Reason().String() < canonicalOmissions[j].Reason().String()
+	})
+	omissionTotal := uint64(0)
+	validOmissions := len(canonicalOmissions) <= 6
+	for index, summary := range canonicalOmissions {
+		if summary.Validate() != nil || index > 0 && canonicalOmissions[index-1].Reason() == summary.Reason() {
+			validOmissions = false
+		}
+		omissionTotal += uint64(summary.Count())
+	}
+	validOmissions = validOmissions && omissionTotal == uint64(sourceOmittedCount) && (sourceOmittedCount == 0) == (len(canonicalOmissions) == 0)
+	canonicalChecks := append([]DeterministicCheck(nil), deterministicChecks...)
+	validChecks := len(canonicalChecks) == 1 && canonicalChecks[0].Validate() == nil
+	validCoverage := validCandidateCoverage && validDigest(sourceContextIdentity) && validSourceCoverage && validOmissions && validChecks
+	if scope.Validate() != nil || !validDigest(snapshotIdentity) || !validRevision(headRevision) || !validDigest(verifiedSetIdentity) || len(findings) > maxDiagnostics || !validCoverage {
+		return Set{}, ErrInvalidSet
+	}
+	canonical := append([]Finding(nil), findings...)
+	sort.SliceStable(canonical, func(i, j int) bool { return findingLess(canonical[i], canonical[j]) })
+	for index, finding := range canonical {
+		if finding.Validate() != nil || index > 0 && canonical[index-1].Identity() == finding.Identity() {
+			return Set{}, ErrInvalidSet
+		}
+	}
+	set := Set{scope: scope, snapshotIdentity: snapshotIdentity, headRevision: headRevision, verifiedSetIdentity: verifiedSetIdentity, findings: canonical, schemaVersion: schemaVersion, candidateCount: candidateCount, rejectedCount: rejectedCount, inconclusiveCount: inconclusiveCount, sourceAnalyzedCount: sourceAnalyzedCount, sourceSelectedCount: sourceSelectedCount, sourceContextIdentity: sourceContextIdentity, sourceOmittedCount: sourceOmittedCount, omissionSummaries: canonicalOmissions, deterministicChecks: canonicalChecks}
+	set.identity = deriveSetIdentity(set)
+	return set, nil
 }
 
 // verifiedVersion reports a verified set version that carries one
@@ -363,49 +375,6 @@ func NewSetWithDeterministicObservations(scope audit.ReviewScope, snapshotIdenti
 	return set, nil
 }
 
-func newSet(scope audit.ReviewScope, snapshotIdentity, headRevision, verifiedSetIdentity string, schemaVersion int, candidateCount, rejectedCount, inconclusiveCount uint16, sourceContextIdentity string, sourceAnalyzedCount, sourceSelectedCount, sourceOmittedCount uint32, omissionSummaries []OmissionSummary, deterministicChecks []DeterministicCheck, findings []Finding) (Set, error) {
-	verifiedCount := uint16(len(findings))
-	totalCount := uint32(verifiedCount) + uint32(rejectedCount) + uint32(inconclusiveCount)
-	validCandidateCoverage := candidateCount <= maxDiagnostics && totalCount == uint32(candidateCount)
-	validSourceCoverage := sourceAnalyzedCount > 0 && sourceAnalyzedCount <= maxDiagnosticSourceCount && sourceSelectedCount > 0 && sourceSelectedCount <= maxDiagnosticSelectedCount && sourceOmittedCount <= maxDiagnosticSourceCount && uint64(sourceSelectedCount)+uint64(sourceOmittedCount) == uint64(sourceAnalyzedCount)
-	canonicalOmissions := append([]OmissionSummary(nil), omissionSummaries...)
-	sort.Slice(canonicalOmissions, func(i, j int) bool {
-		return canonicalOmissions[i].Reason().String() < canonicalOmissions[j].Reason().String()
-	})
-	omissionTotal := uint64(0)
-	validOmissions := len(canonicalOmissions) <= 6
-	for index, summary := range canonicalOmissions {
-		if summary.Validate() != nil || index > 0 && canonicalOmissions[index-1].Reason() == summary.Reason() {
-			validOmissions = false
-		}
-		omissionTotal += uint64(summary.Count())
-	}
-	validOmissions = validOmissions && omissionTotal == uint64(sourceOmittedCount) && (sourceOmittedCount == 0) == (len(canonicalOmissions) == 0)
-	canonicalChecks := append([]DeterministicCheck(nil), deterministicChecks...)
-	validChecks := len(canonicalChecks) == 1 && canonicalChecks[0].Validate() == nil
-	validCoverage := schemaVersion == 1 && candidateCount == verifiedCount && rejectedCount == 0 && inconclusiveCount == 0 && sourceContextIdentity == "" && sourceAnalyzedCount == 0 && sourceSelectedCount == 0 && sourceOmittedCount == 0 && len(canonicalOmissions) == 0 && len(canonicalChecks) == 0 ||
-		schemaVersion == 2 && validCandidateCoverage && sourceContextIdentity == "" && sourceAnalyzedCount == 0 && sourceSelectedCount == 0 && sourceOmittedCount == 0 && len(canonicalOmissions) == 0 && len(canonicalChecks) == 0 ||
-		schemaVersion == 3 && validCandidateCoverage && validDigest(sourceContextIdentity) && validSourceCoverage && len(canonicalOmissions) == 0 && len(canonicalChecks) == 0 ||
-		schemaVersion == 4 && validCandidateCoverage && validDigest(sourceContextIdentity) && validSourceCoverage && validOmissions && len(canonicalChecks) == 0 ||
-		verifiedVersion(schemaVersion) && validCandidateCoverage && validDigest(sourceContextIdentity) && validSourceCoverage && validOmissions && validChecks
-	// Only version 8 records a side, and it is used exactly when one is base.
-	if hasBaseFinding(findings) != (schemaVersion == 8) {
-		return Set{}, ErrInvalidSet
-	}
-	if scope.Validate() != nil || !validDigest(snapshotIdentity) || !validRevision(headRevision) || !validDigest(verifiedSetIdentity) || len(findings) > maxDiagnostics || !validCoverage {
-		return Set{}, ErrInvalidSet
-	}
-	canonical := append([]Finding(nil), findings...)
-	sort.SliceStable(canonical, func(i, j int) bool { return findingLess(canonical[i], canonical[j]) })
-	for index, finding := range canonical {
-		if finding.Validate() != nil || index > 0 && canonical[index-1].Identity() == finding.Identity() {
-			return Set{}, ErrInvalidSet
-		}
-	}
-	set := Set{scope: scope, snapshotIdentity: snapshotIdentity, headRevision: headRevision, verifiedSetIdentity: verifiedSetIdentity, findings: canonical, schemaVersion: schemaVersion, candidateCount: candidateCount, rejectedCount: rejectedCount, inconclusiveCount: inconclusiveCount, sourceAnalyzedCount: sourceAnalyzedCount, sourceSelectedCount: sourceSelectedCount, sourceContextIdentity: sourceContextIdentity, sourceOmittedCount: sourceOmittedCount, omissionSummaries: canonicalOmissions, deterministicChecks: canonicalChecks}
-	set.identity = deriveSetIdentity(set)
-	return set, nil
-}
 func (s Set) Identity() string         { return s.identity }
 func (s Set) Scope() audit.ReviewScope { return s.scope }
 func (s Set) SnapshotIdentity() string { return s.snapshotIdentity }
@@ -438,15 +407,7 @@ func (s Set) DeterministicObservations() []DeterministicObservation {
 func (s Set) Validate() error {
 	var rebuilt Set
 	var err error
-	if s.schemaVersion == 1 {
-		rebuilt, err = NewSet(s.scope, s.snapshotIdentity, s.headRevision, s.verifiedSetIdentity, s.findings)
-	} else if s.schemaVersion == 2 {
-		rebuilt, err = NewSetWithCoverage(s.scope, s.snapshotIdentity, s.headRevision, s.verifiedSetIdentity, s.candidateCount, s.rejectedCount, s.inconclusiveCount, s.findings)
-	} else if s.schemaVersion == 3 {
-		rebuilt, err = NewSetWithSourceCoverage(s.scope, s.snapshotIdentity, s.headRevision, s.verifiedSetIdentity, s.sourceContextIdentity, s.candidateCount, s.rejectedCount, s.inconclusiveCount, s.sourceAnalyzedCount, s.sourceSelectedCount, s.sourceOmittedCount, s.findings)
-	} else if s.schemaVersion == 4 {
-		rebuilt, err = NewSetWithOmissionReasons(s.scope, s.snapshotIdentity, s.headRevision, s.verifiedSetIdentity, s.sourceContextIdentity, s.candidateCount, s.rejectedCount, s.inconclusiveCount, s.sourceAnalyzedCount, s.sourceSelectedCount, s.sourceOmittedCount, s.omissionSummaries, s.findings)
-	} else if verifiedVersion(s.schemaVersion) {
+	if verifiedVersion(s.schemaVersion) {
 		rebuilt, err = NewSetWithDeterministicChecks(s.scope, s.snapshotIdentity, s.headRevision, s.verifiedSetIdentity, s.sourceContextIdentity, s.candidateCount, s.rejectedCount, s.inconclusiveCount, s.sourceAnalyzedCount, s.sourceSelectedCount, s.sourceOmittedCount, s.omissionSummaries, s.deterministicChecks, s.findings)
 	} else if s.schemaVersion == 6 {
 		rebuilt, err = NewSetWithDeterministicObservations(s.scope, s.snapshotIdentity, s.headRevision, s.analysisResultIdentity, s.deterministicChecks, s.deterministicObservations)
@@ -518,81 +479,22 @@ type findingRecord struct {
 	HeadLine    uint32   `json:"head_line,omitempty"`
 	EvidenceIDs []string `json:"evidence_ids"`
 }
-type setRecord struct {
-	Contract            string          `json:"contract"`
-	SchemaVersion       int             `json:"schema_version"`
-	Identity            string          `json:"identity"`
-	TenantID            string          `json:"tenant_id"`
-	RepositoryID        string          `json:"repository_id"`
-	ReviewRunID         string          `json:"review_run_id"`
-	SnapshotIdentity    string          `json:"snapshot_identity"`
-	HeadRevision        string          `json:"head_revision"`
-	VerifiedSetIdentity string          `json:"verified_set_identity"`
-	Findings            []findingRecord `json:"findings"`
-}
 type coverageRecord struct {
 	CandidateCount    uint16 `json:"candidate_count"`
 	VerifiedCount     uint16 `json:"verified_count"`
 	RejectedCount     uint16 `json:"rejected_count"`
 	InconclusiveCount uint16 `json:"inconclusive_count"`
 }
-type setRecordV2 struct {
-	Contract            string          `json:"contract"`
-	SchemaVersion       int             `json:"schema_version"`
-	Identity            string          `json:"identity"`
-	TenantID            string          `json:"tenant_id"`
-	RepositoryID        string          `json:"repository_id"`
-	ReviewRunID         string          `json:"review_run_id"`
-	SnapshotIdentity    string          `json:"snapshot_identity"`
-	HeadRevision        string          `json:"head_revision"`
-	VerifiedSetIdentity string          `json:"verified_set_identity"`
-	Coverage            coverageRecord  `json:"coverage"`
-	Findings            []findingRecord `json:"findings"`
-}
-type sourceCoverageRecord struct {
-	VerificationContextIdentity string `json:"verification_context_identity"`
-	AnalyzedCount               uint32 `json:"analyzed_count"`
-	SelectedCount               uint32 `json:"selected_count"`
-	OmittedCount                uint32 `json:"omitted_count"`
-}
-type setRecordV3 struct {
-	Contract            string               `json:"contract"`
-	SchemaVersion       int                  `json:"schema_version"`
-	Identity            string               `json:"identity"`
-	TenantID            string               `json:"tenant_id"`
-	RepositoryID        string               `json:"repository_id"`
-	ReviewRunID         string               `json:"review_run_id"`
-	SnapshotIdentity    string               `json:"snapshot_identity"`
-	HeadRevision        string               `json:"head_revision"`
-	VerifiedSetIdentity string               `json:"verified_set_identity"`
-	Coverage            coverageRecord       `json:"coverage"`
-	SourceCoverage      sourceCoverageRecord `json:"source_coverage"`
-	Findings            []findingRecord      `json:"findings"`
-}
 type omissionSummaryRecord struct {
 	Reason string `json:"reason"`
 	Count  uint32 `json:"count"`
 }
-type sourceCoverageRecordV4 struct {
+type sourceCoverageRecord struct {
 	VerificationContextIdentity string                  `json:"verification_context_identity"`
 	AnalyzedCount               uint32                  `json:"analyzed_count"`
 	SelectedCount               uint32                  `json:"selected_count"`
 	OmittedCount                uint32                  `json:"omitted_count"`
 	Omissions                   []omissionSummaryRecord `json:"omissions"`
-}
-type setRecordV4 struct {
-	Contract            string                 `json:"contract"`
-	SchemaVersion       int                    `json:"schema_version"`
-	Identity            string                 `json:"identity"`
-	TenantID            string                 `json:"tenant_id"`
-	RepositoryID        string                 `json:"repository_id"`
-	ReviewRunID         string                 `json:"review_run_id"`
-	SnapshotIdentity    string                 `json:"snapshot_identity"`
-	HeadRevision        string                 `json:"head_revision"`
-	VerifiedSetIdentity string                 `json:"verified_set_identity"`
-	Coverage            coverageRecord         `json:"coverage"`
-	SourceCoverage      sourceCoverageRecordV4 `json:"source_coverage"`
-	Findings            []findingRecord        `json:"findings"`
 }
 type deterministicCheckRecord struct {
 	Identity               string `json:"identity"`
@@ -619,7 +521,7 @@ type setRecordV5 struct {
 	HeadRevision        string                     `json:"head_revision"`
 	VerifiedSetIdentity string                     `json:"verified_set_identity"`
 	Coverage            coverageRecord             `json:"coverage"`
-	SourceCoverage      sourceCoverageRecordV4     `json:"source_coverage"`
+	SourceCoverage      sourceCoverageRecord       `json:"source_coverage"`
 	Checks              []deterministicCheckRecord `json:"checks"`
 	Findings            []findingRecord            `json:"findings"`
 }
@@ -659,14 +561,6 @@ func EncodeSet(set Set) ([]byte, error) {
 	var encoded []byte
 	var err error
 	switch set.schemaVersion {
-	case 1:
-		encoded, err = json.Marshal(setToRecord(set))
-	case 2:
-		encoded, err = json.Marshal(setToRecordV2(set))
-	case 3:
-		encoded, err = json.Marshal(setToRecordV3(set))
-	case 4:
-		encoded, err = json.Marshal(setToRecordV4(set))
 	case 5, 8:
 		encoded, err = json.Marshal(setToRecordV5(set))
 	case 6:
@@ -693,14 +587,6 @@ func ParseSet(encoded []byte) (Set, error) {
 		return Set{}, ErrInvalidSetEncoding
 	}
 	switch header.SchemaVersion {
-	case 1:
-		return parseSetV1(encoded)
-	case 2:
-		return parseSetV2(encoded)
-	case 3:
-		return parseSetV3(encoded)
-	case 4:
-		return parseSetV4(encoded)
 	case 5, 8:
 		return parseSetV5(encoded)
 	case 6:
@@ -710,84 +596,6 @@ func ParseSet(encoded []byte) (Set, error) {
 	default:
 		return Set{}, ErrInvalidSetEncoding
 	}
-}
-func parseSetV1(encoded []byte) (Set, error) {
-	var record setRecord
-	if err := decodeCanonicalSetRecord(encoded, &record); err != nil || record.Contract != "open-trestle/review-diagnostic-set" || record.SchemaVersion != 1 {
-		return Set{}, ErrInvalidSetEncoding
-	}
-	scope, findings, err := parseSetContents(record.TenantID, record.RepositoryID, record.ReviewRunID, record.Findings)
-	if err != nil {
-		return Set{}, err
-	}
-	set, err := NewSet(scope, record.SnapshotIdentity, record.HeadRevision, record.VerifiedSetIdentity, findings)
-	if err != nil || set.identity != record.Identity {
-		return Set{}, ErrInvalidSetIdentity
-	}
-	return verifyParsedSetEncoding(set, encoded)
-}
-func parseSetV2(encoded []byte) (Set, error) {
-	var record setRecordV2
-	if err := decodeCanonicalSetRecord(encoded, &record); err != nil || record.Contract != "open-trestle/review-diagnostic-set" || record.SchemaVersion != 2 {
-		return Set{}, ErrInvalidSetEncoding
-	}
-	scope, findings, err := parseSetContents(record.TenantID, record.RepositoryID, record.ReviewRunID, record.Findings)
-	if err != nil {
-		return Set{}, err
-	}
-	if record.Coverage.VerifiedCount != uint16(len(findings)) {
-		return Set{}, ErrInvalidSet
-	}
-	set, err := NewSetWithCoverage(scope, record.SnapshotIdentity, record.HeadRevision, record.VerifiedSetIdentity, record.Coverage.CandidateCount, record.Coverage.RejectedCount, record.Coverage.InconclusiveCount, findings)
-	if err != nil || set.identity != record.Identity {
-		return Set{}, ErrInvalidSetIdentity
-	}
-	return verifyParsedSetEncoding(set, encoded)
-}
-func parseSetV3(encoded []byte) (Set, error) {
-	var record setRecordV3
-	if err := decodeCanonicalSetRecord(encoded, &record); err != nil || record.Contract != "open-trestle/review-diagnostic-set" || record.SchemaVersion != 3 {
-		return Set{}, ErrInvalidSetEncoding
-	}
-	scope, findings, err := parseSetContents(record.TenantID, record.RepositoryID, record.ReviewRunID, record.Findings)
-	if err != nil {
-		return Set{}, err
-	}
-	if record.Coverage.VerifiedCount != uint16(len(findings)) {
-		return Set{}, ErrInvalidSet
-	}
-	set, err := NewSetWithSourceCoverage(scope, record.SnapshotIdentity, record.HeadRevision, record.VerifiedSetIdentity, record.SourceCoverage.VerificationContextIdentity, record.Coverage.CandidateCount, record.Coverage.RejectedCount, record.Coverage.InconclusiveCount, record.SourceCoverage.AnalyzedCount, record.SourceCoverage.SelectedCount, record.SourceCoverage.OmittedCount, findings)
-	if err != nil || set.identity != record.Identity {
-		return Set{}, ErrInvalidSetIdentity
-	}
-	return verifyParsedSetEncoding(set, encoded)
-}
-
-func parseSetV4(encoded []byte) (Set, error) {
-	var record setRecordV4
-	if err := decodeCanonicalSetRecord(encoded, &record); err != nil || record.Contract != "open-trestle/review-diagnostic-set" || record.SchemaVersion != 4 || record.Coverage.VerifiedCount != uint16(len(record.Findings)) {
-		return Set{}, ErrInvalidSetEncoding
-	}
-	scope, findings, err := parseSetContents(record.TenantID, record.RepositoryID, record.ReviewRunID, record.Findings)
-	if err != nil {
-		return Set{}, err
-	}
-	summaries := make([]OmissionSummary, len(record.SourceCoverage.Omissions))
-	for index, value := range record.SourceCoverage.Omissions {
-		reason, reasonErr := parseOmissionReason(value.Reason)
-		if reasonErr != nil {
-			return Set{}, reasonErr
-		}
-		summaries[index], err = NewOmissionSummary(reason, value.Count)
-		if err != nil {
-			return Set{}, err
-		}
-	}
-	set, err := NewSetWithOmissionReasons(scope, record.SnapshotIdentity, record.HeadRevision, record.VerifiedSetIdentity, record.SourceCoverage.VerificationContextIdentity, record.Coverage.CandidateCount, record.Coverage.RejectedCount, record.Coverage.InconclusiveCount, record.SourceCoverage.AnalyzedCount, record.SourceCoverage.SelectedCount, record.SourceCoverage.OmittedCount, summaries, findings)
-	if err != nil || set.identity != record.Identity {
-		return Set{}, ErrInvalidSetIdentity
-	}
-	return verifyParsedSetEncoding(set, encoded)
 }
 
 func parseSetV5(encoded []byte) (Set, error) {
@@ -923,49 +731,6 @@ func setToFindingRecords(set Set) []findingRecord {
 	}
 	return findings
 }
-func setToRecord(set Set) setRecord {
-	return setRecord{
-		Contract: "open-trestle/review-diagnostic-set", SchemaVersion: 1,
-		Identity: set.identity, TenantID: set.scope.TenantID(), RepositoryID: set.scope.RepositoryID(),
-		ReviewRunID: set.scope.ReviewRunID(), SnapshotIdentity: set.snapshotIdentity,
-		HeadRevision: set.headRevision, VerifiedSetIdentity: set.verifiedSetIdentity, Findings: setToFindingRecords(set),
-	}
-}
-func setToRecordV2(set Set) setRecordV2 {
-	return setRecordV2{
-		Contract: "open-trestle/review-diagnostic-set", SchemaVersion: 2,
-		Identity: set.identity, TenantID: set.scope.TenantID(), RepositoryID: set.scope.RepositoryID(),
-		ReviewRunID: set.scope.ReviewRunID(), SnapshotIdentity: set.snapshotIdentity,
-		HeadRevision: set.headRevision, VerifiedSetIdentity: set.verifiedSetIdentity,
-		Coverage: coverageRecord{CandidateCount: set.candidateCount, VerifiedCount: set.VerifiedCount(), RejectedCount: set.rejectedCount, InconclusiveCount: set.inconclusiveCount},
-		Findings: setToFindingRecords(set),
-	}
-}
-func setToRecordV3(set Set) setRecordV3 {
-	return setRecordV3{
-		Contract: "open-trestle/review-diagnostic-set", SchemaVersion: 3,
-		Identity: set.identity, TenantID: set.scope.TenantID(), RepositoryID: set.scope.RepositoryID(), ReviewRunID: set.scope.ReviewRunID(),
-		SnapshotIdentity: set.snapshotIdentity, HeadRevision: set.headRevision, VerifiedSetIdentity: set.verifiedSetIdentity,
-		Coverage:       coverageRecord{CandidateCount: set.candidateCount, VerifiedCount: set.VerifiedCount(), RejectedCount: set.rejectedCount, InconclusiveCount: set.inconclusiveCount},
-		SourceCoverage: sourceCoverageRecord{VerificationContextIdentity: set.sourceContextIdentity, AnalyzedCount: set.sourceAnalyzedCount, SelectedCount: set.sourceSelectedCount, OmittedCount: set.sourceOmittedCount},
-		Findings:       setToFindingRecords(set),
-	}
-}
-
-func setToRecordV4(set Set) setRecordV4 {
-	summaries := make([]omissionSummaryRecord, len(set.omissionSummaries))
-	for index, summary := range set.omissionSummaries {
-		summaries[index] = omissionSummaryRecord{Reason: summary.Reason().String(), Count: summary.Count()}
-	}
-	return setRecordV4{
-		Contract: "open-trestle/review-diagnostic-set", SchemaVersion: 4,
-		Identity: set.identity, TenantID: set.scope.TenantID(), RepositoryID: set.scope.RepositoryID(), ReviewRunID: set.scope.ReviewRunID(),
-		SnapshotIdentity: set.snapshotIdentity, HeadRevision: set.headRevision, VerifiedSetIdentity: set.verifiedSetIdentity,
-		Coverage:       coverageRecord{CandidateCount: set.candidateCount, VerifiedCount: set.VerifiedCount(), RejectedCount: set.rejectedCount, InconclusiveCount: set.inconclusiveCount},
-		SourceCoverage: sourceCoverageRecordV4{VerificationContextIdentity: set.sourceContextIdentity, AnalyzedCount: set.sourceAnalyzedCount, SelectedCount: set.sourceSelectedCount, OmittedCount: set.sourceOmittedCount, Omissions: summaries},
-		Findings:       setToFindingRecords(set),
-	}
-}
 
 func setToRecordV5(set Set) setRecordV5 {
 	summaries := make([]omissionSummaryRecord, len(set.omissionSummaries))
@@ -981,7 +746,7 @@ func setToRecordV5(set Set) setRecordV5 {
 		Identity: set.identity, TenantID: set.scope.TenantID(), RepositoryID: set.scope.RepositoryID(), ReviewRunID: set.scope.ReviewRunID(),
 		SnapshotIdentity: set.snapshotIdentity, HeadRevision: set.headRevision, VerifiedSetIdentity: set.verifiedSetIdentity,
 		Coverage:       coverageRecord{CandidateCount: set.candidateCount, VerifiedCount: set.VerifiedCount(), RejectedCount: set.rejectedCount, InconclusiveCount: set.inconclusiveCount},
-		SourceCoverage: sourceCoverageRecordV4{VerificationContextIdentity: set.sourceContextIdentity, AnalyzedCount: set.sourceAnalyzedCount, SelectedCount: set.sourceSelectedCount, OmittedCount: set.sourceOmittedCount, Omissions: summaries},
+		SourceCoverage: sourceCoverageRecord{VerificationContextIdentity: set.sourceContextIdentity, AnalyzedCount: set.sourceAnalyzedCount, SelectedCount: set.sourceSelectedCount, OmittedCount: set.sourceOmittedCount, Omissions: summaries},
 		Checks:         checks, Findings: setToFindingRecords(set),
 	}
 }
@@ -1024,27 +789,7 @@ func deriveSetIdentity(set Set) string {
 		record.Identity = ""
 		return hashValue(record)
 	}
-	if verifiedVersion(set.schemaVersion) {
-		record := setToRecordV5(set)
-		record.Identity = ""
-		return hashValue(record)
-	}
-	if set.schemaVersion == 4 {
-		record := setToRecordV4(set)
-		record.Identity = ""
-		return hashValue(record)
-	}
-	if set.schemaVersion == 3 {
-		record := setToRecordV3(set)
-		record.Identity = ""
-		return hashValue(record)
-	}
-	if set.schemaVersion == 2 {
-		record := setToRecordV2(set)
-		record.Identity = ""
-		return hashValue(record)
-	}
-	record := setToRecord(set)
+	record := setToRecordV5(set)
 	record.Identity = ""
 	return hashValue(record)
 }

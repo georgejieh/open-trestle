@@ -4,7 +4,7 @@
 
 The server returns only verified findings, and it handles each diagnostic-set version as follows:
 
-- Versions 1 through 5 and 8 return their verified findings.
+- Versions 5 and 8 return their verified findings.
 - Version 6 holds deterministic observations, which are not verified findings. They produce an empty list of items, with the result identity of the diagnostic set.
 - Final version 7 returns the verified portion of its findings. A final version 7 with no verified findings also returns an empty list. That is not a clean bill of health for the repository.
 
@@ -50,17 +50,14 @@ A client can send `previousResultId`. If it matches the current set identity, th
 
 ## Diagnostic-set versions
 
-The public transport contracts are the schemas `schemas/diagnostics/verified-diagnostic-set-v1.schema.json` through `schemas/diagnostics/verified-diagnostic-set-v5.schema.json`, plus `schemas/diagnostics/deterministic-diagnostic-set-v6.schema.json`, `schemas/diagnostics/full-review-diagnostic-set-v7.schema.json` and `schemas/diagnostics/verified-diagnostic-set-v8.schema.json`.
+The public transport contracts are the schemas `schemas/diagnostics/verified-diagnostic-set-v5.schema.json`, `schemas/diagnostics/deterministic-diagnostic-set-v6.schema.json`, `schemas/diagnostics/full-review-diagnostic-set-v7.schema.json` and `schemas/diagnostics/verified-diagnostic-set-v8.schema.json`.
 
-- Version 2 adds candidate outcomes.
-- Version 3 adds the validated verification-context identity and source counts.
-- Version 4 adds sorted aggregate omission reasons that contain no content.
-- Version 5 adds one deterministic check, tied to its source check, its analysis result and the change.
+- Version 5 holds the verified findings, the candidate outcomes, the verification-context identity, the source counts, the aggregate omission reasons and one deterministic check, tied to its source check, its analysis result and the change.
 - Version 6 replaces the verified-finding fields with an analysis-result identity and the deterministic observations.
 - Version 7 is the final result. It keeps the terminal outcome and any verified portion.
 - Version 8 is version 5 plus findings on removed base lines, described below.
 
-The internal review adapter creates versions 1 through 5 only when the verification receipt, the verified finding set, the snapshot and the review scope all match. The deterministic analysis path creates version 6 without verification. The LSP item list for version 7 contains only the verified portion.
+The internal review adapter creates version 5 only when the verification receipt, the verified finding set, the snapshot and the review scope all match. The deterministic analysis path creates version 6 without verification. The LSP item list for version 7 contains only the verified portion.
 
 The server shows nothing about the run as a whole. It does not report the terminal outcome, a refusal to route context, or a result recorded after its evidence expired (`evidence_expired`, which has no verified portion and so gives an empty item list). An empty list therefore does not mean the review was clean. Use `trestle runs status`, the TUI, ACP or the web console to see the run-level result.
 

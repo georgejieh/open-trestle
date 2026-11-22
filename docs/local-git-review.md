@@ -37,7 +37,7 @@ An added file counts as supported when its text is not empty, is valid, and is w
 
 ## Output
 
-When the review succeeds or is inconclusive, the command writes one `open-trestle/local-git-review-result` version 2 JSON object followed by one newline. Its schema is `schemas/review/local-git-review-result-v2.schema.json`. Version 1 stays published for the earlier nested change contract, which supported modified files only. The object contains:
+When the review succeeds or is inconclusive, the command writes one `open-trestle/local-git-review-result` version 2 JSON object followed by one newline. Its schema is `schemas/review/local-git-review-result-v2.schema.json`. The object contains:
 
 - the complete nested `open-trestle/local-git-change-result` record;
 - the identities of the debug-output review execution and its result, each bound to its inputs;

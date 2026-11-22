@@ -247,20 +247,15 @@ func (h *Handler) Validate() error {
 }
 
 // contextAssemblyHandlerVersion versions the route-granting context handler.
-// Version 6 assembled version 7 generation contexts, admits non-Go changed text
-// through the text fallback, and adds root repository instruction files from the
-// base snapshot (used only when the head is byte-identical) as repository_context
-// sources. Version 7 assembles version 8 generation contexts. A plan that
-// recorded an earlier identity is not executed by this handler, so a run that
-// straddles an upgrade fails closed instead of rebuilding different packet
-// bytes; its recorded artifacts stay readable through the recorded-readback
-// validators. Version 8 assembles version 9 generation contexts, with
-// deterministic pattern hygiene and, when a change intent source is bound,
-// the stated intent. Version 9 assembles version 10 generation contexts: it
-// replaces the semantic-impact reference candidates with index context from
-// a bound IndexContextSource, fits every packet to a budget, and records a
-// context manifest. Version 10 assembles version 11 generation contexts and,
-// when check run outcomes are bound, carries them.
+// It assembles version 11 generation contexts: the text fallback for non-Go
+// changed text, root repository instruction files from the base snapshot
+// (used only when the head is byte-identical) as repository_context sources,
+// deterministic pattern hygiene, the stated intent when a change intent source
+// is bound, index context from a bound IndexContextSource fitted to a budget
+// with a context manifest, and check run outcomes when they are bound. A plan
+// that recorded another identity is not executed by this handler, so a run
+// that straddles an upgrade fails closed instead of rebuilding different
+// packet bytes.
 const contextAssemblyHandlerVersion = 10
 
 // deriveHandlerIdentity omits the specialist, intent-source, index-source,
