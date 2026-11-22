@@ -57,6 +57,12 @@ func TestMain(m *testing.M) {
 	// No test binary pins a scan helper; tests of the scanner check install
 	// their own probe.
 	setupBootstrapScannerPrerequisite = func() error { return nil }
+	// Output marks and color follow TERM, NO_COLOR and COLORTERM, so every
+	// test starts from the same color terminal setting whatever terminal runs
+	// it. A test of those variables sets its own with t.Setenv.
+	if os.Setenv("TERM", "xterm-256color") != nil || os.Unsetenv("NO_COLOR") != nil || os.Unsetenv("COLORTERM") != nil {
+		os.Exit(1)
+	}
 	// Reviews record their spend in the usage folder under XDG_STATE_HOME, so
 	// every test of this package writes to a private temporary folder, never
 	// to the operator's ~/.local/state. A test that inspects the ledger sets
