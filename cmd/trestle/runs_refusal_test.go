@@ -13,13 +13,11 @@ import (
 	"github.com/georgejieh/open-trestle/controlplane"
 	"github.com/georgejieh/open-trestle/controlplane/httpapi"
 	"github.com/georgejieh/open-trestle/mcpserver"
-	"github.com/georgejieh/open-trestle/tui"
 	"github.com/georgejieh/open-trestle/webhook"
 )
 
-// trestle tui reads refusals through the same API client.
+// The MCP server reads refusals through the same API client.
 var (
-	_ tui.RefusalService       = (*client.Client)(nil)
 	_ mcpserver.RefusalService = (*client.Client)(nil)
 )
 

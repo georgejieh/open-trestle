@@ -5,12 +5,10 @@ package main
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -54,14 +52,11 @@ func TestDaemonLocalModelWorkersEmptyAndMalformedCandidates(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			newCommand := func(args []string) *exec.Cmd {
-				cmd := exec.Command(cliPath, args...)
-				cmd.Env = append(os.Environ(), "OPEN_TRESTLE_API_TOKEN="+getenv("OPEN_TRESTLE_API_TOKEN"))
-				return cmd
-			}
 			command := func(args []string) []byte {
 				t.Helper()
-				output, err := newCommand(args).CombinedOutput()
+				cmd := exec.Command(cliPath, args...)
+				cmd.Env = append(os.Environ(), "OPEN_TRESTLE_API_TOKEN="+getenv("OPEN_TRESTLE_API_TOKEN"))
+				output, err := cmd.CombinedOutput()
 				if err != nil {
 					t.Fatalf("CLI result: %v %s", err, output)
 				}
@@ -70,7 +65,6 @@ func TestDaemonLocalModelWorkersEmptyAndMalformedCandidates(t *testing.T) {
 			assertParity := func(scope audit.ReviewScope, set diagnostics.Set) {
 				t.Helper()
 				cliArgs := []string{"--server", server.URL}
-				assertTerminalResultParity(t, command, newCommand, server.URL, api, scope, set)
 				packagedAssertResultParity(t, command, cliArgs, scope, set)
 				if set.VerifiedSetIdentity() != "" {
 					packagedAssertProgressParity(t, command, cliArgs, scope, api, &set)
@@ -307,22 +301,5 @@ func TestDaemonLocalModelWorkersEmptyAndMalformedCandidates(t *testing.T) {
 				t.Fatalf("verification calls=%d want=%d failures=%v", calls, wantVerification, failures)
 			}
 		})
-	}
-}
-
-func assertTerminalResultParity(t *testing.T, command func([]string) []byte, newCommand func([]string) *exec.Cmd, serverURL string, api *client.Client, scope audit.ReviewScope, set diagnostics.Set) {
-	t.Helper()
-	rendered := string(command([]string{"tui", "--server", serverURL, "--tenant", scope.TenantID(), "--repository", scope.RepositoryID(), "--run", scope.ReviewRunID(), "--plain", "--once"}))
-	for _, want := range []string{"Final review outcome: " + string(set.Outcome()), "Deterministic observations (not independently verified)", fmt.Sprintf("%d deterministic observation(s)", len(set.DeterministicObservations())), "does not approve the change"} {
-		if !strings.Contains(rendered, want) {
-			t.Fatalf("TUI missing %q: %s", want, rendered)
-		}
-	}
-	if set.VerifiedSetIdentity() == "" {
-		if !strings.Contains(rendered, "Verified findings: unknown (evidence unavailable).") || strings.Contains(rendered, "0 verified finding(s)") || strings.Contains(rendered, "0 candidate(s)") {
-			t.Fatalf("TUI invented verification: %s", rendered)
-		}
-	} else if !strings.Contains(rendered, fmt.Sprintf("%d verified finding(s)", set.VerifiedCount())) {
-		t.Fatalf("TUI lost verified count: %s", rendered)
 	}
 }

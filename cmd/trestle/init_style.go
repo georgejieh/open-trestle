@@ -6,24 +6,31 @@ import (
 	"regexp"
 	"strings"
 	"unicode/utf8"
-
-	"github.com/georgejieh/open-trestle/tui"
 )
 
 // The look of `trestle init`. It extends the product's identity rather than
-// inventing one: the Ambassador Bridge mark from the terminal interface and
-// the web console's colors (web/src/styles.css). Body text keeps the
-// terminal's own foreground so it reads on light and dark themes, and every
-// state keeps its mark, so nothing depends on color alone.
+// inventing one: the Ambassador Bridge mark and the web console's colors
+// (web/src/styles.css). Body text keeps the terminal's own foreground so it
+// reads on light and dark themes, and every state keeps its mark, so nothing
+// depends on color alone.
 //
 // Color is used only on an interactive terminal: never when NO_COLOR is set
 // (to any value), TERM is dumb, standard output is not a terminal, or with
 // --no-input. TERM=dumb also selects ASCII marks and frames.
 
-// initWidth is the widest line trestle init prints, the terminal interface's
-// minimum supported width. Copyable commands keep their full paths and are
-// the one exception.
+// initWidth is the widest line trestle init prints, the narrowest terminal it
+// supports. Copyable commands keep their full paths and are the one exception.
 const initWidth = 60
+
+// bridgeCompactMark is the Ambassador Bridge in three lines for narrow
+// headers: the two X-braced towers, the suspension cables leaving each tower
+// and the deck. Every line is ASCII and the same width, so text can sit beside
+// it.
+var bridgeCompactMark = [3]string{
+	"   |X|\\            /|X|   ",
+	" __|X| \\___----___/ |X|__ ",
+	"===|X|=|==|==|==|===|X|===",
+}
 
 const initSteps = 6
 
@@ -155,7 +162,7 @@ func initFit(line string, width int) []string {
 // banner is the opening: the compact bridge mark with the product name beside
 // it, what a review does in three lines, then how to answer.
 func (s initStyle) banner(noInput bool) []string {
-	mark := tui.AmbassadorBridgeCompactMark
+	mark := bridgeCompactMark
 	title := s.paint(initToneHeading, "Open Trestle · setup")
 	lines := []string{s.paint(initToneRule, strings.TrimRight(mark[0], " ")), s.paint(initToneRule, mark[1]) + "  " + title, s.paint(initToneRule, strings.TrimRight(mark[2], " ")), ""}
 	lines = append(lines,

@@ -66,9 +66,6 @@ func main() {
 		stop()
 		os.Exit(code)
 	}
-	if len(os.Args) >= 2 && os.Args[1] == "tui" {
-		os.Exit(runTUI(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
-	}
 	if len(os.Args) >= 3 && os.Args[1] == "local-git" && (os.Args[2] == "model-review" || os.Args[2] == "retained-memory-input") {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		code := runWithContext(ctx, os.Args[1:], os.Stdout, os.Stderr)
@@ -265,7 +262,6 @@ func writeUsage(w io.Writer) {
 	writeUsageGroup(w, "Integrations")
 	writeLocalGitModelReviewUsage(w)
 	writeRunsUsage(w)
-	writeTUIUsage(w)
 	writeMCPUsage(w)
 	writeLSPUsage(w)
 	writeLocalGitSubmitReviewUsage(w)

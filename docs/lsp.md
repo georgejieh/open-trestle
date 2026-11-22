@@ -59,7 +59,7 @@ The public transport contracts are the schemas `schemas/diagnostics/verified-dia
 
 The internal review adapter creates version 5 only when the verification receipt, the verified finding set, the snapshot and the review scope all match. The deterministic analysis path creates version 6 without verification. The LSP item list for version 7 contains only the verified portion.
 
-The server shows nothing about the run as a whole. It does not report the terminal outcome, a refusal to route context, or a result recorded after its evidence expired (`evidence_expired`, which has no verified portion and so gives an empty item list). An empty list therefore does not mean the review was clean. Use `trestle runs status`, the TUI or the web console to see the run-level result.
+The server shows nothing about the run as a whole. It does not report the terminal outcome, a refusal to route context, or a result recorded after its evidence expired (`evidence_expired`, which has no verified portion and so gives an empty item list). An empty list therefore does not mean the review was clean. Use `trestle runs status` or the web console to see the run-level result.
 
 Version 8 (`schemas/diagnostics/verified-diagnostic-set-v8.schema.json`) is version 5 plus findings on removed base lines. Such a finding is marked `"side":"base"` and has an optional `head_line`. Open Trestle uses version 8 when a finding on removed base lines exists, and final version 7 may embed it in place of version 5. The open document in the editor holds head lines, so the server does not place base lines on it. A finding on the base side becomes a file-level diagnostic (range 0:0) with these properties:
 

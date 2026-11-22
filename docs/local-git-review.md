@@ -107,7 +107,6 @@ To read the same stored result without running the source analysis again:
 trestle runs status --tenant TENANT --repository REPOSITORY --run RUN --server http://127.0.0.1:8741
 trestle runs status --tenant TENANT --repository REPOSITORY --run RUN --server http://127.0.0.1:8741 --format json
 trestle runs status --tenant TENANT --repository REPOSITORY --run RUN --server http://127.0.0.1:8741 --format sarif
-trestle tui --tenant TENANT --repository REPOSITORY --run RUN --server http://127.0.0.1:8741 --plain --once
 ```
 
 The JSON result is the canonical stored diagnostic set. The SARIF output carries `trestleStatus: inconclusive`, the disposition of the deterministic check, the qualifier that a human should review it, the exact locations, and all evidence references. It does not call an observation verified.
