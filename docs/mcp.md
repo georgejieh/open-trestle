@@ -1,5 +1,7 @@
 # MCP stdio server
 
+The daemon and the surfaces that depend on it are frozen: no new work is planned, and they may be removed. For reviews, use `trestle review`, the `trestle` home screen or the [VS Code command](vscode.md).
+
 `trestle mcp` is a Model Context Protocol server that lets coding assistants and other MCP hosts read and submit Open Trestle review runs. It talks to the daemon through the same authenticated client and review-run contracts as the CLI.
 
 ```sh

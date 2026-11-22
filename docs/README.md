@@ -29,7 +29,7 @@ no release yet, and each page describes what the code does today. The
 ## Integrate
 
 - [GitHub pull-request review](github-pr-review.md): the Actions example and the GitHub App path.
-- [VS Code](vscode.md): show the findings of a daemon run in the editor.
+- [VS Code](vscode.md): review the current branch from the editor and see the findings in the Problems panel.
 - [MCP](mcp.md), [ACP](acp.md) and [LSP](lsp.md).
 - [Terminal UI](tui.md) and [web console](web-console.md).
 - [Daemon API](daemon-api.md).

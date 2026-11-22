@@ -49,10 +49,12 @@ released.
 - **GitHub Actions example.** A workflow that runs the direct review and uploads
   SARIF. It has been tested offline only. See
   [GitHub pull-request review](github-pr-review.md).
+- **VS Code.** **Open Trestle: Review Current Branch** runs `trestle review` and
+  shows the findings in the Problems panel. See [VS Code](vscode.md).
 - **Daemon and observers.** `trestled` keeps durable runs and an authenticated
-  API. The terminal UI, the VS Code extension, the web console, MCP, ACP and
-  LSP observe or submit daemon runs. They do not start a direct review. See
-  [architecture](architecture.md).
+  API. The terminal UI, the web console, MCP, ACP and LSP observe or submit
+  daemon runs. They do not start a direct review. They are frozen, with no new
+  work planned, and may be removed. See [architecture](architecture.md).
 - **Evaluation corpus.** 23 synthetic Go cases with a run driver and a scorer.
   The labels await independent human adjudication, so no model quality has been
   measured. See [quality evaluation](quality-evaluation.md).
@@ -66,8 +68,6 @@ released.
 - A desktop app, built from the web console in a native shell, that opens a
   repository, runs the setup wizard, starts a review and shows the findings.
 - A GitHub Action (`action.yml`) verified on a test repository.
-- A VS Code command that starts a review and shows the findings as
-  diagnostics.
 - Choosing which of the bundled checks to run for a pull request, and writing
   new tests for a change.
 - Sign in with ChatGPT as a provider option, so that a review can use a
