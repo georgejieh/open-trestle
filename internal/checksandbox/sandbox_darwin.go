@@ -14,7 +14,14 @@ import (
 
 const sandboxExec = "/usr/bin/sandbox-exec"
 
+// verified is false because this sandbox has never run on a Mac. Checks stay
+// off on macOS until someone runs the probe tests there and sets it to true.
+const verified = false
+
 func available() error {
+	if !verified {
+		return unavailable("the macOS sandbox has not been verified on a Mac")
+	}
 	if _, err := os.Stat(sandboxExec); err != nil {
 		return unavailable("sandbox-exec is missing")
 	}
