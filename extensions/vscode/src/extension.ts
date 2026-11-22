@@ -1,249 +1,197 @@
 import * as vscode from "vscode";
+import { childEnvironment, validExecutable } from "./config";
 import {
-  buildChildEnvironment,
-  buildLaunchConfiguration,
-  ConfigurationError,
-  isValidToken,
-  type ExtensionSettings,
-} from "./config";
-import { Session } from "./session";
-import { Diagnostics } from "./diagnostics";
-const secretKey = "openTrestle.apiToken";
-let client: Session | undefined;
-let diagnostics: Diagnostics | undefined;
-let status: vscode.StatusBarItem | undefined;
-let transition = Promise.resolve();
-let generation = 0;
-let disposed = true;
-let extensionContext: vscode.ExtensionContext;
-function settings(): ExtensionSettings {
-  const value = vscode.workspace.getConfiguration("openTrestle");
-  return {
-    executable: value.get("executable", "trestle"),
-    server: value.get("server", "http://127.0.0.1:8741"),
-    tenant: value.get("tenant", ""),
-    repository: value.get("repository", ""),
-    run: value.get("run", ""),
-  };
-}
-function setStatus(
-  kind: "disconnected" | "connecting" | "connected" | "error",
-) {
-  if (!status || disposed) return;
-  status.text = {
-    disconnected: "$(debug-disconnect) Trestle: disconnected",
-    connecting: "$(sync~spin) Trestle: connecting",
-    connected: "$(shield) Trestle: connected",
-    error: "$(warning) Trestle: attention",
-  }[kind];
-  status.tooltip =
-    kind === "connected"
-      ? "Read-only verified findings; visible-file pulls and explicit Restart refresh. Deterministic observations remain outside LSP findings. Empty findings are not clearance."
-      : kind === "error"
-        ? "Diagnostics unavailable. A prior process may still be stopping; no successor starts until it closes."
-        : "Connect to an exact Open Trestle review run";
-  status.command =
-    kind === "connecting"
-      ? undefined
-      : kind === "connected"
-        ? "openTrestle.restart"
-        : "openTrestle.connect";
-}
-function invalidate() {
-  generation++;
-  client?.invalidate();
-  diagnostics?.dispose();
-  diagnostics = undefined;
-  void vscode.commands.executeCommand(
-    "setContext",
-    "openTrestle.connected",
-    false,
-  );
-}
-async function stopClient(): Promise<boolean> {
-  invalidate();
-  const active = client;
-  if (active && !(await active.stop())) {
-    setStatus("error");
-    return false;
-  }
-  if (client === active) client = undefined;
-  setStatus("disconnected");
-  return true;
-}
-function workspaceFolder(): vscode.WorkspaceFolder | undefined {
+  repositoryRoot,
+  reviewArguments,
+  startRun,
+  type Run,
+  type RunResult,
+} from "./run";
+import { parseReview, summary, type Finding, type Level } from "./sarif";
+let output: vscode.OutputChannel | undefined;
+let findings: vscode.DiagnosticCollection | undefined;
+let busy = false;
+let current: Run | undefined;
+const severity: Record<Level, vscode.DiagnosticSeverity> = {
+  error: vscode.DiagnosticSeverity.Error,
+  warning: vscode.DiagnosticSeverity.Warning,
+  note: vscode.DiagnosticSeverity.Information,
+};
+// target is the local folder of the active editor, else the first folder,
+// with the configured executable; it says why when there is none.
+function target():
+  { folder: vscode.WorkspaceFolder; executable: string } | undefined {
   const active = vscode.window.activeTextEditor?.document.uri;
-  return active
-    ? (vscode.workspace.getWorkspaceFolder(active) ??
-        vscode.workspace.workspaceFolders?.[0])
-    : vscode.workspace.workspaceFolders?.[0];
+  const folder =
+    (active && vscode.workspace.getWorkspaceFolder(active)) ??
+    vscode.workspace.workspaceFolders?.[0];
+  const executable = vscode.workspace
+    .getConfiguration("openTrestle")
+    .get<string>("executable", "trestle");
+  if (!vscode.workspace.isTrusted)
+    void vscode.window.showErrorMessage(
+      "Trust this workspace before using Open Trestle.",
+    );
+  else if (!folder || folder.uri.scheme !== "file")
+    void vscode.window.showErrorMessage(
+      "Open a local folder of a Git repository to use Open Trestle.",
+    );
+  else if (!validExecutable(executable))
+    void vscode.window.showErrorMessage(
+      "Set openTrestle.executable to the trestle command name or its absolute path.",
+    );
+  else return { folder, executable };
+  return undefined;
 }
-async function startClient(interactive: boolean) {
-  if (disposed) return;
-  if (client) {
-    if (!client.closed) return;
-    if (!(await stopClient())) return;
+// offer shows a message with its buttons. A review with no result also
+// offers set-up, since the usual reason is a repository with no setup yet.
+async function offer(message: string, failed: boolean, setUpButton = failed) {
+  const buttons = setUpButton
+    ? ["Show Output", "Set Up Repository"]
+    : ["Show Output"];
+  const choice = failed
+    ? await vscode.window.showErrorMessage(message, ...buttons)
+    : await vscode.window.showInformationMessage(message, ...buttons);
+  if (choice === "Show Output") output?.show(true);
+  if (choice === "Set Up Repository") setUp();
+}
+function publish(root: string, list: Finding[]) {
+  const files = new Map<string, vscode.Diagnostic[]>();
+  for (const item of list) {
+    const diagnostic = new vscode.Diagnostic(
+      new vscode.Range(
+        item.startLine - 1,
+        0,
+        item.endLine - 1,
+        Number.MAX_SAFE_INTEGER,
+      ),
+      item.message,
+      severity[item.level],
+    );
+    diagnostic.source = "open-trestle";
+    diagnostic.code = item.ruleId;
+    files.set(item.path, [...(files.get(item.path) ?? []), diagnostic]);
   }
-  if (!vscode.workspace.isTrusted) {
-    setStatus("error");
-    if (interactive)
-      void vscode.window.showErrorMessage(
-        "Trust this workspace before starting Open Trestle diagnostics.",
-      );
-    return;
-  }
-  const folder = workspaceFolder();
-  if (!folder || folder.uri.scheme !== "file") {
-    setStatus("error");
-    return;
-  }
-  const ticket = generation;
-  const token = await extensionContext.secrets.get(secretKey);
-  if (disposed || generation !== ticket) return;
-  if (!token) {
-    setStatus("disconnected");
-    if (interactive)
-      void vscode.window.showWarningMessage(
-        "Set an API token before connecting Open Trestle diagnostics.",
-      );
-    return;
-  }
-  let launch;
-  try {
-    launch = buildLaunchConfiguration(settings(), token);
-  } catch (error) {
-    setStatus("error");
-    if (interactive && error instanceof ConfigurationError)
-      void vscode.window.showErrorMessage(
-        "Set a safe server URL and exact tenant, repository, and run identifiers in Open Trestle settings.",
-      );
-    return;
-  }
-  const failed = () => {
-    if (client !== next) return;
-    invalidate();
-    setStatus("error");
-    void serialized(async () => {
-      if (client === next) {
-        await stopClient();
-        setStatus("error");
-      }
-    });
-  };
-  const next = new Session(
-    launch,
-    folder.uri.toString(),
-    buildChildEnvironment(process.env, token),
-    failed,
+  findings?.clear();
+  for (const [path, diagnostics] of files)
+    findings?.set(
+      vscode.Uri.joinPath(vscode.Uri.file(root), ...path.split("/")),
+      diagnostics,
+    );
+}
+function finish(root: string, executable: string, result: RunResult) {
+  const last = result.stderrTail.at(-1) ?? "";
+  output?.appendLine(
+    `trestle review ended with exit code ${result.code ?? "none"}.`,
   );
-  client = next;
-  setStatus("connecting");
+  if (result.error?.code === "ENOENT")
+    return void vscode.window.showErrorMessage(
+      `Open Trestle could not start "${executable}". Install trestle, or set openTrestle.executable to its absolute path.`,
+    );
+  if (result.overflow)
+    return void offer(
+      "The review result was larger than 5 MiB and was not read.",
+      true,
+      false,
+    );
+  if (
+    result.code === 2 &&
+    result.stderrTail.some((item) => item.includes("stop-on-stdin-close"))
+  )
+    return void vscode.window.showErrorMessage(
+      "This trestle is too old to review from the editor. Update trestle and try again.",
+    );
+  if (result.stdout.trim() === "") {
+    if (result.canceled)
+      return void vscode.window.showInformationMessage(
+        "The review was canceled.",
+      );
+    return void offer(last || "The review wrote no result.", true);
+  }
+  let review;
   try {
-    await next.start();
-    if (disposed || generation !== ticket || client !== next) {
-      await stopClient();
+    review = parseReview(result.stdout);
+  } catch (error) {
+    output?.appendLine(
+      `The review result was rejected: ${(error as Error).message}.`,
+    );
+    return void offer(last || "The review result could not be read.", true);
+  }
+  publish(root, review.findings);
+  for (const note of review.notifications) output?.appendLine(note);
+  void offer(summary(review), !review.succeeded, false);
+}
+async function reviewBranch() {
+  if (busy) {
+    void vscode.window.showInformationMessage(
+      "An Open Trestle review is already running.",
+    );
+    return;
+  }
+  const chosen = target();
+  if (!chosen) return;
+  busy = true;
+  try {
+    const cwd = chosen.folder.uri.fsPath;
+    const env = childEnvironment(process.env);
+    const root = await repositoryRoot(cwd, env);
+    if (!root) {
+      void vscode.window.showErrorMessage(
+        "This folder is not inside a Git checkout (or git is not installed).",
+      );
       return;
     }
-    diagnostics = new Diagnostics(folder, next, failed);
-    diagnostics.start();
-    if (disposed || generation !== ticket || client !== next) return;
-    await vscode.commands.executeCommand(
-      "setContext",
-      "openTrestle.connected",
-      true,
+    await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: "Open Trestle review",
+        cancellable: true,
+      },
+      async (progress, token) => {
+        current = startRun({
+          command: chosen.executable,
+          args: reviewArguments,
+          cwd,
+          env,
+          onStderrLine: (line) => {
+            output?.appendLine(line);
+            progress.report({ message: line });
+          },
+        });
+        token.onCancellationRequested(() => current?.cancel());
+        finish(root, chosen.executable, await current.result);
+      },
     );
-    if (generation === ticket && !disposed) setStatus("connected");
-  } catch {
-    if (client === next) {
-      await stopClient();
-      setStatus("error");
-    }
-    if (interactive && !disposed)
-      void vscode.window.showErrorMessage(
-        "Open Trestle diagnostics could not start. Check the executable, daemon readiness, and exact review scope.",
-      );
+  } finally {
+    current = undefined;
+    busy = false;
   }
 }
-function serialized(action: () => Promise<void>) {
-  transition = transition.then(action, action).catch(() => {
-    invalidate();
-    setStatus("error");
-  });
-  return transition;
+function setUp() {
+  const chosen = target();
+  if (!chosen) return;
+  vscode.window
+    .createTerminal({
+      name: "Open Trestle setup",
+      shellPath: chosen.executable,
+      shellArgs: ["init"],
+      cwd: chosen.folder.uri,
+    })
+    .show();
 }
-async function restartClient(interactive: boolean) {
-  if (await stopClient()) await startClient(interactive);
-}
-async function setToken() {
-  const token = await vscode.window.showInputBox({
-    title: "Open Trestle API token",
-    prompt:
-      "Stored in VS Code SecretStorage and passed only to the Open Trestle LSP process.",
-    password: true,
-    ignoreFocusOut: true,
-    validateInput: (value) =>
-      isValidToken(value)
-        ? undefined
-        : "Use a 32 to 512 character token without spaces or control characters.",
-  });
-  if (token === undefined || disposed) return;
-  invalidate();
-  if (!(await stopClient())) return;
-  await extensionContext.secrets.store(secretKey, token);
-  // The SecretStorage event owns restart, including token changes made in another window.
-}
-async function clearToken() {
-  invalidate();
-  await stopClient();
-  await extensionContext.secrets.delete(secretKey);
-}
-export async function activate(context: vscode.ExtensionContext) {
-  extensionContext = context;
-  disposed = false;
-  generation++;
-  status = vscode.window.createStatusBarItem(
-    vscode.StatusBarAlignment.Left,
-    10,
-  );
-  status.name = "Open Trestle diagnostics";
-  status.show();
-  setStatus("disconnected");
-  const restart = (interactive: boolean) => {
-    invalidate();
-    return serialized(() => restartClient(interactive));
-  };
+export function activate(context: vscode.ExtensionContext) {
+  output = vscode.window.createOutputChannel("Open Trestle");
+  findings = vscode.languages.createDiagnosticCollection("open-trestle");
   context.subscriptions.push(
-    status,
-    vscode.commands.registerCommand("openTrestle.connect", () =>
-      serialized(() => startClient(true)),
+    output,
+    findings,
+    vscode.commands.registerCommand("openTrestle.reviewBranch", reviewBranch),
+    vscode.commands.registerCommand("openTrestle.clearFindings", () =>
+      findings?.clear(),
     ),
-    vscode.commands.registerCommand("openTrestle.restart", () => restart(true)),
-    vscode.commands.registerCommand("openTrestle.setToken", () =>
-      serialized(setToken),
-    ),
-    vscode.commands.registerCommand("openTrestle.clearToken", () => {
-      invalidate();
-      return serialized(clearToken);
-    }),
-    vscode.workspace.onDidChangeConfiguration((event) => {
-      if (!event.affectsConfiguration("openTrestle")) return;
-      invalidate();
-      if (client) void serialized(() => restartClient(false));
-    }),
-    context.secrets.onDidChange((event) => {
-      if (event.key === secretKey) void restart(false);
-    }),
-    vscode.workspace.onDidChangeWorkspaceFolders(() => {
-      invalidate();
-      if (client) void serialized(() => restartClient(false));
-    }),
+    vscode.commands.registerCommand("openTrestle.setUp", setUp),
   );
-  if (vscode.workspace.getConfiguration("openTrestle").get("autoStart", false))
-    await serialized(() => startClient(false));
 }
-export async function deactivate() {
-  disposed = true;
-  invalidate();
-  await transition;
-  await stopClient();
+export function deactivate() {
+  current?.cancel();
 }

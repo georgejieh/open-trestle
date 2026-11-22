@@ -1,161 +1,179 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const h = vi.hoisted(() => ({
-  commands: new Map<string, () => Promise<void>>(),
-  sessions: [] as any[],
-  diagnostics: [] as any[],
-  configuration: undefined as any,
-  secret: undefined as any,
-  closed: true,
+  commands: new Map<string, () => Promise<void> | void>(),
   trusted: true,
+  scheme: "file",
+  runs: [] as { finish: (value: unknown) => void; cancel: () => void }[],
+  collection: { clear: vi.fn(), set: vi.fn(), dispose() {} },
 }));
 vi.mock("vscode", () => ({
   workspace: {
     get isTrusted() {
       return h.trusted;
     },
-    workspaceFolders: [
-      { uri: { scheme: "file", toString: () => "file:///root" } },
-    ],
-    getConfiguration: () => ({
-      get: (key: string, fallback: unknown) =>
-        ({ executable: "trestle", tenant: "t", repository: "r", run: "run" })[
-          key as "tenant"
-        ] ?? fallback,
-    }),
-    onDidChangeConfiguration: (fn: any) => {
-      h.configuration = fn;
-      return { dispose() {} };
+    get workspaceFolders() {
+      return [{ uri: { scheme: h.scheme, fsPath: "/repo/sub" } }];
     },
-    onDidChangeWorkspaceFolders: () => ({ dispose() {} }),
+    getWorkspaceFolder: () => undefined,
+    getConfiguration: () => ({
+      get: (_key: string, fallback: unknown) => fallback,
+    }),
   },
   window: {
-    createOutputChannel: () => ({ dispose() {} }),
-    createStatusBarItem: () => ({ show() {}, dispose() {} }),
-    showErrorMessage: vi.fn(),
-    showInformationMessage: vi.fn(),
-    showWarningMessage: vi.fn(),
-    showInputBox: vi.fn(),
+    activeTextEditor: undefined,
+    createOutputChannel: () => ({
+      appendLine: vi.fn(),
+      show: vi.fn(),
+      dispose() {},
+    }),
+    showErrorMessage: vi.fn(async () => undefined),
+    showInformationMessage: vi.fn(async () => undefined),
+    withProgress: (_options: unknown, task: any) =>
+      task({ report: vi.fn() }, { onCancellationRequested: vi.fn() }),
+    createTerminal: vi.fn(() => ({ show: vi.fn() })),
   },
-  StatusBarAlignment: { Left: 1 },
+  languages: { createDiagnosticCollection: () => h.collection },
   commands: {
     registerCommand: (name: string, fn: any) => {
       h.commands.set(name, fn);
       return { dispose() {} };
     },
-    executeCommand: vi.fn(),
   },
-}));
-vi.mock("./session", () => ({
-  Session: class {
-    closed = false;
-    active = true;
-    start = vi.fn(async () => {});
-    pull = vi.fn();
-    invalidate = vi.fn(() => {
-      this.active = false;
-    });
-    stop = vi.fn(async () => {
-      this.closed = h.closed;
-      return this.closed;
-    });
-    constructor(..._args: any[]) {
-      h.sessions.push(this);
+  Uri: {
+    file: (path: string) => ({ path }),
+    joinPath: (base: { path: string }, ...parts: string[]) => ({
+      path: [base.path, ...parts].join("/"),
+    }),
+  },
+  Range: class {
+    constructor(...values: number[]) {
+      Object.assign(this, { values });
     }
   },
-}));
-vi.mock("./diagnostics", () => ({
-  Diagnostics: class {
-    start = vi.fn();
-    dispose = vi.fn();
-    constructor(..._args: any[]) {
-      h.diagnostics.push(this);
-    }
+  Diagnostic: class {
+    constructor(
+      public range: unknown,
+      public message: string,
+      public severity: number,
+    ) {}
   },
+  DiagnosticSeverity: { Error: 0, Warning: 1, Information: 2 },
+  ProgressLocation: { Notification: 15 },
 }));
-import { activate, deactivate } from "./extension";
-beforeEach(async () => {
-  h.closed = true;
-  await deactivate();
-  h.commands.clear();
-  h.sessions.length = 0;
-  h.diagnostics.length = 0;
-  h.trusted = true;
-  const secrets = {
-    get: vi.fn(async () => "x".repeat(32)),
-    store: vi.fn(),
-    delete: vi.fn(),
-    onDidChange: (fn: any) => {
-      h.secret = fn;
-      return { dispose() {} };
+vi.mock("./run", () => ({
+  reviewArguments: ["review", "--format", "sarif", "--stop-on-stdin-close"],
+  repositoryRoot: vi.fn(async () => "/repo"),
+  startRun: vi.fn(() => {
+    let finish!: (value: unknown) => void;
+    const result = new Promise((resolve) => (finish = resolve));
+    const run = { result, finish, cancel: vi.fn() };
+    h.runs.push(run);
+    return run;
+  }),
+}));
+import * as vscode from "vscode";
+import { activate } from "./extension";
+import { startRun } from "./run";
+const sarif = JSON.stringify({
+  version: "2.1.0",
+  runs: [
+    {
+      invocations: [{ executionSuccessful: true }],
+      results: [
+        {
+          ruleId: "open-trestle/correctness",
+          level: "warning",
+          message: { text: "Bug" },
+          locations: [
+            {
+              physicalLocation: {
+                artifactLocation: { uri: "src/a.go" },
+                region: { startLine: 2, endLine: 2 },
+              },
+            },
+          ],
+        },
+      ],
+      properties: { trestleModelReviewStatus: "findings" },
     },
-  };
-  await activate({ secrets, subscriptions: [] } as never);
+  ],
 });
-describe("owned editor lifecycle", () => {
-  it("refuses startup invalidated while SecretStorage is pending", async () => {
-    await deactivate();
-    let resolveToken!: (token: string) => void;
-    await activate({
-      secrets: {
-        get: () =>
-          new Promise<string>((resolve) => {
-            resolveToken = resolve;
-          }),
-        onDidChange: (fn: any) => {
-          h.secret = fn;
-          return { dispose() {} };
-        },
-      },
-      subscriptions: [],
-    } as never);
-    const starting = h.commands.get("openTrestle.connect")!();
-    await Promise.resolve();
-    h.configuration({ affectsConfiguration: () => true });
-    resolveToken("x".repeat(32));
-    await starting;
-    expect(h.sessions).toHaveLength(0);
-  });
-
-  it("blocks a successor when prior child closure is unobserved", async () => {
-    await h.commands.get("openTrestle.connect")!();
-    h.closed = false;
-    await h.commands.get("openTrestle.restart")!();
-    expect(h.sessions).toHaveLength(1);
-    expect(h.sessions[0].active).toBe(false);
-    expect(h.diagnostics[0].dispose).toHaveBeenCalled();
-    h.closed = true;
-    await h.commands.get("openTrestle.restart")!();
-    expect(h.sessions).toHaveLength(2);
-  });
-  it("invalidates publication synchronously on configuration and secret events", async () => {
-    await h.commands.get("openTrestle.connect")!();
-    h.configuration({ affectsConfiguration: () => true });
-    expect(h.sessions[0].active).toBe(false);
-    expect(h.diagnostics[0].dispose).toHaveBeenCalled();
-    await deactivate();
-    await activate({
-      secrets: {
-        get: async () => "x".repeat(32),
-        onDidChange: (fn: any) => {
-          h.secret = fn;
-          return { dispose() {} };
-        },
-      },
-      subscriptions: [],
-    } as never);
-    await h.commands.get("openTrestle.connect")!();
-    const last = h.sessions.at(-1);
-    h.secret({ key: "openTrestle.apiToken" });
-    expect(last.active).toBe(false);
-  });
-  it("refuses untrusted startup and invalidates before deactivation awaits", async () => {
+function ended(stdout: string, stderrTail: string[] = []) {
+  return { code: 3, stdout, stderrTail, canceled: false, overflow: false };
+}
+async function review(stdout: string, stderrTail: string[] = []) {
+  const started = h.commands.get("openTrestle.reviewBranch")!();
+  await vi.waitFor(() => expect(h.runs).toHaveLength(1));
+  h.runs[0]!.finish(ended(stdout, stderrTail));
+  await started;
+}
+beforeEach(() => {
+  vi.clearAllMocks();
+  h.runs.length = 0;
+  h.trusted = true;
+  h.scheme = "file";
+  activate({ subscriptions: [] } as never);
+});
+describe("review command", () => {
+  it("starts nothing in an untrusted workspace or a non-file folder", async () => {
     h.trusted = false;
-    await h.commands.get("openTrestle.connect")!();
-    expect(h.sessions).toHaveLength(0);
+    await h.commands.get("openTrestle.reviewBranch")!();
     h.trusted = true;
-    await h.commands.get("openTrestle.connect")!();
-    const done = deactivate();
-    expect(h.sessions[0].active).toBe(false);
-    await done;
+    h.scheme = "vscode-vfs";
+    await h.commands.get("openTrestle.reviewBranch")!();
+    await h.commands.get("openTrestle.setUp")!();
+    expect(startRun).not.toHaveBeenCalled();
+    expect(vscode.window.createTerminal).not.toHaveBeenCalled();
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledTimes(3);
+  });
+  it("runs one review at a time", async () => {
+    const first = h.commands.get("openTrestle.reviewBranch")!();
+    await h.commands.get("openTrestle.reviewBranch")!();
+    await vi.waitFor(() => expect(h.runs).toHaveLength(1));
+    h.runs[0]!.finish(ended(""));
+    await first;
+    expect(startRun).toHaveBeenCalledTimes(1);
+    expect(startRun).toHaveBeenCalledWith(
+      expect.objectContaining({ command: "trestle", cwd: "/repo/sub" }),
+    );
+  });
+  it("replaces the findings with a valid result", async () => {
+    await review(sarif);
+    expect(h.collection.clear).toHaveBeenCalledTimes(1);
+    const [uri, diagnostics] = h.collection.set.mock.calls[0]!;
+    expect(uri).toEqual({ path: "/repo/src/a.go" });
+    expect(diagnostics[0]).toMatchObject({
+      severity: 1,
+      source: "open-trestle",
+      code: "open-trestle/correctness",
+    });
+    expect(diagnostics[0].range.values).toEqual([
+      1,
+      0,
+      1,
+      Number.MAX_SAFE_INTEGER,
+    ]);
+  });
+  it("keeps the findings and shows the last line when there is no result", async () => {
+    await review("", [
+      "looking",
+      "trestle review: Run trestle init here first.",
+    ]);
+    expect(h.collection.clear).not.toHaveBeenCalled();
+    expect(h.collection.set).not.toHaveBeenCalled();
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      "trestle review: Run trestle init here first.",
+      "Show Output",
+      "Set Up Repository",
+    );
+  });
+  it("opens trestle init in a terminal without a shell string", async () => {
+    await h.commands.get("openTrestle.setUp")!();
+    expect(vscode.window.createTerminal).toHaveBeenCalledWith({
+      name: "Open Trestle setup",
+      shellPath: "trestle",
+      shellArgs: ["init"],
+      cwd: { scheme: "file", fsPath: "/repo/sub" },
+    });
   });
 });

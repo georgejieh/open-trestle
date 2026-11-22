@@ -48,11 +48,10 @@ for (const entry of entries.sort((a, b) =>
     target.addEmptyDirectory(entry.fileName, { mtime: fixed, mode: 0o755 });
     continue;
   }
-  const content = await streamBuffer(zip, entry);
-  const mode = (entry.externalFileAttributes >>> 16) & 0xffff;
-  target.addBuffer(content, entry.fileName, {
+  // One file mode, so a build on Windows matches one on Linux.
+  target.addBuffer(await streamBuffer(zip, entry), entry.fileName, {
     mtime: fixed,
-    mode: mode || 0o644,
+    mode: 0o100644,
     compress: true,
   });
 }

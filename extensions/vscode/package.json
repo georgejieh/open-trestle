@@ -1,7 +1,7 @@
 {
   "name": "open-trestle",
   "displayName": "Open Trestle",
-  "description": "Read-only independently verified findings from Open Trestle diagnostic versions 1 through 5.",
+  "description": "Review the current branch with Open Trestle and show the findings in the Problems panel.",
   "version": "0.1.0",
   "private": true,
   "publisher": "open-trestle",
@@ -17,37 +17,30 @@
   "keywords": [
     "code review",
     "diagnostics",
-    "lsp",
+    "sarif",
     "self-hosted"
   ],
   "main": "./dist/extension.js",
   "activationEvents": [
-    "onStartupFinished",
-    "onCommand:openTrestle.connect",
-    "onCommand:openTrestle.setToken",
-    "onCommand:openTrestle.clearToken",
-    "onCommand:openTrestle.restart"
+    "onCommand:openTrestle.reviewBranch",
+    "onCommand:openTrestle.clearFindings",
+    "onCommand:openTrestle.setUp"
   ],
   "contributes": {
     "commands": [
       {
-        "command": "openTrestle.connect",
-        "title": "Open Trestle: Connect to Review Run",
+        "command": "openTrestle.reviewBranch",
+        "title": "Review Current Branch",
         "category": "Open Trestle"
       },
       {
-        "command": "openTrestle.setToken",
-        "title": "Open Trestle: Set API Token",
+        "command": "openTrestle.clearFindings",
+        "title": "Clear Findings",
         "category": "Open Trestle"
       },
       {
-        "command": "openTrestle.clearToken",
-        "title": "Open Trestle: Clear API Token",
-        "category": "Open Trestle"
-      },
-      {
-        "command": "openTrestle.restart",
-        "title": "Open Trestle: Restart Diagnostics",
+        "command": "openTrestle.setUp",
+        "title": "Set Up Repository",
         "category": "Open Trestle"
       }
     ],
@@ -57,58 +50,10 @@
         "openTrestle.executable": {
           "type": "string",
           "default": "trestle",
-          "description": "Path to the Open Trestle CLI executable.",
-          "scope": "machine"
-        },
-        "openTrestle.server": {
-          "type": "string",
-          "default": "http://127.0.0.1:8741",
-          "description": "HTTPS or loopback HTTP daemon URL.",
-          "scope": "machine"
-        },
-        "openTrestle.tenant": {
-          "type": "string",
-          "default": "",
-          "description": "Exact tenant identifier.",
-          "scope": "machine"
-        },
-        "openTrestle.repository": {
-          "type": "string",
-          "default": "",
-          "description": "Exact repository identifier.",
-          "scope": "machine"
-        },
-        "openTrestle.run": {
-          "type": "string",
-          "default": "",
-          "description": "Exact review run identifier.",
-          "scope": "machine"
-        },
-        "openTrestle.autoStart": {
-          "type": "boolean",
-          "default": false,
-          "description": "Start read-only diagnostics when VS Code starts and configuration is complete.",
+          "description": "The trestle command name on PATH, or its absolute path.",
           "scope": "machine"
         }
       }
-    },
-    "menus": {
-      "commandPalette": [
-        {
-          "command": "openTrestle.connect",
-          "when": "!openTrestle.connected"
-        },
-        {
-          "command": "openTrestle.restart",
-          "when": "openTrestle.connected"
-        },
-        {
-          "command": "openTrestle.setToken"
-        },
-        {
-          "command": "openTrestle.clearToken"
-        }
-      ]
     }
   },
   "scripts": {
@@ -127,7 +72,6 @@
     "CHANGELOG.md",
     "LICENSE",
     "NOTICE",
-    "THIRD_PARTY_LICENSES",
     "icon.png"
   ],
   "repository": {
@@ -138,10 +82,6 @@
     "url": "https://github.com/georgejieh/open-trestle/issues"
   },
   "homepage": "https://github.com/georgejieh/open-trestle",
-  "dependencies": {
-    "vscode-jsonrpc": "10.0.0",
-    "vscode-languageserver-protocol": "3.18.5"
-  },
   "devDependencies": {
     "@types/node": "26.4.1",
     "@types/vscode": "1.95.0",
@@ -163,11 +103,11 @@
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": false,
-      "description": "The extension starts a local LSP process only in a trusted workspace."
+      "description": "A review runs git in the repository, may run its tests in a sandbox, and sends the change to models."
     },
     "virtualWorkspaces": {
       "supported": false,
-      "description": "Diagnostics bind to an exact local file workspace root."
+      "description": "A review needs a local folder."
     }
   }
 }

@@ -1,40 +1,6 @@
-import { isIP } from "node:net";
 import { isAbsolute } from "node:path";
-export interface ExtensionSettings {
-  executable: string;
-  server: string;
-  tenant: string;
-  repository: string;
-  run: string;
-}
-export interface LaunchConfiguration {
-  command: string;
-  args: readonly string[];
-  initializationOptions: {
-    tenant_id: string;
-    repository_id: string;
-    review_run_id: string;
-  };
-  environment: { OPEN_TRESTLE_API_TOKEN: string };
-}
-export class ConfigurationError extends Error {
-  constructor() {
-    super("Open Trestle configuration is incomplete or unsafe.");
-    this.name = "ConfigurationError";
-  }
-}
-const identifier = /^[a-z0-9](?:[a-z0-9._:-]*[a-z0-9])?$/;
-function validIdentifier(value: string): boolean {
-  return identifier.test(value) && Buffer.byteLength(value, "utf8") <= 128;
-}
-function validToken(value: string): boolean {
-  return (
-    Buffer.byteLength(value, "utf8") >= 32 &&
-    Buffer.byteLength(value, "utf8") <= 512 &&
-    !/[\u0000-\u0020\u007f\ud800-\udfff]/u.test(value)
-  );
-}
-function validExecutable(value: string): boolean {
+export function validExecutable(value: unknown): value is string {
+  if (typeof value !== "string") return false;
   const bytes = Buffer.byteLength(value, "utf8");
   return (
     bytes >= 1 &&
@@ -43,64 +9,14 @@ function validExecutable(value: string): boolean {
     (isAbsolute(value) || /^[A-Za-z0-9._-]+$/.test(value))
   );
 }
-function validServer(value: string): boolean {
-  let parsed: URL;
-  try {
-    parsed = new URL(value);
-  } catch {
-    return false;
-  }
-  if (
-    parsed.username ||
-    parsed.password ||
-    parsed.search ||
-    parsed.hash ||
-    (parsed.pathname !== "" && parsed.pathname !== "/") ||
-    !parsed.hostname
-  )
-    return false;
-  if (parsed.protocol === "https:") return true;
-  if (parsed.protocol !== "http:") return false;
-  const canonicalOrigin = `${parsed.protocol}//${parsed.host}`;
-  if (value !== canonicalOrigin && value !== `${canonicalOrigin}/`)
-    return false;
-  const hostname = parsed.hostname.replace(/^\[|\]$/g, "");
-  const version = isIP(hostname);
-  return (
-    (version === 4 && hostname.startsWith("127.")) ||
-    (version === 6 && hostname === "::1")
-  );
-}
-export function buildLaunchConfiguration(
-  settings: ExtensionSettings,
-  token: string,
-): LaunchConfiguration {
-  if (
-    !validExecutable(settings.executable) ||
-    !validServer(settings.server) ||
-    !validIdentifier(settings.tenant) ||
-    !validIdentifier(settings.repository) ||
-    !validIdentifier(settings.run) ||
-    !validToken(token)
-  )
-    throw new ConfigurationError();
-  return {
-    command: settings.executable,
-    args: ["lsp", "--server", settings.server],
-    initializationOptions: {
-      tenant_id: settings.tenant,
-      repository_id: settings.repository,
-      review_run_id: settings.run,
-    },
-    environment: { OPEN_TRESTLE_API_TOKEN: token },
-  };
-}
-const inheritedEnvironmentKeys = [
+// What trestle and git need to find their programs, state, keys and proxies.
+const inheritedKeys = [
   "PATH",
-  "Path",
   "PATHEXT",
   "HOME",
   "USERPROFILE",
+  "APPDATA",
+  "LOCALAPPDATA",
   "SystemRoot",
   "WINDIR",
   "TMPDIR",
@@ -115,23 +31,28 @@ const inheritedEnvironmentKeys = [
   "https_proxy",
   "no_proxy",
 ] as const;
-export function buildChildEnvironment(
+const inheritedPrefixes = ["XDG_", "OPEN_TRESTLE_PROVIDER_"] as const;
+function usable(value: string | undefined): value is string {
+  return (
+    value !== undefined && value.length <= 32767 && !value.includes("\u0000")
+  );
+}
+// childEnvironment is the allowlisted environment of a review; everything
+// else, such as OPEN_TRESTLE_API_TOKEN, stays out.
+export function childEnvironment(
   inherited: NodeJS.ProcessEnv,
-  token: string,
 ): Record<string, string> {
-  if (!validToken(token)) throw new ConfigurationError();
-  const result: Record<string, string> = { OPEN_TRESTLE_API_TOKEN: token };
-  for (const key of inheritedEnvironmentKeys) {
+  const result: Record<string, string> = {};
+  for (const key of inheritedKeys) {
     const value = inherited[key];
+    if (usable(value)) result[key] = value;
+  }
+  for (const [key, value] of Object.entries(inherited))
     if (
-      value !== undefined &&
-      value.length <= 4096 &&
-      !value.includes("\u0000")
+      inheritedPrefixes.some((prefix) => key.startsWith(prefix)) &&
+      usable(value)
     )
       result[key] = value;
-  }
+  result.NO_COLOR = "1";
   return result;
-}
-export function isValidToken(value: string): boolean {
-  return validToken(value);
 }
