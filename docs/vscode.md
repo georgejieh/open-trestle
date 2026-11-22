@@ -49,7 +49,7 @@ The extension strips the capabilities offered during initialization down to pull
 Within that boundary, the extension does the following:
 
 - It requests standard pull diagnostics for eligible visible file documents under the exact initialized workspace.
-- It displays only verified diagnostic sets that the daemon returns. It therefore does not show run failures, failure reasons such as a context route refusal, or their hints. Use `trestle runs status`, the TUI or the web console for those.
+- It displays only verified diagnostic sets that the daemon returns. It therefore does not show run failures, failure reasons such as a context route refusal, or their hints. Use `trestle runs status` or the web console for those.
 - It has no document synchronization, code action, edit, terminal, repository command, model, worker, policy or publication capability.
 - It refuses to start without workspace trust, a workspace folder, safe machine-scoped configuration and a token in SecretStorage.
 - Before it changes credentials, it invalidates its diagnostics. It blocks a replacement until it has seen the child process it started close.

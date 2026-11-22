@@ -1,6 +1,6 @@
 // Package routehint holds the fixed host words that explain a recorded route
 // refusal. Every surface that shows one uses this text, so the local review,
-// the daemon's CLI, TUI and ACP results, and the web console stay identical.
+// the daemon's CLI results, and the web console stay identical.
 package routehint
 
 import (

@@ -60,17 +60,11 @@ func main() {
 	if len(os.Args) >= 2 && os.Args[1] == "lsp" {
 		os.Exit(runLSP(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
 	}
-	if len(os.Args) >= 2 && os.Args[1] == "acp" {
-		os.Exit(runACP(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
-	}
 	if len(os.Args) >= 2 && os.Args[1] == "init" {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		code := runInit(ctx, os.Args[2:], os.Stdin, os.Stdout, os.Stderr)
 		stop()
 		os.Exit(code)
-	}
-	if len(os.Args) >= 2 && os.Args[1] == "tui" {
-		os.Exit(runTUI(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
 	}
 	if len(os.Args) >= 3 && os.Args[1] == "local-git" && (os.Args[2] == "model-review" || os.Args[2] == "retained-memory-input") {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -268,10 +262,8 @@ func writeUsage(w io.Writer) {
 	writeUsageGroup(w, "Integrations")
 	writeLocalGitModelReviewUsage(w)
 	writeRunsUsage(w)
-	writeTUIUsage(w)
 	writeMCPUsage(w)
 	writeLSPUsage(w)
-	writeACPUsage(w)
 	writeLocalGitSubmitReviewUsage(w)
 
 	writeUsageGroup(w, "Operators")

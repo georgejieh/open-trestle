@@ -2019,8 +2019,6 @@ def main() -> int:
             diagnostics_value = json.loads(diagnostics_body)["diagnostics"]
             console = request(url + "/console/")
             write_artifact(artifacts / "console.html", console)
-            tui = execute([str(trestle), "tui", "--server", url, "--tenant", "tenant-a", "--repository", "repository-a", "--run", run_id, "--plain", "--once"])
-            write_artifact(artifacts / "tui-before-restart.txt", tui.stdout)
             json_first = execute([*status_args, "--format", "json"])
             sarif_first = execute([*status_args, "--format", "sarif"])
             write_artifact(artifacts / "result-before-restart.json", json_first.stdout)
@@ -2053,7 +2051,6 @@ def main() -> int:
             write_artifact(artifacts / "diagnostics-after-restart.json", diagnostics_after)
             write_artifact(artifacts / "result-after-restart.json", json_after.stdout)
             write_artifact(artifacts / "result-after-restart.sarif.json", sarif_after.stdout)
-            write_artifact(artifacts / "tui-after-restart.txt", execute([str(trestle), "tui", "--server", url, "--tenant", "tenant-a", "--repository", "repository-a", "--run", run_id, "--plain", "--once"]).stdout)
             if not args.skip_browser:
                 browser_after = run_browser_phase("after_restart", {**expected_browser, "phase": "after_restart"})
             if json.loads(status_after.stdout)["identity"] != status_value["identity"] or json.loads(diagnostics_after)["diagnostics"] != diagnostics_value or json_after.stdout != json_first.stdout or sarif_after.stdout != sarif_first.stdout:

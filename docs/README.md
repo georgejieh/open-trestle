@@ -30,8 +30,8 @@ no release yet, and each page describes what the code does today. The
 
 - [GitHub pull-request review](github-pr-review.md): the Actions example and the GitHub App path.
 - [VS Code](vscode.md): show the findings of a daemon run in the editor.
-- [MCP](mcp.md), [ACP](acp.md) and [LSP](lsp.md).
-- [Terminal UI](tui.md) and [web console](web-console.md).
+- [MCP](mcp.md) and [LSP](lsp.md).
+- [Web console](web-console.md).
 - [Daemon API](daemon-api.md).
 
 ## Reference

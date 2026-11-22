@@ -1,7 +1,7 @@
 # Roadmap
 
 Open Trestle aims to be the best open-source code-review agent, one that runs
-wherever you work: the command line, a terminal UI, your editor, a GitHub
+wherever you work: the command line, your editor, a GitHub
 Action and a desktop app. A review steers its models with specialist skills and
 system prompts, finds, verifies and ranks findings with memory of past reviews
 and a map of the codebase, and ties every finding to the source it concerns.
@@ -50,7 +50,7 @@ released.
   SARIF. It has been tested offline only. See
   [GitHub pull-request review](github-pr-review.md).
 - **Daemon and observers.** `trestled` keeps durable runs and an authenticated
-  API. The terminal UI, the VS Code extension, the web console, MCP, ACP and
+  API. The VS Code extension, the web console, MCP and
   LSP observe or submit daemon runs. They do not start a direct review. See
   [architecture](architecture.md).
 - **Evaluation corpus.** 23 synthetic Go cases with a run driver and a scorer.
@@ -84,7 +84,6 @@ released.
 - Checks drafted from findings that recur, offered as a patch and never applied
   silently.
 - Pull-request interaction: suggestion blocks, check runs and replies.
-- A TUI that starts a review and browses findings.
 - An optional OS keyring backend for saved keys.
 - Spending limits that the daemon records and enforces.
 - Independent human adjudication of the evaluation corpus, public benchmarks and
