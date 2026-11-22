@@ -30,7 +30,7 @@ Reviews the latest committed change with the setup that `trestle init` made.
 
 | Flag | Meaning |
 | --- | --- |
-| `--base REF`, `--head REF` | Pick the two commits. Default: `HEAD` against its merge base with the default branch. |
+| `--base REF`, `--head REF` | Pick the two commits. Default: `HEAD` against its merge base with the default branch; with `--head` alone, that head against its merge base. |
 | `--directory PATH` | The setup folder, when it is not the one `trestle init` proposes. |
 | `--format text\|json\|sarif\|markdown` | Result format. Default: the setup's. |
 | `--all` | List every finding, not only confirmed high and medium ones. |

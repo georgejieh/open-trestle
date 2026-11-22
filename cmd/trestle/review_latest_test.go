@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -267,21 +268,52 @@ func TestLatestChangeBaseUsesTheNewerOfTheLocalAndOriginDefaultBranch(t *testing
 	checkoutGit(t, repo, "update-ref", "refs/heads/main", old)
 	checkoutGit(t, repo, "checkout", "-q", "-b", "feature", upstream)
 	checkoutGit(t, repo, "commit", "-q", "--allow-empty", "-m", "my change")
-	if base, label := initDefaultMergeBase(ctx, repo); base != upstream || label != "merge base with main" {
+	if base, label := initDefaultMergeBase(ctx, repo, "HEAD"); base != upstream || label != "merge base with main" {
 		t.Fatalf("a stale local main pulled upstream commits into the review: %s %q (want %s, not %s)", base, label, upstream, old)
 	}
 	// Unpushed commits on main itself are reviewed against origin/main.
 	checkoutGit(t, repo, "checkout", "-q", "main")
 	checkoutGit(t, repo, "reset", "-q", "--hard", upstream)
 	checkoutGit(t, repo, "commit", "-q", "--allow-empty", "-m", "unpushed")
-	if base, _ := initDefaultMergeBase(ctx, repo); base != upstream {
+	if base, _ := initDefaultMergeBase(ctx, repo, "HEAD"); base != upstream {
 		t.Fatalf("unpushed work on main: base %s, want origin/main %s", base, upstream)
 	}
 	// Only a remote-tracking default branch: it is still found.
 	checkoutGit(t, repo, "checkout", "-q", "feature")
 	checkoutGit(t, repo, "branch", "-q", "-D", "main")
-	if base, label := initDefaultMergeBase(ctx, repo); base != upstream || label != "merge base with main" {
+	if base, label := initDefaultMergeBase(ctx, repo, "HEAD"); base != upstream || label != "merge base with main" {
 		t.Fatalf("origin/main alone: %s %q", base, label)
+	}
+}
+
+// With --head and no --base, the default base is the merge base of the
+// selected head with the default branch, whatever is checked out.
+func TestDefaultBaseFollowsTheSelectedHead(t *testing.T) {
+	ctx := t.Context()
+	repo := t.TempDir()
+	checkoutGit(t, repo, "init", "-q", "-b", "main")
+	checkoutGit(t, repo, "commit", "-q", "--allow-empty", "-m", "fork point")
+	fork := checkoutGit(t, repo, "rev-parse", "HEAD")
+	checkoutGit(t, repo, "checkout", "-q", "-b", "feature")
+	checkoutGit(t, repo, "commit", "-q", "--allow-empty", "-m", "feature work")
+	checkoutGit(t, repo, "checkout", "-q", "main")
+	checkoutGit(t, repo, "commit", "-q", "--allow-empty", "-m", "main moved")
+	main := checkoutGit(t, repo, "rev-parse", "HEAD")
+	base, label, head, _, code, problem := latestChange(ctx, latestReviewPrinter(ctx, io.Discard, repo), latestReviewOptions{head: "feature"})
+	if code != 0 || base != fork || label != "merge base with main" || head != "refs/heads/feature" {
+		t.Fatalf("review --head feature: base %s %q head %s (exit %d, %s), want base %s, not main %s", base, label, head, code, problem, fork, main)
+	}
+	// The wizard proposes the same base for --head.
+	result := runInitScript(t, repo, []string{"--no-input", "--directory", filepath.Join(t.TempDir(), "setup"), "--head", "refs/heads/feature"})
+	if !strings.Contains(result.stdout, "Base:       "+initShort(fork)+"  (merge base with main)") {
+		t.Fatalf("init --head feature proposed another base than %s:\n%s\n%s", initShort(fork), result.stdout, result.stderr)
+	}
+	// On the default branch with unpushed commits, origin's copy is the base
+	// when that branch is selected by name too.
+	checkoutGit(t, repo, "update-ref", "refs/remotes/origin/main", fork)
+	checkoutGit(t, repo, "checkout", "-q", "feature")
+	if base, _ := initDefaultMergeBase(ctx, repo, "refs/heads/main"); base != fork {
+		t.Fatalf("--head main from feature: base %s, want origin/main %s", base, fork)
 	}
 }
 

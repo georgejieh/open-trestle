@@ -83,7 +83,7 @@ After `trestle init` (see [getting started](getting-started.md)), `trestle revie
 - the head is `HEAD`;
 - the base is the newest commit that `HEAD` shares with the default branch.
 
-`--base REF` and `--head REF` pick the commits exactly. A new setup saves `--format text` and, unless you set it up with `--specialists none`, `--specialists auto`.
+`--base REF` and `--head REF` pick the commits exactly. With `--head REF` alone, the base is the newest commit that REF shares with the default branch. A new setup saves `--format text` and, unless you set it up with `--specialists none`, `--specialists auto`.
 
 The result goes to standard output in the saved format or in the one you pass with `--format`. Every other line, including the commits, where the source is sent and the spending and scanning messages, goes to standard error. These flags pass through: `--directory`, `--timeout`, `--profile`, `--specialists`, `--max-specialists`, `--exit-code-policy`, `--all`, `--verbose`, `--checks` and `--no-checks`.
 
@@ -429,7 +429,7 @@ A verified finding is on unchanged lines when it overlaps no changed line and no
 
 - It is in an unchanged Go file.
 - Every changed file was analysed as Go, with no coverage gap.
-- No changed declaration is a method or an `init` function.
+- No changed declaration is a method, an `init` function or a package-level variable.
 - The [repository index](repository-index.md), or the analysis of the review's own snapshots, covered the whole head, records value uses for the changed definitions' language, and found no dependent of a changed definition outside the changed definitions.
 
 Any other finding on unchanged lines has an unproven origin. It is listed in `unproven_origin`, it shows `origin: unproven` in text and Markdown, and it blocks CI like an introduced finding. A finding on removed base lines, in an added file or in a file that the diff cannot represent is introduced. Only a direct run classifies findings.

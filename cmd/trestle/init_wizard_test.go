@@ -563,7 +563,7 @@ func TestInitSelectionHelpers(t *testing.T) {
 	checkoutGit(t, repo, "checkout", "trunk")
 	checkoutGit(t, repo, "commit", "--allow-empty", "-m", "trunk moved")
 	checkoutGit(t, repo, "checkout", "feature")
-	if got, label := initDefaultMergeBase(ctx, repo); got != fork || label != "merge base with trunk" {
+	if got, label := initDefaultMergeBase(ctx, repo, "HEAD"); got != fork || label != "merge base with trunk" {
 		t.Fatalf("default merge base = %q (%q), want %s", got, label, fork)
 	}
 	if summary := initSummarizeChange(ctx, repo, fork, head); summary.commits != 1 {
