@@ -429,7 +429,7 @@ A verified finding is on unchanged lines when it overlaps no changed line and no
 
 - It is in an unchanged Go file.
 - Every changed file was analysed as Go, with no coverage gap.
-- No changed declaration is a method, an `init` function or a package-level variable.
+- No changed declaration is a method, an `init` function or a package-level variable, and no blank package-level variable (`var _ = register()`) was added, removed or changed.
 - The [repository index](repository-index.md), or the analysis of the review's own snapshots, covered the whole head, records value uses for the changed definitions' language, and found no dependent of a changed definition outside the changed definitions.
 
 Any other finding on unchanged lines has an unproven origin. It is listed in `unproven_origin`, it shows `origin: unproven` in text and Markdown, and it blocks CI like an introduced finding. A finding on removed base lines, in an added file or in a file that the diff cannot represent is introduced. Only a direct run classifies findings.
