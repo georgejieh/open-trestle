@@ -40,7 +40,7 @@ GOWORK=off go vet ./...
 
 `go test -race -p=1 ./...` runs the race tests that CI also runs. The documentation tests are in `internal/config`, and you run them with `go test ./internal/config/`. They include the protocol schema inventory described in [protocol contracts](protocol-contracts.md). The secret scanner is a separate module. Run `go test ./...` and `go vet ./...` in `workers/secret-scanner` with `GOWORK=off`.
 
-A plain `go build` pins no secret scan helper, so the program it makes refuses every review. To run a review from a working tree, build with `python3 tools/package_secret_scanner.py --development DIR` on Linux, macOS or Windows, then run `DIR/bin/trestle`. See [operations](operations.md#package-the-secret-scanner).
+A plain `go build` pins no secret scan helper, so the program it makes refuses every review. To run a review from a working tree, build with `python3 tools/package_secret_scanner.py --development DIR` on Linux or Windows, then run `DIR/bin/trestle`. See [operations](operations.md#package-the-secret-scanner).
 
 The check sandbox and repository check tests run with `go test -count=1 -v -run='Escape|Sandbox' ./internal/checksandbox/` and `go test -count=1 -v -run='Toolchains|EndToEnd' ./internal/checksandbox/ ./internal/repochecks/`. The escape tests skip, with a reason, where the sandbox facility is missing; CI fails the job on a skip.
 

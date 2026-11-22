@@ -39,10 +39,10 @@ the wizard asks for the key right after you choose the models:
 The prompt behaves as follows.
 
 - Your typing is hidden. The terminal's echo is turned off while you type (termios on
-  Linux and macOS, the console mode on Windows) and turned back on before
+  Linux, the console mode on Windows) and turned back on before
   anything else is printed, also when you press Ctrl-C or Ctrl-D. The prompt
   appears only once echo is off. If echo cannot be turned off, no key is read.
-  Only Linux has been tested; the macOS and Windows code is untested (see
+  Only Linux has been tested; the Windows code is untested (see
   [platforms](platforms.md)).
 - Without a terminal, the wizard does not ask. With `--no-input`, or when
   standard input is a pipe or a file, it does not prompt for a key. The setup

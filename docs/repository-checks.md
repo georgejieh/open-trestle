@@ -39,16 +39,16 @@ Both models receive the outcomes as the `check_runs` object: each check's name, 
 
 ## What the sandbox allows
 
-| | Linux | Windows | macOS |
-| --- | --- | --- | --- |
-| Mechanism | unprivileged user, mount, PID, network, IPC, UTS and cgroup namespaces, a seccomp filter, `no_new_privs` | an AppContainer with no capabilities, under a restricted token with no privilege but bypassing traverse checking, in which your account's SID and every group except Everyone, Users, Authenticated Users and the sign-in's logon session only deny, so it keeps none of your account's or an administrator's rights, in a job object | `sandbox-exec` with a deny-by-default profile |
-| Network | none; only the sandbox's own loopback | none, including DNS and the host's loopback | none |
-| Reads | `/usr`, `/etc`, `/bin`, `/lib*`, the toolchain folders and the Go module cache, read-only (the whole cache, which can hold modules of your other repositories) | Windows' own folders, and the toolchain folders and Go module cache | the system folders, the null and random devices, the toolchain folders and the Go module cache |
-| Writes | its scratch only (a size-bounded tmpfs holding the tree copy, a private home and `/tmp`) | its scratch and its AppContainer profile folder (see Limits for what it can leave there) | the tree copy, private home and temporary folder in its scratch only |
-| Home folder, keys, other repositories | not mounted | not readable | not readable |
-| Environment | a short allowlist; no key or token variable | the same; your registry hive (`HKCU`), including the variables `setx` saves in `HKCU\Environment`, is not readable through your account's rights | the same |
-| Terminal | none: a new session without a controlling terminal, and no `/dev/tty` | none: the process starts without a console | none: a new session without a controlling terminal, and no terminal device |
-| Processes | a fresh PID namespace; the whole tree is killed at the end or on timeout; they start as the kernel's first choice when memory runs out | the job object; the whole tree is killed at the end or on timeout | its process group is killed at the end or on timeout, but not a process that started its own session (see Limits) |
+| | Linux | Windows |
+| --- | --- | --- |
+| Mechanism | unprivileged user, mount, PID, network, IPC, UTS and cgroup namespaces, a seccomp filter, `no_new_privs` | an AppContainer with no capabilities, under a restricted token with no privilege but bypassing traverse checking, in which your account's SID and every group except Everyone, Users, Authenticated Users and the sign-in's logon session only deny, so it keeps none of your account's or an administrator's rights, in a job object |
+| Network | none; only the sandbox's own loopback | none, including DNS and the host's loopback |
+| Reads | `/usr`, `/etc`, `/bin`, `/lib*`, the toolchain folders and the Go module cache, read-only (the whole cache, which can hold modules of your other repositories) | Windows' own folders, and the toolchain folders and Go module cache |
+| Writes | its scratch only (a size-bounded tmpfs holding the tree copy, a private home and `/tmp`) | its scratch and its AppContainer profile folder (see Limits for what it can leave there) |
+| Home folder, keys, other repositories | not mounted | not readable |
+| Environment | a short allowlist; no key or token variable | the same; your registry hive (`HKCU`), including the variables `setx` saves in `HKCU\Environment`, is not readable through your account's rights |
+| Terminal | none: a new session without a controlling terminal, and no `/dev/tty` | none: the process starts without a console |
+| Processes | a fresh PID namespace; the whole tree is killed at the end or on timeout; they start as the kernel's first choice when memory runs out | the job object; the whole tree is killed at the end or on timeout |
 
 On Windows, a toolchain folder that does not already grant read access to sandboxed apps (as Windows' own folders and most of `Program Files` do by default) is given a read-and-execute entry for an Open Trestle capability once, so later runs find it there. Since the sandbox's token does not match your account, a toolchain folder that only your account can read (as most folders in your home) is also given a read-and-execute entry for the logon session SID of your current sign-in (not for a group other accounts are in); the first run after the next sign-in replaces it. The scratch and the AppContainer profile folder get the logon session's entry for the length of the run. A folder whose permissions only an administrator can change cannot be granted, and its checks report that. Each grant is recorded in `~/.local/state/open-trestle/sandbox-grants` (under `XDG_STATE_HOME` when that is set), and `trestle checks off` takes the recorded grants back.
 
@@ -60,11 +60,9 @@ Each run has 3 minutes, 4 GiB of memory (for the whole tree on Windows; on Linux
 
 On Linux, the total memory of all the sandbox's processes together and shared memory such as `memfd` files are not bounded; only each process's data and the scratch size are. On Linux kernels before 5.14 the process limit counts all of your account's processes, so the sandbox allows for the number already running when it starts.
 
-On Windows and macOS the scratch size is a measurement, not a quota. Every quarter second Open Trestle adds up what is stored in the folders the sandbox can write, NTFS alternate data streams included, and checks how far the free space of their volume has fallen since the run started, which also counts files deleted while still open. A burst of writes can pass the limit briefly before the run is stopped, and other programs filling the same volume during the run count too. On Windows the AppContainer's own profile folder counts toward the scratch space, since the sandbox can write there too.
+On Windows the scratch size is a measurement, not a quota. Every quarter second Open Trestle adds up what is stored in the folders the sandbox can write, NTFS alternate data streams included, and checks how far the free space of their volume has fallen since the run started, which also counts files deleted while still open. A burst of writes can pass the limit briefly before the run is stopped, and other programs filling the same volume during the run count too. On Windows the AppContainer's own profile folder counts toward the scratch space, since the sandbox can write there too.
 
 On Windows the sandbox cannot change the permissions of what it has written, but Windows lets it create a folder with permissions of its own choosing, and such a folder can deny your account, even as its owner, the right to delete it. Removing the scratch then fails, the review reports a scratch it could not remove, and only an administrator can delete that folder (with `takeown /r` and `icacls /reset /t`).
-
-macOS has no per-tree process or memory limit without administrator rights, so those fall back to the system's per-user limits. A process that starts its own session with `setsid` leaves the process group and cannot be killed reliably: it stays inside the sandbox's profile but has no time bound after the run, and its writes stop counting once the run ends. Removing the scratch then fails while it keeps writing there; the review reports a scratch it could not remove, and a later review's cleanup tries again.
 
 ## Could not run
 
@@ -79,6 +77,6 @@ A check that could not run is a gap in coverage, never a pass and never a findin
 
 Reasons that belong to one side end with "on base" or "on head".
 
-## Not verified
+## macOS
 
-The macOS sandbox is built and its profile is tested, but it has not been run on a Mac. Apple marks `sandbox-exec` as deprecated, though it ships with macOS.
+Checks are off on macOS, and every check reports that the sandbox is not available. See [platforms](platforms.md#macos).

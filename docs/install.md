@@ -7,11 +7,11 @@ on where the models run.
 
 | You want | Use | Systems |
 | --- | --- | --- |
-| Any model, on your machine or remote (Ollama, llama.cpp, vLLM, LM Studio, OpenRouter, Ollama Cloud, OpenCode Go) | A development build | Linux, macOS or Windows; see [platforms](platforms.md) |
+| Any model, on your machine or remote (Ollama, llama.cpp, vLLM, LM Studio, OpenRouter, Ollama Cloud, OpenCode Go) | A development build | Linux or Windows; see [platforms](platforms.md) |
 | The same, as an installed package | The packaged Linux amd64 install | Linux amd64 only |
 
-Other systems are planned for the first release: native packages or
-installers for macOS and Windows, and `trestle update` on each. See the [roadmap](roadmap.md#next-release).
+Planned for the first release: a native package or installer for Windows,
+and `trestle update` there. See the [roadmap](roadmap.md#next-release).
 
 ## A development build
 

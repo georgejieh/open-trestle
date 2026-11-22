@@ -12,7 +12,7 @@ Every review, with a model server on this machine or a remote provider
 (OpenRouter, Ollama Cloud, OpenCode Go, and Ollama signed in to Ollama Cloud),
 scans each request for secrets in the secret scan helper before it is sent. A
 plain `go build` pins no helper and refuses every review. Build with
-`python3 tools/package_secret_scanner.py --development DIR` on Linux, macOS or
+`python3 tools/package_secret_scanner.py --development DIR` on Linux or
 Windows, or use the packaged Linux amd64 install. [platforms](platforms.md) says
 what works on each system today. See
 [prerequisite 1](remote-model-review.md#prerequisite-1-a-trestle-with-its-secret-scanner).

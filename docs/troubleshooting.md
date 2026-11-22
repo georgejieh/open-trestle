@@ -76,15 +76,14 @@ without a filter. See
 
 ### A folder is refused as not private
 
-On Linux and macOS, the credential, usage and setup folders must be mode
+On Linux, the credential, usage and setup folders must be mode
 `0700`, and their files `0600`. You must own them, they must contain no
 symbolic links, and no parent may be writable by others. Fix the mode with
 `chmod 700 FOLDER`, or move the folder. The message names the folder and the mode it found. See
 [environment variables and files](environment-and-files.md#paths).
 
 The secret scanner cache (`~/.cache/open-trestle/scan-cache/`) follows the same
-rules. On macOS it must also carry no access-list entry. If it has one, the
-message tells you to run `chmod -N` on it. Deleting the cache folder is safe;
+rules. Deleting the cache folder is safe;
 the next review fills it again and prints `Preparing the secret scanner for
 first use; this can take a minute.`
 
