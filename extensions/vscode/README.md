@@ -5,7 +5,7 @@ editor's Problems panel. It connects to a review run that the Open Trestle
 daemon already holds, through the read-only `trestle lsp` server, and displays
 the verified findings from diagnostic
 versions 1 through 5. Version 6 deterministic observations remain outside LSP
-findings, because they are not verified findings; the CLI and
+findings, because they are not verified findings; the CLI, the terminal UI and
 the web console show them.
 
 The extension only displays results. It does not start a review, edit files, run
