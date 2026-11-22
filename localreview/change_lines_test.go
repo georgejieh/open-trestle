@@ -176,3 +176,30 @@ func TestIsolatedChangeNeedsAProfileAndACompleteIndexWithoutDependents(t *testin
 		t.Fatal("a self-reference inside the changed declaration made the change linked")
 	}
 }
+
+// A blank package variable records no declaration in the profile, yet its
+// initializer runs at package initialization, so a change to one is never
+// isolated.
+func TestChangedBlankPackageVariableIsNotIsolated(t *testing.T) {
+	complete := indexManifest(review.ContextIndexUsed, true, 0)
+	isolated := func(base, head string) bool {
+		t.Helper()
+		value := &pathChange{kind: "modified"}
+		diffModifiedFile(value, "p.go", []byte(base), []byte(head))
+		lines := changeLines{paths: map[string]*pathChange{"p.go": value}, evidence: map[string]bool{}}
+		return lines.withImpact(goProfile(t, "p.go", base, head), complete).isolated
+	}
+	const helper = "\nfunc helper() int { return 1 }\n"
+	for name, change := range map[string][2]string{
+		"an initializer":     {"package p\n\nvar _ = register(1)\n" + helper, "package p\n\nvar _ = register(2)\n" + helper},
+		"an interface check": {"package p\n\nvar _ A = (*T)(nil)\n" + helper, "package p\n\nvar _ B = (*T)(nil)\n" + helper},
+		"an added variable":  {"package p\n" + helper, "package p\n\nvar _ = register(1)\n" + helper},
+	} {
+		if isolated(change[0], change[1]) {
+			t.Fatalf("%s: a changed blank package variable was proved isolated", name)
+		}
+	}
+	if !isolated("package p\n\nvar _ = register(1)\n"+helper, "package p\n\nvar _ = register(1)\n\nfunc helper() int { return 2 }\n") {
+		t.Fatal("an unchanged blank package variable made the change linked")
+	}
+}

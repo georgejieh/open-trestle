@@ -200,6 +200,47 @@ func parseGoFile(f File) (parsedGoFile, bool) {
 	}
 	return out, true
 }
+
+// GoBlankVariablesChanged reports whether the package-level var specs whose
+// names are all blank (var _ = register(), var _ I = (*T)(nil)) differ
+// between a base and a head Go source, or whether either fails to parse. Such
+// a spec leaves no declaration in a profile, yet its initializer runs at
+// package initialization. A nil source, for an added or removed file, has
+// none.
+func GoBlankVariablesChanged(base, head []byte) bool {
+	b, bok := goBlankVariables(base)
+	h, hok := goBlankVariables(head)
+	return !bok || !hok || !slices.Equal(b, h)
+}
+func goBlankVariables(content []byte) ([]string, bool) {
+	if content == nil {
+		return nil, true
+	}
+	fset := token.NewFileSet()
+	node, err := parser.ParseFile(fset, "", content, parser.SkipObjectResolution)
+	if err != nil {
+		return nil, false
+	}
+	var specs []string
+	for _, decl := range node.Decls {
+		d, ok := decl.(*ast.GenDecl)
+		if !ok || d.Tok != token.VAR {
+			continue
+		}
+		for _, spec := range d.Specs {
+			s := spec.(*ast.ValueSpec)
+			if slices.ContainsFunc(s.Names, func(name *ast.Ident) bool { return name.Name != "_" }) {
+				continue
+			}
+			var b bytes.Buffer
+			if format.Node(&b, fset, s) != nil {
+				return nil, false
+			}
+			specs = append(specs, b.String())
+		}
+	}
+	return specs, true
+}
 func rawDecl(fset *token.FileSet, node ast.Node, key, name, kind string, exported bool, namePos token.Pos) rawDeclaration {
 	var b bytes.Buffer
 	_ = format.Node(&b, fset, node)
