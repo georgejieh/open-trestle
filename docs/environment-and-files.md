@@ -30,9 +30,9 @@ Other variables that change behavior:
 
 | Variable | Secret | Read by | Meaning |
 | --- | --- | --- | --- |
-| `OPEN_TRESTLE_API_TOKEN` | yes | `trestled`, `trestle runs`, `trestle admin runtime status`, `trestle mcp`, `trestle lsp`, `trestle acp`, `trestle tui` | The operator bearer token of the daemon API (at least 32 bytes). Pass the observer token here for a read-only client. See [daemon API](daemon-api.md). |
+| `OPEN_TRESTLE_API_TOKEN` | yes | `trestled`, `trestle runs`, `trestle admin runtime status`, `trestle mcp`, `trestle lsp`, `trestle tui` | The operator bearer token of the daemon API (at least 32 bytes). Pass the observer token here for a read-only client. See [daemon API](daemon-api.md). |
 | `OPEN_TRESTLE_OBSERVER_TOKEN` | yes | `trestled`, `setup bootstrap check` | The separate, read-only observer token. |
-| `OPEN_TRESTLE_API_URL` | no | `trestle runs`, `admin runtime status`, `mcp`, `lsp`, `acp`, `tui` | The daemon address. Default `http://127.0.0.1:8741`. `--server` overrides it. |
+| `OPEN_TRESTLE_API_URL` | no | `trestle runs`, `admin runtime status`, `mcp`, `lsp`, `tui` | The daemon address. Default `http://127.0.0.1:8741`. `--server` overrides it. |
 | `OPEN_TRESTLE_GITHUB_WEBHOOK_SECRET` | yes | `trestled` | The GitHub webhook HMAC secret. See [webhook ingress](webhook-ingress.md). |
 | `OPEN_TRESTLE_GITHUB_API_TOKEN` | yes | `trestled` | The legacy source-acquisition token. Unset selects anonymous acquisition. See [GitHub source acquisition](github-source-acquisition.md). |
 | `OPEN_TRESTLE_GITHUB_SOURCE_BROKER_CONFIG` | no | `trestled` | The path of the protected source-broker descriptor. |

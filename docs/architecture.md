@@ -30,7 +30,7 @@ There are two ways to run this flow.
 - The direct path is `trestle local-git model-review`, which `trestle review` and the first review in `trestle init` also run. It executes the review task graph inside the `trestle` process with process-private stores. It keeps the repository index on disk for later reviews, and the `review` and `init` wrappers also keep last-review metadata.
 - The daemon path runs the same handlers inside `trestled` with durable runs. The GitHub webhook planner, `trestle local-git submit-review`, `trestle runs submit` and the MCP `open_trestle.submit_run` tool submit reviews to it.
 
-The TUI, `trestle lsp` and the VS Code extension, the web console and ACP observe one daemon run. They cannot start a review. On both paths the runtime, not the surface, owns authorization, policy, provider routing, execution safety, evidence retention and audit receipts.
+The TUI, `trestle lsp` and the VS Code extension, and the web console observe one daemon run. They cannot start a review. On both paths the runtime, not the surface, owns authorization, policy, provider routing, execution safety, evidence retention and audit receipts.
 
 A direct review prepares its context before any model call:
 
@@ -139,7 +139,7 @@ Open Trestle has three integration paths:
 
 1. The event path uses authenticated GitHub webhooks. Webhooks and service hooks from other forges are planned.
 2. The command path covers local terminals, CI jobs and scripts that use a declared Git state or a local fixture file. Git-hook integration is planned.
-3. The protocol path covers web console, REST, LSP, MCP and ACP clients. A gRPC API is planned.
+3. The protocol path covers web console, REST, LSP and MCP clients. A gRPC API is planned.
 
 The [roadmap](roadmap.md) lists the planned items. None of them has code in the tree.
 

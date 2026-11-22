@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/georgejieh/open-trestle/acpserver"
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/client"
 	"github.com/georgejieh/open-trestle/controlplane"
@@ -22,7 +21,6 @@ import (
 var (
 	_ tui.RefusalService       = (*client.Client)(nil)
 	_ mcpserver.RefusalService = (*client.Client)(nil)
-	_ acpserver.RefusalService = (*client.Client)(nil)
 )
 
 type cliRefusals struct{ record webhook.RefusalRecord }

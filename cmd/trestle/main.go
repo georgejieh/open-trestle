@@ -60,9 +60,6 @@ func main() {
 	if len(os.Args) >= 2 && os.Args[1] == "lsp" {
 		os.Exit(runLSP(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
 	}
-	if len(os.Args) >= 2 && os.Args[1] == "acp" {
-		os.Exit(runACP(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
-	}
 	if len(os.Args) >= 2 && os.Args[1] == "init" {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		code := runInit(ctx, os.Args[2:], os.Stdin, os.Stdout, os.Stderr)
@@ -271,7 +268,6 @@ func writeUsage(w io.Writer) {
 	writeTUIUsage(w)
 	writeMCPUsage(w)
 	writeLSPUsage(w)
-	writeACPUsage(w)
 	writeLocalGitSubmitReviewUsage(w)
 
 	writeUsageGroup(w, "Operators")

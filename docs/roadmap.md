@@ -50,7 +50,7 @@ released.
   SARIF. It has been tested offline only. See
   [GitHub pull-request review](github-pr-review.md).
 - **Daemon and observers.** `trestled` keeps durable runs and an authenticated
-  API. The terminal UI, the VS Code extension, the web console, MCP, ACP and
+  API. The terminal UI, the VS Code extension, the web console, MCP and
   LSP observe or submit daemon runs. They do not start a direct review. See
   [architecture](architecture.md).
 - **Evaluation corpus.** 23 synthetic Go cases with a run driver and a scorer.
