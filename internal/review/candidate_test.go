@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -150,6 +151,22 @@ func TestParseCandidateBatchRejectsUnboundOrOutOfRangeEvidence(t *testing.T) {
 	document := strings.Replace(validCandidateDocument(), `"evidence_ids":["evidence-1"]`, `"evidence_ids":["other-evidence"]`, 1)
 	response, snapshot, items = candidateFixture(t, document)
 	items = append(items, otherItem)
+	// The source that holds the reported lines is cited even when
+	// evidence_ids names only other sources.
+	batch, err := ParseCandidateBatch(response, snapshot, items)
+	if err != nil || len(batch.Findings()) != 1 {
+		t.Fatalf("located source left out of evidence_ids = (%#v, %v)", batch, err)
+	}
+	if got := batch.Findings()[0].EvidenceIDs(); !slices.Equal(got, []string{"evidence-1", "other-evidence"}) {
+		t.Fatalf("evidence = %v, want the located source added", got)
+	}
+	// A full evidence list leaves no room to add it.
+	full := strings.Replace(validCandidateDocument(), `"evidence_ids":["evidence-1"]`, `"evidence_ids":["other-1","other-2","other-3","other-4"]`, 1)
+	response, snapshot, items = candidateFixture(t, full)
+	for _, id := range []string{"other-1", "other-2", "other-3", "other-4"} {
+		item, _ := evidence.NewEvidenceItem(id, evidence.EvidenceKindSource, strings.Repeat("c", 64), otherRange)
+		items = append(items, item)
+	}
 	if batch, err := ParseCandidateBatch(response, snapshot, items); !errors.Is(err, ErrCandidateEvidenceRangeMismatch) || batch.Identity() != "" {
 		t.Fatalf("range mismatch = (%#v, %v)", batch, err)
 	}

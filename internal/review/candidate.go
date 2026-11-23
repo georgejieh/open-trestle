@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strings"
 	"unicode"
@@ -713,7 +714,17 @@ func newCandidateFinding(responseIdentity string, snapshot ReviewSnapshot, ordin
 		}
 	}
 	if !citedRange {
-		return CandidateFinding{}, ErrCandidateEvidenceRangeMismatch
+		// The proposal names the source that holds its lines, so that source
+		// is cited even when evidence_ids leaves it out.
+		_, baseLines := rules.baseLines[document.SourceRange.SourceID]
+		if baseLines != baseAnchor || slices.Contains(document.EvidenceIDs, document.SourceRange.SourceID) || len(bindings) >= maxCandidateEvidence {
+			return CandidateFinding{}, ErrCandidateEvidenceRangeMismatch
+		}
+		binding := candidateEvidenceBinding{identity: sourceItem.ID(), digest: sourceItem.Digest(), sourceRange: sourceItem.SourceRange()}
+		if baseLines && recordSides {
+			binding.side = LineSideBase
+		}
+		bindings = append(bindings, binding)
 	}
 	sort.Slice(bindings, func(left, right int) bool { return bindings[left].identity < bindings[right].identity })
 	finding := CandidateFinding{

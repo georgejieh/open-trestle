@@ -179,12 +179,20 @@ func TestCandidateAnchoredOnRemovedLinesIsABaseSideFinding(t *testing.T) {
 		t.Fatalf("base-side location outside the removed lines: %v", err)
 	}
 	// Head evidence never covers base lines, and base evidence never covers
-	// head lines, even when the numbers contain each other.
-	if _, err := parse(candidate(removedID, 4, 5, `["`+windowID+`"]`)); !errors.Is(err, ErrCandidateEvidenceRangeMismatch) {
-		t.Fatalf("head evidence satisfied a base-side citation: %v", err)
-	}
-	if _, err := parse(candidate(windowID, 4, 5, `["`+removedID+`"]`)); !errors.Is(err, ErrCandidateEvidenceRangeMismatch) {
-		t.Fatalf("removed_lines evidence satisfied the head citation: %v", err)
+	// head lines, even when the numbers contain each other: the located
+	// source is what covers the lines, and it is cited when left out.
+	for _, located := range []string{removedID, windowID} {
+		other := windowID
+		if located == windowID {
+			other = removedID
+		}
+		batch, err := parse(candidate(located, 4, 5, `["`+other+`"]`))
+		if err != nil || len(batch.Findings()) != 1 {
+			t.Fatalf("located source left out of evidence_ids: %v", err)
+		}
+		if got := batch.Findings()[0].EvidenceIDs(); len(got) != 2 || !slices.Contains(got, located) {
+			t.Fatalf("evidence = %v, want the located source added", got)
+		}
 	}
 }
 
@@ -443,8 +451,10 @@ func TestRemovedLinesNeverCoverHeadRanges(t *testing.T) {
 		return ParseContextCandidateBatch(v7Response(t, document), payload, snapshot, packet.EvidenceItems())
 	}
 	// Generation: removed calc.go:4-6 numerically contains head calc.go:4-5.
-	if _, err := parseGeneration(generationDocument(`["` + removedID + `"]`)); !errors.Is(err, ErrCandidateEvidenceRangeMismatch) {
-		t.Fatalf("generation: removed_lines citation covered head lines: %v", err)
+	// The removed_lines citation does not cover them; the located head source
+	// is cited in its place.
+	if batch, err := parseGeneration(generationDocument(`["` + removedID + `"]`)); err != nil || !slices.Contains(batch.Findings()[0].EvidenceIDs(), windowID) {
+		t.Fatalf("generation: located head source was not cited: %v", err)
 	}
 	for name, document := range rewrittenSourceRanges(generationDocument(`["`+removedID+`"]`), windowID, removedID) {
 		if batch, err := parseGeneration(document); err == nil {
@@ -490,8 +500,8 @@ func TestRemovedLinesNeverCoverHeadRanges(t *testing.T) {
 	investigationDocument := func(cited string) string {
 		return `{"schema_version":1,"candidates":[{"title":"Missing guard","claim":"The zero check was removed.","severity_hint":"high","source_range":{"source_id":"` + headID + `","start_line":1,"end_line":1},"evidence_ids":` + cited + `}]}`
 	}
-	if _, err := ParseInvestigationCandidateBatch(v7Response(t, investigationDocument(`["`+baseID+`"]`)), initial); !errors.Is(err, ErrCandidateEvidenceRangeMismatch) {
-		t.Fatalf("investigation: removed_lines citation covered head lines: %v", err)
+	if batch, err := ParseInvestigationCandidateBatch(v7Response(t, investigationDocument(`["`+baseID+`"]`)), initial); err != nil || !slices.Contains(batch.Findings()[0].EvidenceIDs(), headID) {
+		t.Fatalf("investigation: located head source was not cited: %v", err)
 	}
 	for name, document := range rewrittenSourceRanges(investigationDocument(`["`+baseID+`"]`), headID, baseID) {
 		if batch, err := ParseInvestigationCandidateBatch(v7Response(t, document), initial); err == nil {
