@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"sync"
@@ -98,7 +99,8 @@ func TestAskSecretReadsTheKeyOnlyWhileEchoIsOff(t *testing.T) {
 	if hidden || hides != 1 || restores != 1 || readWhileShown {
 		t.Fatalf("echo state after the read: hidden=%v hides=%d restores=%d readWhileShown=%v", hidden, hides, restores, readWhileShown)
 	}
-	if strings.Contains(out.String(), remoteTestKey) || !strings.HasPrefix(out.String(), "  API key for OpenRouter (hidden): ") || !strings.HasSuffix(out.String(), "\n") {
+	receipt := fmt.Sprintf("    Received ********%s (%d characters).\n", remoteTestKey[len(remoteTestKey)-4:], len(remoteTestKey))
+	if strings.Contains(out.String(), remoteTestKey) || !strings.HasPrefix(out.String(), "  API key for OpenRouter (hidden): ") || !strings.HasSuffix(out.String(), receipt) {
 		t.Fatalf("prompt output: %q", out.String())
 	}
 }
@@ -159,5 +161,22 @@ func TestOpenEchoTerminalRefusesNonTerminals(t *testing.T) {
 		if _, ok := openEchoTerminal(in); ok {
 			t.Fatalf("%T was treated as a terminal", in)
 		}
+	}
+}
+
+func TestAskSecretAsksAgainForTheSameTextPastedTwice(t *testing.T) {
+	terminal := newFakeEchoTerminal()
+	var out bytes.Buffer
+	prompt := newInitPrompter(context.Background(), &gatedTerminalInput{terminal: terminal, lines: []string{remoteTestKey + remoteTestKey, remoteTestKey}}, &out, initStyle{}, func(line string) { out.WriteString(line + "\n") })
+	defer prompt.close()
+	answer, err := prompt.askSecret("API key", terminal)
+	if err != nil || answer != remoteTestKey || !strings.Contains(out.String(), "the same text twice") || strings.Contains(out.String(), remoteTestKey) {
+		t.Fatalf("answer matched=%v err=%v", answer == remoteTestKey, err)
+	}
+}
+
+func TestSecretReceiptShowsNoPartOfAShortAnswer(t *testing.T) {
+	if got := secretReceipt("abcdefghijk"); got != "11 characters" {
+		t.Fatal(got)
 	}
 }

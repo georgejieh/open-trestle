@@ -6,12 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/georgejieh/open-trestle/internal/fileauthority"
 	"github.com/georgejieh/open-trestle/localreview"
@@ -775,9 +777,12 @@ func (w *initWizard) review(command []string) int {
 		return initExitFailed
 	}
 	w.say("\n  Running the review. This can take several minutes; press Ctrl-C to stop.")
-	var out, errOut bytes.Buffer
+	// transcript keeps both streams in the order they were written, so
+	// progress lines show before the result.
+	var out bytes.Buffer
+	transcript := &initTranscript{}
 	var outcome modelReviewOutcome
-	code := runLocalGitModelReviewObserved(w.ctx, command[3:], &out, &errOut, func(result modelReviewOutcome) { outcome = result })
+	code := runLocalGitModelReviewObserved(w.ctx, command[3:], io.MultiWriter(&out, transcript), transcript, func(result modelReviewOutcome) { outcome = result })
 	if outcome.status != "" {
 		values := map[string]string{}
 		for i := 3; i+1 < len(command); i += 2 {
@@ -785,25 +790,22 @@ func (w *initWizard) review(command []string) int {
 		}
 		recordLastReview(w.ctx, w.a.directory, lastReview{Status: outcome.status, Findings: outcome.findings, Base: values["--base"], Head: values["--head"]})
 	}
-	status, findings, advisory := "", 0, false
-	for _, line := range strings.Split(strings.TrimRight(out.String(), "\n"), "\n") {
+	// Every line of both streams (result, progress, hints, spending lines)
+	// stays in the box.
+	for _, line := range strings.Split(strings.TrimRight(transcript.String(), "\n"), "\n") {
 		for _, part := range initHangingWrap(line, initWidth-4) {
 			w.sayVerbatim("  │ " + part)
 		}
+	}
+	status, findings, advisory, reason := "", 0, false, false
+	for _, line := range strings.Split(out.String(), "\n") {
 		if value, ok := strings.CutPrefix(line, "status: "); ok && status == "" {
 			status = value
 		}
 		if strings.HasPrefix(line, "finding: ") {
 			findings++
 		}
-	}
-	if text := strings.TrimSpace(errOut.String()); text != "" {
-		// Each line of standard error (hints, spending lines) stays in the box.
-		for _, line := range strings.Split(text, "\n") {
-			for _, part := range initHangingWrap(line, initWidth-4) {
-				w.sayVerbatim("  │ " + part)
-			}
-		}
+		reason = reason || strings.HasPrefix(line, "hint: ")
 	}
 	w.say("")
 	// The observed outcome covers a single review and a specialist review set
@@ -836,8 +838,31 @@ func (w *initWizard) review(command []string) int {
 		w.say("  %s The review was refused before it started. Run `trestle init` again to re-check the setup, and check that the selected commits still exist.", w.bad)
 		return initExitRefused
 	}
-	w.say("  %s The review failed (exit %d). Check that the models are reachable, then run the review command above again.", w.bad, code)
+	if reason {
+		w.say("  %s The review failed (exit %d) for the reason shown above. Follow its hint, then run the review command above again.", w.bad, code)
+		return initExitFailed
+	}
+	w.say("  %s The review failed (exit %d) without reporting a reason. Check that the models are reachable, then run the review command above again.", w.bad, code)
 	return initExitFailed
+}
+
+// initTranscript collects the review's standard output and standard error in
+// write order.
+type initTranscript struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (t *initTranscript) Write(p []byte) (int, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.buf.Write(p)
+}
+
+func (t *initTranscript) String() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.buf.String()
 }
 
 func (w *initWizard) writeNextSteps(setup initSetup, outcome initOutcome) {

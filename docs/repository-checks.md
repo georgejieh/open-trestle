@@ -17,7 +17,7 @@ The checks are detected from the files of the head commit:
 
 | Stack | Check | Results read from |
 | --- | --- | --- |
-| Go (each `go.mod`) | `go test -json` and `go vet`, for the packages of the changed Go files and of the files that depend on them, or the whole module when `go.mod`, `go.sum` or `go.work` changes; base runs only the packages it has. A module with `vendor/modules.txt` builds from its vendor folder | `go test -json` events; `go vet`'s diagnostics |
+| Go (each `go.mod`) | `go test -json` and `go vet`, for the packages of the changed Go files and of the files that depend on them, or the whole module when `go.mod`, `go.sum` or `go.work` changes; base runs only the packages it has. A module with `vendor/modules.txt` builds from its vendor folder. A check of a module below the root names its folder, for example `go test ./x (in tools)` | `go test -json` events; `go vet`'s diagnostics |
 | Node (`package.json` with a `test` script) | `node --test` with a TAP reporter when the script is a plain `node --test` call; otherwise the `test` script through npm, pnpm or yarn | TAP results; otherwise the exit status |
 | Python (files named `test_*.py` or `*_test.py`) | `python -m pytest` when the repository configures pytest, otherwise `python -m unittest discover -v -b`, each for the whole suite | the JUnit report the harness asks pytest to write; unittest's verbose result lines |
 | Rust (`Cargo.toml`) | `cargo test --offline` | the test result lines, each test named by the test binary cargo ran it in |
