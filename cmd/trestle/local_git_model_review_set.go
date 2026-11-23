@@ -342,6 +342,9 @@ type setMemberWire struct {
 	// ContextShortfall is present only with failure_detail
 	// route_context_insufficient.
 	ContextShortfall *setContextShortfallWire `json:"context_shortfall,omitempty"`
+	// ModelOutputProblem is present only with failure_detail
+	// model_output_invalid.
+	ModelOutputProblem string `json:"model_output_problem,omitempty"`
 }
 
 type setContributorWire struct {
@@ -706,7 +709,7 @@ func buildModelReviewSet(selection specialistSelectionWire, members []localModel
 		} else {
 			wire.reportAvailable = true
 			wire.Status, wire.CI, wire.RunStatus, wire.Failure = report.Status, report.CIDisposition, report.RunStatus, report.Failure
-			wire.FailureTask, wire.FailureDetail, wire.failureHint = report.FailureTask, report.FailureDetail, report.FailureHint
+			wire.FailureTask, wire.FailureDetail, wire.failureHint, wire.ModelOutputProblem = report.FailureTask, report.FailureDetail, report.FailureHint, report.ModelOutputProblem
 			if s := report.ContextShortfall; s != nil {
 				wire.ContextShortfall = &setContextShortfallWire{RequiredTokens: s.RequiredTokens, EstimatedInputTokens: s.EstimatedInputTokens, MaxOutputTokens: s.MaxOutputTokens, DeclaredContextTokens: s.DeclaredContextTokens}
 			}

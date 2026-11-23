@@ -8,6 +8,7 @@ import (
 
 	"github.com/georgejieh/open-trestle/agentprofile"
 	"github.com/georgejieh/open-trestle/diagnostics"
+	"github.com/georgejieh/open-trestle/internal/routehint"
 	"github.com/georgejieh/open-trestle/localreview"
 )
 
@@ -173,16 +174,15 @@ func TestLocalModelReviewReportsAPartialAnswerAtTheOutputLimit(t *testing.T) {
 // cut-short document, or a verdict for an unnamed candidate) names the model's
 // answer with a fixed hint, and the answer's text never reaches any output.
 func TestLocalModelReviewNamesAnAnswerThatIsNotAReviewDocument(t *testing.T) {
-	const hint = "the model's answer was not a valid review document (for example malformed JSON, the wrong shape or a refusal): run the review again; if it repeats, choose another model"
 	for _, test := range []struct {
-		name    string
-		options localModelFixtureOptions
-		task    string
+		name          string
+		options       localModelFixtureOptions
+		task, problem string
 	}{
-		{"chat-template tokens", localModelFixtureOptions{chatCompletions: true, generationMode: "template_tokens"}, "candidates"},
-		{"control character at verification", localModelFixtureOptions{chatCompletions: true, verificationMode: "control_character"}, "verification"},
-		{"document cut short", localModelFixtureOptions{generationMode: "malformed"}, "candidates"},
-		{"verdict for another candidate", localModelFixtureOptions{verificationMode: "wrong_candidate"}, "verification"},
+		{"chat-template tokens", localModelFixtureOptions{chatCompletions: true, generationMode: "template_tokens"}, "candidates", "not_json"},
+		{"control character at verification", localModelFixtureOptions{chatCompletions: true, verificationMode: "control_character"}, "verification", "not_json"},
+		{"document cut short", localModelFixtureOptions{generationMode: "malformed"}, "candidates", "not_json"},
+		{"verdict for another candidate", localModelFixtureOptions{verificationMode: "wrong_candidate"}, "verification", "unknown_candidate"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			f := newLocalModelFixture(t, test.options)
@@ -190,16 +190,17 @@ func TestLocalModelReviewNamesAnAnswerThatIsNotAReviewDocument(t *testing.T) {
 			if code := run(f.args, &stdout, &stderr); code != 1 {
 				t.Fatalf("exit=%d stdout=%s stderr=%q", code, stdout.String(), stderr.String())
 			}
-			if !strings.Contains(stdout.String(), `"failure":"internal","failure_detail":"model_output_invalid"`) || strings.Contains(stdout.String()+stderr.String(), "<|") || strings.Contains(stdout.String(), "\\u0001") {
+			if !strings.Contains(stdout.String(), `"failure":"internal","failure_detail":"model_output_invalid","model_output_problem":"`+test.problem+`"`) || strings.Contains(stdout.String()+stderr.String(), "<|") || strings.Contains(stdout.String(), "\\u0001") {
 				t.Fatalf("result=%s", stdout.String())
 			}
 			text := runLocalModelText(t, newLocalModelFixture(t, test.options), 1)
-			if want := "failure: internal (task " + test.task + "): model_output_invalid\nhint: " + hint; !strings.Contains(text, want) || strings.Contains(text, "<|") {
+			if want := "failure: internal (task " + test.task + "): model_output_invalid\nhint: " + routehint.ModelOutputInvalidHint(test.problem); !strings.Contains(text, want) || strings.Contains(text, "<|") {
 				t.Fatalf("text=%q want %q", text, want)
 			}
 		})
 	}
-	// A review set member carries the same detail and hint.
+	// A review set member carries the same detail, class and hint.
+	hint := routehint.ModelOutputInvalidHint("not_json")
 	f := newLocalModelFixture(t, localModelFixtureOptions{chatCompletions: true, generationMode: "template_tokens"})
 	_, text := runLocalModelSet(t, f, []string{"--specialists", "auto", "--format", "text"}, 1)
 	if !strings.Contains(text, "not finished: general (failed: internal (task candidates): model_output_invalid)\nhint: general: "+hint) || strings.Contains(text, "<|") {

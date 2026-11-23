@@ -118,6 +118,23 @@ func TestModelOutputInvalidNamesTheAnswer(t *testing.T) {
 	}
 }
 
+// The hint of an invalid answer names its class with fixed words, keeps the
+// generic hint for an unknown or missing class, and stays one line.
+func TestModelOutputInvalidHintNamesTheClass(t *testing.T) {
+	if hint := ModelOutputInvalidHint("unknown_candidate"); hint != "the model's answer was not a valid review document (unknown_candidate: a verdict named a candidate ID that is not in the request, often a miscopied ID): run the review again; if it repeats, choose another model" {
+		t.Fatalf("hint = %q", hint)
+	}
+	generic := ProviderRefusalHint(ModelOutputInvalid)
+	if ModelOutputInvalidHint("") != generic || ModelOutputInvalidHint("something_else") != generic {
+		t.Fatal("an unknown class changed the hint")
+	}
+	for _, problem := range []string{"not_json", "refusal", "wrong_shape", "invalid_value", "unknown_candidate", "candidate_set_mismatch", "unknown_evidence", "evidence_mismatch"} {
+		if hint := ModelOutputInvalidHint(problem); !strings.Contains(hint, "("+problem+": ") || strings.ContainsAny(hint, "\r\n") {
+			t.Fatalf("%s hint = %q", problem, hint)
+		}
+	}
+}
+
 // A request the provider rejected as invalid is named as a rejection of the
 // request, not as a refused reply, with the checks an operator can make; the
 // words repeat nothing the provider said.

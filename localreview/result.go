@@ -49,8 +49,9 @@ type resultWire struct {
 	CI                     string                   `json:"ci_disposition"`
 	RunStatus              string                   `json:"run_status"`
 	Failure                string                   `json:"failure"`
-	FailureDetail          string                   `json:"failure_detail,omitempty"`    // observed refinement of Failure; see failure_summary.go
-	ContextShortfall       *contextShortfallWire    `json:"context_shortfall,omitempty"` // only with FailureDetailRouteContextInsufficient
+	FailureDetail          string                   `json:"failure_detail,omitempty"`       // observed refinement of Failure; see failure_summary.go
+	ContextShortfall       *contextShortfallWire    `json:"context_shortfall,omitempty"`    // only with FailureDetailRouteContextInsufficient
+	ModelOutputProblem     string                   `json:"model_output_problem,omitempty"` // only with FailureDetailModelOutputInvalid
 	Run                    string                   `json:"review_run_id"`
 	Scope                  string                   `json:"scope_identity"`
 	Request                string                   `json:"request_identity"`
@@ -469,6 +470,9 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 	// document; the reason names the answer's form and never its text.
 	if state.Status() == controlplane.ReviewRunFailed && state.Failure() == controlplane.RunFailureInternal && w.FailureDetail == "" && answerInvalid {
 		w.FailureDetail = FailureDetailModelOutputInvalid
+		if s.routeFailures != nil {
+			w.ModelOutputProblem = string(s.routeFailures.lastAnswerProblem())
+		}
 	}
 	if state.Status() == controlplane.ReviewRunCanceled {
 		w.Status = "canceled"

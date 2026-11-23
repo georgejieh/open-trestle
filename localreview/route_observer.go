@@ -8,6 +8,7 @@ import (
 	modelhandler "github.com/georgejieh/open-trestle/handlers/model"
 	"github.com/georgejieh/open-trestle/internal/gateway"
 	"github.com/georgejieh/open-trestle/internal/provider"
+	"github.com/georgejieh/open-trestle/internal/review"
 	"github.com/georgejieh/open-trestle/internal/routehint"
 )
 
@@ -36,6 +37,9 @@ type routeFailureObserver struct {
 	// spend counts the requests that reached a provider and their
 	// upper-bound cost.
 	spend SpendObservation
+	// answerProblem is the class of the last answer a model handler recorded
+	// as model_output_invalid.
+	answerProblem review.ModelOutputProblem
 }
 
 // SpendObservation is what one run's model requests may have cost, for the
@@ -155,6 +159,21 @@ func (o *routeFailureObserver) reset() {
 	o.last = 0
 	o.lastOpenRouter = false
 	o.spend = SpendObservation{}
+	o.answerProblem = ""
+}
+
+// recordAnswerProblem keeps the class of an answer a model handler recorded
+// as model_output_invalid.
+func (o *routeFailureObserver) recordAnswerProblem(problem review.ModelOutputProblem) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.answerProblem = problem
+}
+
+func (o *routeFailureObserver) lastAnswerProblem() review.ModelOutputProblem {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.answerProblem
 }
 
 // recordRoute notes whether the dispatch record just saw went to OpenRouter.

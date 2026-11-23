@@ -371,7 +371,7 @@ func parseVerificationBatch(response provider.Response, candidates CandidateBatc
 		return VerificationBatch{}, ErrInvalidVerificationResponseEnvelope
 	}
 	if response.FinishReason() != provider.ResponseFinishStop || len(parts) != 1 || parts[0].Kind() != provider.ResponsePartStructuredData {
-		return VerificationBatch{}, modelOutputFailure(ErrInvalidVerificationResponseEnvelope)
+		return VerificationBatch{}, envelopeFailure(ErrInvalidVerificationResponseEnvelope, parts)
 	}
 	if err := candidates.Validate(); err != nil {
 		return VerificationBatch{}, err

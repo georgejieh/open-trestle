@@ -602,7 +602,7 @@ func parseCandidateBatch(response provider.Response, snapshot ReviewSnapshot, ev
 		return CandidateBatch{}, ErrInvalidCandidateResponseEnvelope
 	}
 	if response.FinishReason() != provider.ResponseFinishStop || len(parts) != 1 || parts[0].Kind() != provider.ResponsePartStructuredData {
-		return CandidateBatch{}, modelOutputFailure(ErrInvalidCandidateResponseEnvelope)
+		return CandidateBatch{}, envelopeFailure(ErrInvalidCandidateResponseEnvelope, parts)
 	}
 	if err := snapshot.Validate(); err != nil {
 		return CandidateBatch{}, err
