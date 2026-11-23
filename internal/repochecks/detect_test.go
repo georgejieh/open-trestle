@@ -41,7 +41,7 @@ func TestDetectGoRestrictsToChangedPackagesAndDependents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"go test ./x", "go vet ./x", "go test . ./a ./b", "go vet . ./a ./b"}
+	want := []string{"go test ./x (in tools)", "go vet ./x (in tools)", "go test . ./a ./b", "go vet . ./a ./b"}
 	if got := names(checks); !slices.Equal(got, want) {
 		t.Fatalf("got %q, want %q", got, want)
 	}
