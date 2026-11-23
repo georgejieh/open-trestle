@@ -63,13 +63,15 @@ Because the request requires ZDR, OpenRouter refuses it instead of sending it to
 
 `allow_fallbacks` is true so that OpenRouter may retry a request on another pinned endpoint when the one it picked fails. Without it, OpenRouter serves a request only from its top-ranked endpoint, and one failing endpoint would fail the review. Fallback never leaves `only`. If no endpoint in `only` serves the model, OpenRouter refuses the request with HTTP 404 even with `allow_fallbacks` true.
 
+A request also carries `"reasoning":{"effort":"low"}` when every pinned endpoint lists `reasoning` among its supported parameters. Reasoning tokens count against `max_tokens`, and OpenRouter documents low effort as about a fifth of the allowance, so the answer keeps room (the model provider decides the exact use). With `require_parameters` true, OpenRouter would not route a request to an endpoint that lacks a parameter it carries, so a route with any other endpoint, or with no recorded slugs, sends no `reasoning` member.
+
 The 16384-token allowance that setup aims for gets the longest request deadline, five minutes (see [the request deadline](remote-model-review.md#output-allowance-and-request-deadline)).
 
 The setup summary, `bootstrap check` (`data_retention: required_per_request`) and the wizard all say that ZDR is required on every request. This describes the request, not what a provider retains. OpenRouter documents legal exceptions to ZDR, such as CSAM handling.
 
 ### ZDR not required
 
-This route is a generic `private_remote` Chat Completions connection to `https://openrouter.ai/api/v1`, like Ollama Cloud. Its requests carry no `provider` object, so OpenRouter routes them by its defaults and by your account and key settings. The model provider may keep prompts under its own terms. Your account or key may still enforce ZDR, and in that case OpenRouter refuses a model that has no ZDR endpoint.
+This route is a generic `private_remote` Chat Completions connection to `https://openrouter.ai/api/v1`, like Ollama Cloud. Its requests carry no `provider` object, so OpenRouter routes them by its defaults and by your account and key settings. The model provider may keep prompts under its own terms. Your account or key may still enforce ZDR, and in that case OpenRouter refuses a model that has no ZDR endpoint. Every request carries `"reasoning":{"effort":"low"}`. Without `require_parameters`, an endpoint that does not support a parameter ignores it, so a model that does not reason is unaffected.
 
 `trestle init` chooses this route only after it explains the trade-off in two sentences and you answer yes, or when you pass `--without-zdr`. Running `setup bootstrap init --provider openrouter` makes the same choice directly.
 
@@ -94,13 +96,13 @@ The witness's `observation` holds what the API reported, or `null` when the API 
 
 - `authority_label`: `as reported by OpenRouter's API at <time>; not reviewed or verified by the operator`
 - `retrieved_at` and `sources`: both API addresses, each with its own retrieval time and the SHA-256 of the exact response bytes
-- `zdr_endpoints`: for each pinned endpoint, its tag, provider name, context, prompt and output limits, prices and structured-output support
+- `zdr_endpoints`: for each pinned endpoint, its tag, provider name, context, prompt and output limits, prices, structured-output support, and whether it accepts the reasoning parameter (`reasoning`)
 - `safety_retention_endpoints_excluded`: the ZDR endpoints left out because they report Safety Retention or do not say
 - `output_limit_endpoints_excluded`: the usable ZDR endpoints left out because they allow fewer output tokens than the review output allowance, each with its `tag` and reported `max_completion_tokens` (empty when the slugs came from flags, or when no endpoint was left out)
 
 The witness records what the API reported at one moment. A route without ZDR records the same observation, without endpoint facts, in an informational `openrouter_route` member labelled `not_required_by_open_trestle`.
 
-Every member of the witness is required and closed. Only `observation` may be `null`. The slug rules are:
+Every member of the witness is required and closed, except an endpoint's `reasoning`: a witness saved without it reads as false. Only `observation` may be `null`. The slug rules are:
 
 - Slugs use lowercase letters, digits, `-`, `_`, `.` and `/`, are at most 256 bytes each, and are distinct. There are at most 32.
 - With `openrouter_api`, the slugs are exactly the observed endpoint tags, in order. `operator` needs at least one slug, and `none` has none.

@@ -141,6 +141,10 @@ func TestInitOpenRouterBothModelsWithZDRRequiresItByDefault(t *testing.T) {
 			t.Fatalf("a request did not require zero data retention: %v", controls)
 		}
 	}
+	// Only the finder's pinned endpoints all accept the reasoning parameter.
+	if !slices.Equal(transport.reasoning, []string{`vendor/generator {"effort":"low"}`, "other/verifier "}) || !initHas(result.stdout, "reasoning model; reviews ask it for low reasoning effort") {
+		t.Fatalf("reasoning effort not asked for exactly where accepted: %v\n%s", transport.reasoning, result.stdout)
+	}
 	saved := initReadOpenRouterSetup(t, dir)
 	if saved.policy["schema_version"] != float64(8) || saved.policy["max_output_tokens"] != float64(16000) || saved.bootstrap["provider"] != "openrouter-zdr" || strings.Contains(saved.raw, remoteTestKey) {
 		t.Fatalf("saved setup is not the ZDR route: %v %v", saved.policy["schema_version"], saved.bootstrap["provider"])
@@ -239,6 +243,11 @@ func TestInitOpenRouterModelWithoutZDRContinuesOnlyWithConsent(t *testing.T) {
 		if controls != nil {
 			t.Fatalf("a request without zero data retention carried provider controls: %v", controls)
 		}
+	}
+	// Without provider controls an endpoint ignores a parameter it lacks, so
+	// every request asks for low reasoning effort.
+	if !slices.Equal(transport.reasoning, []string{`vendor/generator {"effort":"low"}`, `plain/verifier {"effort":"low"}`}) {
+		t.Fatalf("reasoning effort not asked for: %v", transport.reasoning)
 	}
 	saved := initReadOpenRouterSetup(t, dir)
 	if saved.bootstrap["provider"] != "openrouter" || saved.policy["schema_version"] != float64(2) {

@@ -50,6 +50,7 @@ type remoteModelTransport struct {
 	requests             []string                     // "task:model"
 	providers            []map[string]json.RawMessage // each request's provider object, nil when absent
 	payloads             []string                     // each request's user message, as sent
+	reasoning            []string                     // each request as "model REASONING", REASONING empty when absent
 }
 
 func (r *remoteModelTransport) RoundTrip(request *http.Request) (*http.Response, error) {
@@ -71,6 +72,7 @@ func (r *remoteModelTransport) RoundTrip(request *http.Request) (*http.Response,
 		Stream    bool                             `json:"stream"`
 		Messages  []struct{ Role, Content string } `json:"messages"`
 		Provider  map[string]json.RawMessage       `json:"provider"`
+		Reasoning json.RawMessage                  `json:"reasoning"`
 	}
 	allowance := r.maxTokens
 	if allowance == 0 {
@@ -155,6 +157,7 @@ func (r *remoteModelTransport) RoundTrip(request *http.Request) (*http.Response,
 	r.mu.Lock()
 	r.requests = append(r.requests, packet.Task+":"+wire.Model)
 	r.providers = append(r.providers, wire.Provider)
+	r.reasoning = append(r.reasoning, wire.Model+" "+string(wire.Reasoning))
 	r.payloads = append(r.payloads, wire.Messages[1].Content)
 	r.mu.Unlock()
 	if packet.Task == "candidate_verification" && r.verificationStatus != 0 {

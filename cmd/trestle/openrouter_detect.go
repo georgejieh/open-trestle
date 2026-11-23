@@ -58,6 +58,8 @@ type openRouterEndpoint struct {
 	promptMicro, completionMicro          uint64
 	pricesKnown, structured, maxTokens    bool
 	safetyRetention, safetyRetentionKnown bool
+	// reasoning is an endpoint that accepts the reasoning request parameter.
+	reasoning bool
 }
 
 // usable reports whether Open Trestle can pin the endpoint for a review: it
@@ -79,6 +81,8 @@ type openRouterListedModel struct {
 	context, maxCompletion       uint64
 	promptMicro, completionMicro uint64
 	pricesKnown, structured      bool
+	// reasoning is a model the API lists with reasoning controls.
+	reasoning bool
 }
 
 // openRouterObservation is the result of reading both lists once. A failed
@@ -166,6 +170,21 @@ func (f openRouterModelFacts) structured(zdr bool) bool {
 	}
 	for _, endpoint := range f.zdr {
 		if !endpoint.structured {
+			return false
+		}
+	}
+	return f.hasZDR()
+}
+
+// reasoning reports whether review requests ask for low reasoning effort: a
+// request without zero data retention always does, and one with it only when
+// every pinned endpoint accepts the reasoning parameter.
+func (f openRouterModelFacts) reasoning(zdr bool) bool {
+	if !zdr {
+		return true
+	}
+	for _, endpoint := range f.zdr {
+		if !endpoint.reasoning {
 			return false
 		}
 	}
@@ -301,7 +320,7 @@ func parseOpenRouterZDR(body []byte) (map[string][]openRouterEndpoint, error) {
 		if initValidSelector(entry.ModelID) != nil || !remoteValidSlug(entry.Tag) {
 			continue
 		}
-		endpoint := openRouterEndpoint{tag: entry.Tag, providerName: initPrintable(entry.ProviderName, entry.Tag), structured: openRouterStructured(entry.SupportedParameters), maxTokens: slices.Contains(entry.SupportedParameters, "max_tokens")}
+		endpoint := openRouterEndpoint{tag: entry.Tag, providerName: initPrintable(entry.ProviderName, entry.Tag), structured: openRouterStructured(entry.SupportedParameters), maxTokens: slices.Contains(entry.SupportedParameters, "max_tokens"), reasoning: slices.Contains(entry.SupportedParameters, "reasoning")}
 		if entry.ContextLength != nil {
 			endpoint.context = *entry.ContextLength
 		}
@@ -338,7 +357,8 @@ func parseOpenRouterModels(body []byte) (map[string]openRouterListedModel, []mod
 				ContextLength       *uint64 `json:"context_length"`
 				MaxCompletionTokens *uint64 `json:"max_completion_tokens"`
 			} `json:"top_provider"`
-			SupportedParameters []string `json:"supported_parameters"`
+			SupportedParameters []string        `json:"supported_parameters"`
+			Reasoning           json.RawMessage `json:"reasoning"`
 		} `json:"data"`
 	}
 	if json.NewDecoder(bytes.NewReader(body)).Decode(&wire) != nil || wire.Data == nil {
@@ -350,7 +370,7 @@ func parseOpenRouterModels(body []byte) (map[string]openRouterListedModel, []mod
 		if initValidSelector(entry.ID) != nil {
 			continue
 		}
-		model := openRouterListedModel{structured: openRouterStructured(entry.SupportedParameters)}
+		model := openRouterListedModel{structured: openRouterStructured(entry.SupportedParameters), reasoning: len(entry.Reasoning) != 0 && string(entry.Reasoning) != "null"}
 		if entry.TopProvider.ContextLength != nil {
 			model.context = *entry.TopProvider.ContextLength
 		} else if entry.ContextLength != nil {
@@ -535,7 +555,7 @@ func (o *openRouterObservation) label() string {
 func (o *openRouterObservation) witnessObservation(facts openRouterModelFacts) map[string]any {
 	endpoints := []map[string]any{}
 	for _, endpoint := range facts.zdr {
-		endpoints = append(endpoints, map[string]any{"tag": endpoint.tag, "provider_name": endpoint.providerName, "context_length": endpoint.context, "max_prompt_tokens": endpoint.maxPrompt, "max_completion_tokens": endpoint.maxCompletion, "prompt_micro_usd_per_million_tokens": endpoint.promptMicro, "completion_micro_usd_per_million_tokens": endpoint.completionMicro, "structured_outputs": endpoint.structured})
+		endpoints = append(endpoints, map[string]any{"tag": endpoint.tag, "provider_name": endpoint.providerName, "context_length": endpoint.context, "max_prompt_tokens": endpoint.maxPrompt, "max_completion_tokens": endpoint.maxCompletion, "prompt_micro_usd_per_million_tokens": endpoint.promptMicro, "completion_micro_usd_per_million_tokens": endpoint.completionMicro, "structured_outputs": endpoint.structured, "reasoning": endpoint.reasoning})
 	}
 	excluded := append([]string{}, facts.safetyExcluded...)
 	outputExcluded := []map[string]any{}

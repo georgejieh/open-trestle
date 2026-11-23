@@ -161,6 +161,8 @@ func NewOpenAIRouteDispatcherCatalogWithOptions(inventory runtimeconfig.RouteInv
 			profileAuthority = &openai.OpenRouterRouteAuthority{Route: route, RouteRecordIdentity: authority.RouteRecordIdentity(), EvidenceIdentity: authority.EvidenceManifestDigest(), AccountPolicyIdentity: authority.AccountPolicyIdentity(), CredentialIdentity: connection.CredentialIdentity(), TenantID: authority.TenantID(), RepositoryID: authority.RepositoryID(), ProviderSlug: authority.ProviderSlug(), ValidFrom: authority.ValidFrom(), ValidUntil: authority.ValidUntil()}
 			if authority.Observed() {
 				profileAuthority.ProviderSlugs = append([]string{}, authority.ProviderSlugs()...)
+				witness, _ := inventory.OpenRouterObservedWitness(authority.RouteRecordIdentity())
+				profileAuthority.Reasoning = witness.Reasoning
 			}
 			profileClock = options.Clock
 		}
