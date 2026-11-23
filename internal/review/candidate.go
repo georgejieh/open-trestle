@@ -597,12 +597,12 @@ func parseCandidateBatch(response provider.Response, snapshot ReviewSnapshot, ev
 	if err := response.Validate(); err != nil {
 		return CandidateBatch{}, err
 	}
-	parts := response.Parts()
 	if response.Capability() != provider.CapabilityReviewV1 {
 		return CandidateBatch{}, ErrInvalidCandidateResponseEnvelope
 	}
-	if response.FinishReason() != provider.ResponseFinishStop || len(parts) != 1 || parts[0].Kind() != provider.ResponsePartStructuredData {
-		return CandidateBatch{}, envelopeFailure(ErrInvalidCandidateResponseEnvelope, parts)
+	payload, err := answerDocument(response, ErrInvalidCandidateResponseEnvelope)
+	if err != nil {
+		return CandidateBatch{}, err
 	}
 	if err := snapshot.Validate(); err != nil {
 		return CandidateBatch{}, err
@@ -611,7 +611,7 @@ func parseCandidateBatch(response provider.Response, snapshot ReviewSnapshot, ev
 	if err != nil {
 		return CandidateBatch{}, err
 	}
-	batch, err := parseCandidateDocument(response, parts[0].Payload(), snapshot, allowedEvidence, version, rules)
+	batch, err := parseCandidateDocument(response, payload, snapshot, allowedEvidence, version, rules)
 	if err != nil {
 		return CandidateBatch{}, modelOutputFailure(err)
 	}

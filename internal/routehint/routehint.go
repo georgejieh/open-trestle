@@ -60,7 +60,7 @@ var modelOutputProblems = map[string]string{
 	"refusal":                "the model refused to answer",
 	"wrong_shape":            "the JSON did not have the required fields and structure",
 	"invalid_value":          "a field had a value the output rules do not allow",
-	"unknown_candidate":      "a verdict named a candidate ID that is not in the request, often a miscopied ID",
+	"unknown_candidate":      "a verdict named a candidate label that is not in the request",
 	"candidate_set_mismatch": "the verdicts did not answer every candidate exactly once",
 	"unknown_evidence":       "it cited a source ID that is not in the request",
 	"evidence_mismatch":      "the cited evidence does not cover the reported lines",

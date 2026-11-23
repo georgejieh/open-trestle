@@ -69,7 +69,7 @@ func TestCandidateParseMarksFailuresTheAnswerCaused(t *testing.T) {
 
 func TestVerificationParseMarksFailuresTheAnswerCaused(t *testing.T) {
 	_, candidates, items := verificationFixture(t, `{"schema_version":1,"verdicts":[]}`)
-	document := validVerificationDocument(candidates.Findings()[0].Identity())
+	document := validVerificationDocument("c1")
 	for _, test := range []struct {
 		name     string
 		response provider.Response
@@ -79,7 +79,7 @@ func TestVerificationParseMarksFailuresTheAnswerCaused(t *testing.T) {
 		{"chat-template tokens around the JSON", stoppedResponse(t, provider.ResponsePartAssistantText, "<|channel|>final<|message|>"+document+"<|return|>"), ErrInvalidVerificationResponseEnvelope, ModelOutputNotJSON},
 		{"the wrong shape", stoppedResponse(t, provider.ResponsePartStructuredData, `{"schema_version":1,"results":[]}`), ErrInvalidVerificationDocumentShape, ModelOutputWrongShape},
 		{"a missing verdict", stoppedResponse(t, provider.ResponsePartStructuredData, `{"schema_version":1,"verdicts":[]}`), ErrVerificationCandidateSetMismatch, ModelOutputCandidateSetMismatch},
-		{"a miscopied candidate ID", stoppedResponse(t, provider.ResponsePartStructuredData, strings.Replace(document, candidates.Findings()[0].Identity(), candidates.Findings()[0].Identity()[:62], 1)), ErrVerificationCandidateNotAllowed, ModelOutputUnknownCandidate},
+		{"an unknown candidate label", stoppedResponse(t, provider.ResponsePartStructuredData, strings.Replace(document, `"c1"`, `"c2"`, 1)), ErrVerificationCandidateNotAllowed, ModelOutputUnknownCandidate},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			_, err := ParseVerificationBatch(test.response, candidates, items)

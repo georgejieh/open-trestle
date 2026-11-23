@@ -14,7 +14,7 @@ import (
 
 const (
 	// ModelVerificationBatchSchemaIdentity is the SHA-256 identity of canonical model-verification-batch-v1 JSON Schema.
-	ModelVerificationBatchSchemaIdentity = "590b0c64c6ac4c766df127633d0af5b1f841c08194815db52100a1029ffd11c7"
+	ModelVerificationBatchSchemaIdentity = "687aed00eb76a52b24e8013f062806e23b5a0d875d4982460b93be6c81e1ade4"
 )
 
 var (
@@ -194,7 +194,7 @@ func encodeVerificationContext(packet VerificationContextPacket) ([]byte, error)
 	for index, candidate := range packet.candidates.findings {
 		sourceRange := candidate.SourceRange()
 		wire.Candidates[index] = verificationCandidateWire{
-			CandidateID: candidate.Identity(), Title: candidate.Title(), Claim: candidate.Claim(),
+			CandidateID: verificationCandidateLabel(index), Title: candidate.Title(), Claim: candidate.Claim(),
 			SeverityHint: string(candidate.SeverityHint()), SourceReference: candidate.SourceReferenceID(),
 			Path: sourceRange.Path(), StartLine: sourceRange.StartLine(), EndLine: sourceRange.EndLine(),
 			EvidenceIDs: candidate.EvidenceIDs(),

@@ -190,7 +190,7 @@ func TestVerdictCitingRemovedLinesUsesVerificationBatchV2(t *testing.T) {
 		t.Fatal(err)
 	}
 	verdict := func(cited string) provider.Response {
-		return v7Response(t, `{"schema_version":1,"verdicts":[{"candidate_id":"`+candidates.Findings()[0].Identity()+`","outcome":"verified","severity":"high","rationale":"The removed guard leaves the division unchecked.","evidence_ids":`+cited+`}]}`)
+		return v7Response(t, `{"schema_version":1,"verdicts":[{"candidate_id":"c1","outcome":"verified","severity":"high","rationale":"The removed guard leaves the division unchecked.","evidence_ids":`+cited+`}]}`)
 	}
 	headOnly, err := ParseContextVerificationBatch(verdict(`["`+window.ReferenceID()+`"]`), candidates, request)
 	if err != nil {

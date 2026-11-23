@@ -21,9 +21,9 @@
     },
     "candidate_id": {
       "type": "string",
-      "minLength": 64,
-      "maxLength": 64,
-      "pattern": "^[0-9a-f]{64}$"
+      "minLength": 2,
+      "maxLength": 3,
+      "pattern": "^c([1-9]|1[0-6])$"
     },
     "verdict": {
       "type": "object",

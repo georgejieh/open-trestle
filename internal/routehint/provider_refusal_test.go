@@ -121,7 +121,7 @@ func TestModelOutputInvalidNamesTheAnswer(t *testing.T) {
 // The hint of an invalid answer names its class with fixed words, keeps the
 // generic hint for an unknown or missing class, and stays one line.
 func TestModelOutputInvalidHintNamesTheClass(t *testing.T) {
-	if hint := ModelOutputInvalidHint("unknown_candidate"); hint != "the model's answer was not a valid review document (unknown_candidate: a verdict named a candidate ID that is not in the request, often a miscopied ID): run the review again; if it repeats, choose another model" {
+	if hint := ModelOutputInvalidHint("unknown_candidate"); hint != "the model's answer was not a valid review document (unknown_candidate: a verdict named a candidate label that is not in the request): run the review again; if it repeats, choose another model" {
 		t.Fatalf("hint = %q", hint)
 	}
 	generic := ProviderRefusalHint(ModelOutputInvalid)
