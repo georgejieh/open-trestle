@@ -46,10 +46,14 @@ type remoteModelTransport struct {
 	// verificationSeverity, when set, is the severity every verdict reports
 	// instead of high.
 	verificationSeverity string
-	mu                   sync.Mutex
-	requests             []string                     // "task:model"
-	providers            []map[string]json.RawMessage // each request's provider object, nil when absent
-	payloads             []string                     // each request's user message, as sent
+	// generation, when set, answers every generation request with no
+	// candidates ("empty") or with a document that is not valid JSON
+	// ("malformed").
+	generation string
+	mu         sync.Mutex
+	requests   []string                     // "task:model"
+	providers  []map[string]json.RawMessage // each request's provider object, nil when absent
+	payloads   []string                     // each request's user message, as sent
 }
 
 func (r *remoteModelTransport) RoundTrip(request *http.Request) (*http.Response, error) {
@@ -160,7 +164,13 @@ func (r *remoteModelTransport) RoundTrip(request *http.Request) (*http.Response,
 	if packet.Task == "candidate_verification" && r.verificationStatus != 0 {
 		return &http.Response{StatusCode: r.verificationStatus, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("")), Request: request}, nil
 	}
+	if packet.Task == "candidate_generation" && r.generation == "empty" {
+		output = map[string]any{"schema_version": 2, "candidates": []any{}}
+	}
 	text, _ := json.Marshal(output)
+	if packet.Task == "candidate_generation" && r.generation == "malformed" {
+		text = []byte(`{"schema_version":2,"candidates":[`)
+	}
 	usage := map[string]any{"prompt_tokens": 120, "completion_tokens": 80, "total_tokens": 200}
 	if strings.HasPrefix(r.target, "https://openrouter.ai/") {
 		usage["cost"], usage["is_byok"] = 0.0012, false

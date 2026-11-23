@@ -116,6 +116,9 @@ type resultWire struct {
 	// Walkthrough is a direct version 6 run's verification-led walkthrough
 	// (see walkthrough.go), present once the change model was recorded.
 	Walkthrough *Walkthrough `json:"walkthrough,omitempty"`
+	// CheckRegressions are the tests the repository's own checks proved
+	// broken (see WithCheckRegressions); they make the result blocked.
+	CheckRegressions *CheckRegressions `json:"check_regressions,omitempty"`
 	// StyleAdvice is the optional style advice of schema version 5, encoded
 	// inline as the last members.
 	StyleAdvice
@@ -947,6 +950,9 @@ func RenderResultWithOptions(writer io.Writer, r Result, options RenderOptions) 
 	report, err := r.Report()
 	if err != nil {
 		return ErrInvalidResult
+	}
+	for _, line := range CheckRegressionsText(report.CheckRegressions, report.RunStatus == "succeeded") {
+		buffer.WriteString(line)
 	}
 	for _, line := range WalkthroughText(report.Walkthrough) {
 		buffer.WriteString(line)

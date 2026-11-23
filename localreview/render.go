@@ -614,6 +614,9 @@ func RenderResultMarkdown(writer io.Writer, r Result, options RenderOptions) err
 	if report.SpecialistProfileID != "" {
 		fmt.Fprintf(&buffer, "\nSpecialist profile: %s\n", MarkdownCode(report.SpecialistProfileID))
 	}
+	if report.CheckRegressions != nil {
+		buffer.WriteString("\n" + CheckRegressionsMarkdown(report.CheckRegressions, report.RunStatus == "succeeded"))
+	}
 	if report.Walkthrough != nil {
 		buffer.WriteString("\n" + WalkthroughMarkdown(report.Walkthrough))
 	}
