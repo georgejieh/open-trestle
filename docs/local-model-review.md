@@ -566,7 +566,7 @@ When a response stops at the output token limit without a complete answer, the f
 
 ```text
 failure: internal (task verification): model_output_exhausted
-hint: the model used its whole output allowance, usually on reasoning, before finishing its answer; choose a non-reasoning model for this role or raise the review output allowance (setup bootstrap init --max-output-tokens)
+hint: the model used its whole output allowance, usually on reasoning, before finishing its answer; choose a non-reasoning model for this role, or set up again with a larger output allowance (trestle init --directory NEW_FOLDER --max-output-tokens N)
 ```
 
 The output allowance and the request deadline are described in [remote model review](remote-model-review.md#output-allowance-and-request-deadline).

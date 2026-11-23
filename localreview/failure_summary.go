@@ -85,7 +85,7 @@ var taskFailureHints = map[[2]string]string{
 }
 
 var failureDetailHints = map[string]string{
-	FailureDetailModelOutputExhausted:      "the model used its whole output allowance, usually on reasoning, before finishing its answer; choose a non-reasoning model for this role or raise the review output allowance (setup bootstrap init --max-output-tokens)",
+	FailureDetailModelOutputExhausted:      "the model used its whole output allowance, usually on reasoning, before finishing its answer; choose a non-reasoning model for this role, or set up again with a larger output allowance (trestle init --directory NEW_FOLDER --max-output-tokens N)",
 	FailureDetailProviderNoAllowedEndpoint: "OpenRouter has no endpoint for this model that the request may use: if zero data retention is required (by this setup or by your OpenRouter account or key settings), choose a model with zero-data-retention endpoints and run trestle init again (https://openrouter.ai/docs/guides/features/zdr); otherwise check the model ID",
 	FailureDetailSpendingLimitReached:      "the spend recorded for an API key this review uses has reached its spending limit for the current period, so the review was not started and nothing was sent: run trestle usage to see it, then raise or clear the limit (trestle usage set, trestle usage clear) or wait for the next period; the figures are Open Trestle's upper-bound estimate at the highest pinned price, not a bill, and the limit is best effort, so your provider's own limit is the guarantee",
 }
