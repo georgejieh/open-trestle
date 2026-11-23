@@ -18,8 +18,9 @@ import (
 
 // endToEnd runs the real checks on base and head in the real sandbox. It
 // skips only when the sandbox or the toolchain is missing here, never when
-// a check runs and disagrees.
-func endToEnd(t *testing.T, base, head map[string]string, changed []string) Result {
+// a check runs and disagrees. It returns every check's result, the first
+// one's decides the skip.
+func endToEnd(t *testing.T, base, head map[string]string, changed []string) []Result {
 	t.Helper()
 	limits := checksandbox.DefaultLimits()
 	limits.Time = 5 * time.Minute
@@ -39,7 +40,7 @@ func endToEnd(t *testing.T, base, head map[string]string, changed []string) Resu
 		t.Skipf("the check could not run here: %s", first.Reason)
 	}
 	t.Log(report.Summary())
-	return first
+	return report.Results
 }
 
 func TestEndToEndGoRegression(t *testing.T) {
@@ -54,9 +55,30 @@ func TestEndToEndGoRegression(t *testing.T) {
 		head[name] = content
 	}
 	head["calc/calc.go"] = strings.Replace(files["calc/calc.go"], "return a + b", "return a - b", 1)
-	result := endToEnd(t, files, head, []string{"calc/calc.go"})
+	result := endToEnd(t, files, head, []string{"calc/calc.go"})[0]
 	if !result.Ran || !slices.Equal(result.Regressions, []string{"example.com/calc/calc.TestAdd"}) || result.Flaky != 0 || result.Tests != 2 {
 		t.Fatalf("result %+v", result)
+	}
+}
+
+// go vet lists a diagnostic that only head has, with its head line; one
+// that moved down is still failing.
+func TestEndToEndGoVetNewDiagnostic(t *testing.T) {
+	files := map[string]string{
+		"go.mod":       "module example.com/calc\n\ngo 1.22\n",
+		"calc/calc.go": "package calc\n\nfunc Same(x int) int {\n\tx = x\n\treturn x\n}\n",
+	}
+	head := map[string]string{
+		"go.mod":       files["go.mod"],
+		"calc/calc.go": "package calc\n\n// Same returns x.\nfunc Same(x int) int {\n\tx = x\n\treturn x\n}\n\nfunc Other(y int) int {\n\ty = y\n\treturn y\n}\n",
+	}
+	results := endToEnd(t, files, head, []string{"calc/calc.go"})
+	if len(results) != 2 {
+		t.Fatalf("results %+v", results)
+	}
+	vet := results[1]
+	if !vet.Ran || !slices.Equal(vet.NewFailures, []string{"calc/calc.go:10: self-assignment of y"}) || vet.StillFailing != 1 || len(vet.Regressions) != 0 {
+		t.Fatalf("go vet result %+v", vet)
 	}
 }
 
@@ -73,7 +95,7 @@ func TestEndToEndPythonRegression(t *testing.T) {
 		head[name] = content
 	}
 	head["shop/price.py"] = "def total(prices):\n    return sum(prices) + (1 if prices else 0)\n"
-	result := endToEnd(t, files, head, []string{"shop/price.py"})
+	result := endToEnd(t, files, head, []string{"shop/price.py"})[0]
 	if !result.Ran || !slices.Equal(result.Regressions, []string{"tests.test_price.Total.test_sum"}) || result.Tests != 3 {
 		t.Fatalf("result %+v", result)
 	}
@@ -87,7 +109,7 @@ func TestEndToEndRenamedPythonModuleIsARegression(t *testing.T) {
 		"tests/test_price.py": "import unittest\n\nfrom shop.price import total\n\n\nclass Total(unittest.TestCase):\n    def test_sum(self):\n        self.assertEqual(total([1, 2]), 3)\n",
 	}
 	head := map[string]string{"shop/__init__.py": "", "shop/prices.py": files["shop/price.py"], "tests/__init__.py": "", "tests/test_price.py": files["tests/test_price.py"]}
-	result := endToEnd(t, files, head, []string{"shop/price.py", "shop/prices.py"})
+	result := endToEnd(t, files, head, []string{"shop/price.py", "shop/prices.py"})[0]
 	if !result.Ran || !slices.Equal(result.Regressions, []string{"unittest.loader._FailedTest.tests.test_price"}) || len(result.StoppedRunning) != 0 {
 		t.Fatalf("result %+v", result)
 	}
@@ -105,7 +127,7 @@ func TestEndToEndNodeRegression(t *testing.T) {
 		head[name] = content
 	}
 	head["lib/greet.js"] = "export const greet = (name) => `hi ${name}`;\n"
-	result := endToEnd(t, files, head, []string{"lib/greet.js"})
+	result := endToEnd(t, files, head, []string{"lib/greet.js"})[0]
 	if !result.Ran || !slices.Equal(result.Regressions, []string{"greets"}) || result.Tests != 2 {
 		t.Fatalf("result %+v", result)
 	}
@@ -117,7 +139,7 @@ func TestEndToEndNodeMissingPackage(t *testing.T) {
 		"lib/pad.js":   "import pad from 'left-pad';\nexport const padded = (s) => pad(s, 3);\n",
 		"pad.test.mjs": "import test from 'node:test';\nimport { padded } from './lib/pad.js';\ntest('pads', () => padded('a'));\n",
 	}
-	result := endToEnd(t, files, files, []string{"lib/pad.js"})
+	result := endToEnd(t, files, files, []string{"lib/pad.js"})[0]
 	if result.Ran || result.Reason != "missing dependency: left-pad on base" {
 		t.Fatalf("result %+v", result)
 	}

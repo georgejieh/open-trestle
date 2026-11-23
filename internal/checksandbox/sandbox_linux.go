@@ -140,7 +140,7 @@ func run(ctx context.Context, spec Spec) (result Result, err error) {
 	_ = command.Wait()
 	outputExceeded := stdout.exceededLimit() || stderr.exceededLimit()
 	result = Result{
-		ExitCode: -1, Stdout: stdout.bytes(), Stderr: stderr.bytes(), Duration: time.Since(started),
+		ExitCode: -1, Stdout: stdout.bytes(), Stderr: stderr.bytes(), Duration: time.Since(started), Work: sandboxWork,
 		OutputExceeded: outputExceeded,
 		TimedOut:       !outputExceeded && errors.Is(ctx.Err(), context.DeadlineExceeded),
 	}

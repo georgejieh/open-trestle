@@ -149,6 +149,51 @@ func TestDetectRust(t *testing.T) {
 	}
 }
 
+// Linters run only when the repository's own files use them.
+func TestDetectLintersOnlyWhenTheRepositoryUsesThem(t *testing.T) {
+	goFiles := map[string]string{"go.mod": "module m\n", "a/a.go": "package a"}
+	plain, _ := Detect(writeTree(t, goFiles), Scope{Changed: []string{"a/a.go"}})
+	if !slices.Equal(names(plain), []string{"go test ./a", "go vet ./a"}) || plain[1].Format != FormatDiagnostics {
+		t.Fatalf("got %+v", plain)
+	}
+	goFiles[".golangci.yml"] = "version: \"2\"\n"
+	goFiles[".github/workflows/ci.yml"] = "on: [pull_request]\njobs:\n  lint:\n    runs-on: ubuntu-latest\n    steps:\n      - run: staticcheck ./...\n"
+	linted, _ := Detect(writeTree(t, goFiles), Scope{Changed: []string{"a/a.go"}})
+	if !slices.Equal(names(linted), []string{"go test ./a", "go vet ./a", "staticcheck ./a", "golangci-lint run ./a"}) || linted[3].Tool != "golangci-lint" || linted[3].Format != FormatDiagnostics {
+		t.Fatalf("got %+v", linted)
+	}
+
+	pyFiles := map[string]string{"pkg/a.py": "", "pyproject.toml": "[tool.ruff]\n\n[tool.mypy]\n", "Makefile": "lint:\n\tflake8 .\n"}
+	python, _ := Detect(writeTree(t, pyFiles), Scope{Changed: []string{"pkg/a.py"}})
+	if !slices.Equal(names(python), []string{"ruff check", "flake8", "mypy"}) || python[2].Stack != "python" {
+		t.Fatalf("got %+v", python)
+	}
+	if untouched, _ := Detect(writeTree(t, pyFiles), Scope{Changed: []string{"README.md"}}); len(untouched) != 0 {
+		t.Fatalf("an unrelated change ran %+v", untouched)
+	}
+
+	rust, _ := Detect(writeTree(t, map[string]string{"Cargo.toml": "[package]\n", "clippy.toml": "", "src/lib.rs": ""}), Scope{Changed: []string{"src/lib.rs"}})
+	if !slices.Equal(names(rust), []string{"cargo test", "cargo clippy"}) || !slices.Equal(rust[1].Args, []string{"clippy", "--offline", "--message-format=short"}) {
+		t.Fatalf("got %+v", rust)
+	}
+}
+
+// A Go linter runs with the go command first on its path.
+func TestResolvePutsTheGoCommandBeforeAGoLinter(t *testing.T) {
+	root := t.TempDir()
+	programs := map[string]string{"go": filepath.Join(root, "sdk", "go", "bin", "go"), "staticcheck": filepath.Join(root, "tools", "bin", "staticcheck")}
+	for _, program := range programs {
+		os.MkdirAll(filepath.Dir(program), 0o755)
+		os.WriteFile(program, nil, 0o755)
+	}
+	machine := host{home: t.TempDir(), getenv: func(string) string { return "" }, lookPath: func(name string) (string, error) { return programs[name], nil }}
+	program, chain, err := machine.resolve(Check{Tool: "staticcheck", Stack: "go"})
+	if err != nil || program != "staticcheck" || !slices.Equal(chain.path, []string{filepath.Dir(programs["go"]), filepath.Dir(programs["staticcheck"])}) ||
+		!slices.Equal(chain.readOnly, []string{filepath.Join(root, "sdk", "go"), filepath.Join(root, "tools")}) {
+		t.Fatalf("program %s, path %v, read-only %v, %v", program, chain.path, chain.readOnly, err)
+	}
+}
+
 func TestResolveRunsALinkedLauncherFromItsOwnFolder(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symbolic links need a privilege on Windows")

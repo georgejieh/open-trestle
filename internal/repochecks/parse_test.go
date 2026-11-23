@@ -210,6 +210,78 @@ func TestParseExitStatus(t *testing.T) {
 	requireTests(t, parseRun(FormatExit, "npm test", 0, []byte("Cannot find module 'x'"), nil, nil, nothingProvided), map[string]Outcome{"npm test": Pass})
 }
 
+// Each sample is the real output of the check's command line.
+func TestParseDiagnosticsOfEachTool(t *testing.T) {
+	const printf = `fmt.Printf format %d has arg "s" of wrong type string`
+	for _, test := range []struct {
+		name           string
+		stdout, stderr string
+		dir, work      string
+		want           map[string]string
+	}{
+		{name: "go vet", dir: "tools", stderr: "# example.com/g2/b\nvet: b/b.go:5:23: string literal not terminated (and 2 more errors)\na/a.go:4:2: self-assignment of x\n",
+			want: map[string]string{"tools/b/b.go: string literal not terminated (and 2 more errors)": "tools/b/b.go:5: string literal not terminated (and 2 more errors)", "tools/a/a.go: self-assignment of x": "tools/a/a.go:4: self-assignment of x"}},
+		{name: "staticcheck", dir: ".", stdout: "-: # example.com/g/sub\nsub/a.go:12:6: declared and not used: x (compile)\n",
+			want: map[string]string{"sub/a.go: declared and not used: x (compile)": "sub/a.go:12: declared and not used: x (compile)"}},
+		{name: "golangci-lint", dir: ".", work: "/work", stdout: "/work/sub/a.go:12:9: Error return value of `os.Open` is not checked (errcheck)\n/work/sub/a.go:10:14: printf: " + printf + " (govet)\n/work/sub/a.go:11:14: printf: " + printf + " (govet)\n",
+			want: map[string]string{
+				"sub/a.go: Error return value of `os.Open` is not checked (errcheck)": "sub/a.go:12: Error return value of `os.Open` is not checked (errcheck)",
+				"sub/a.go: printf: " + printf + " (govet)":                            "sub/a.go:10: printf: " + printf + " (govet)",
+				"sub/a.go: printf: " + printf + " (govet) (2)":                        "sub/a.go:11: printf: " + printf + " (govet)",
+			}},
+		{name: "ruff", dir: ".", stdout: "pkg/a.py:1:1: I001 [*] Import block is un-sorted or un-formatted\npkg/a.py:2:8: F401 [*] `sys` imported but unused\n",
+			want: map[string]string{"pkg/a.py: I001 [*] Import block is un-sorted or un-formatted": "pkg/a.py:1: I001 [*] Import block is un-sorted or un-formatted", "pkg/a.py: F401 [*] `sys` imported but unused": "pkg/a.py:2: F401 [*] `sys` imported but unused"}},
+		{name: "flake8", dir: ".", stdout: "./pkg/a.py:2:1: F401 'sys' imported but unused\n",
+			want: map[string]string{"pkg/a.py: F401 'sys' imported but unused": "pkg/a.py:2: F401 'sys' imported but unused"}},
+		{name: "mypy", dir: ".", stdout: "a.py:2: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]\n" +
+			"pkg/a.py:13: error: Incompatible return value type (got \"int\", expected \"str\")  [return-value]\n",
+			want: map[string]string{"pkg/a.py: error: Incompatible return value type (got \"int\", expected \"str\")  [return-value]": "pkg/a.py:13: error: Incompatible return value type (got \"int\", expected \"str\")  [return-value]"}},
+		{name: "cargo clippy", dir: ".", stderr: "    Checking calc v0.1.0 (/work)\nsrc/lib.rs:8:13: warning: writing `&Vec` instead of `&[_]` involves a new object where a slice will do\n" +
+			"warning: `calc` (lib) generated 2 warnings (run `cargo clippy --fix --lib -p calc -- ` to apply 1 suggestion)\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.28s\n",
+			want: map[string]string{"src/lib.rs: warning: writing `&Vec` instead of `&[_]` involves a new object where a slice will do": "src/lib.rs:8: warning: writing `&Vec` instead of `&[_]` involves a new object where a slice will do"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got := parseDiagnostics([]byte(test.stdout), []byte(test.stderr), test.dir, test.work, 1, nothingProvided)
+			if !maps.Equal(got.located, test.want) || len(got.tests) != len(test.want) || len(got.missing) != 0 {
+				t.Fatalf("located %q\ntests %v, missing %v", got.located, got.tests, got.missing)
+			}
+			for id := range test.want {
+				if got.tests[id] != Fail {
+					t.Fatalf("%q is %q", id, got.tests[id])
+				}
+			}
+		})
+	}
+}
+
+func TestParseDiagnosticsNamesAMissingModule(t *testing.T) {
+	stderr := "go: finding module for package github.com/acme/lib\nc/c.go:3:8: cannot find module providing package github.com/acme/lib: module lookup disabled by GOPROXY=off\n"
+	got := parseDiagnostics(nil, []byte(stderr), ".", "", 1, nothingProvided)
+	if len(got.tests) != 0 || !slices.Equal(got.missing, []string{"github.com/acme/lib"}) {
+		t.Fatalf("tests %v, missing %v", got.tests, got.missing)
+	}
+}
+
+func TestParseDiagnosticsBoundsWhatItHolds(t *testing.T) {
+	long := strings.Repeat("é", 4<<10)
+	got := parseDiagnostics([]byte(long+".go:1: "+long+"\n"+long+".go:2: "+long+"\n"), nil, ".", "", 1, nothingProvided)
+	if len(got.tests) != 2 {
+		t.Fatalf("tests %d", len(got.tests))
+	}
+	for id := range got.tests {
+		if len(id) > maxTestIDBytes || got.located[id] == "" {
+			t.Fatalf("ID of %d bytes, located %q", len(id), got.located[id])
+		}
+	}
+	var many strings.Builder
+	for index := range maxRunResults + 1 {
+		fmt.Fprintf(&many, "a.go:%d: m\n", index+1)
+	}
+	if got := parseDiagnostics([]byte(many.String()), nil, ".", "", 1, nothingProvided); !got.overflow {
+		t.Fatalf("overflow %v with %d results", got.overflow, len(got.tests))
+	}
+}
+
 // One run's output cannot make the host hold unbounded names or results.
 func TestParsersBoundNamesDepthAndResults(t *testing.T) {
 	long := strings.Repeat("é", 4<<10)

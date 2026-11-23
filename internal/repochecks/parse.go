@@ -3,11 +3,14 @@ package repochecks
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"path"
 	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -34,6 +37,9 @@ const (
 	// FormatExit records one result for the whole command from its exit
 	// status.
 	FormatExit Format = "exit_status"
+	// FormatDiagnostics reads linter and type checker lines of the form
+	// path:line[:column]: message; each diagnostic is a failure.
+	FormatDiagnostics Format = "diagnostics"
 )
 
 // Bounds on what one run's output can make the host hold: a name part (a
@@ -56,6 +62,8 @@ type parsed struct {
 	missing []string
 	// overflow is set when the run reported more than maxRunResults tests.
 	overflow bool
+	// located gives each diagnostic's ID its "path:line: message" form.
+	located map[string]string
 }
 
 func newParsed() *parsed { return &parsed{tests: map[string]Outcome{}} }
@@ -471,6 +479,78 @@ func cargoBinaries(stderr []byte) []string {
 		names = append(names, name)
 	}
 	return names
+}
+
+// maxMessageBytes leaves a diagnostic's ID, its path, message and number,
+// within maxTestIDBytes.
+const maxMessageBytes = maxTestIDBytes - maxNameBytes - 16
+
+var diagnosticLine = regexp.MustCompile(`^((?:[A-Za-z]:)?[^:\s][^:]*):(\d{1,9})(?::\d{1,9})?: ([^\s:].*?)\s*$`)
+
+type diagnostic struct {
+	path    string
+	line    int
+	message string
+}
+
+// parseDiagnostics reads the diagnostics a linter or type checker printed
+// on either stream. Each is a failure named by its path, relative to the
+// tree root, and its message, without the line number, which an edit above
+// it shifts; a message repeated in one file is numbered in line order. A
+// line that names a missing module is a missing dependency. Notes, which
+// explain the diagnostic before them, are left out. dir is the tool's
+// working folder and work the tree copy's path, as the tool saw them.
+func parseDiagnostics(stdout, stderr []byte, dir, work string, exitCode int, provided func(string) bool) *parsed {
+	result := newParsed()
+	result.located = map[string]string{}
+	var found []diagnostic
+	for _, output := range [][]byte{stdout, stderr} {
+		for _, line := range strings.Split(string(output), "\n") {
+			// go vet prefixes the type errors of a package it cannot check.
+			match := diagnosticLine.FindStringSubmatch(strings.TrimPrefix(line, "vet: "))
+			if match == nil || strings.HasPrefix(match[3], "note:") || result.addMissing(provided, []byte(match[3])) {
+				continue
+			}
+			if len(found) == maxRunResults {
+				result.overflow = true
+				return result
+			}
+			number, _ := strconv.Atoi(match[2])
+			found = append(found, diagnostic{cut(treePath(match[1], dir, work), maxNameBytes), number, cut(match[3], maxMessageBytes)})
+		}
+	}
+	slices.SortStableFunc(found, func(a, b diagnostic) int {
+		return cmp.Or(strings.Compare(a.path, b.path), cmp.Compare(a.line, b.line))
+	})
+	seen := map[string]int{}
+	for _, item := range found {
+		id := item.path + ": " + item.message
+		if seen[id]++; seen[id] > 1 {
+			id += fmt.Sprintf(" (%d)", seen[id])
+		}
+		result.record(id, Fail)
+		result.located[id] = fmt.Sprintf("%s:%d: %s", item.path, item.line, item.message)
+	}
+	if len(result.tests) == 0 && len(result.missing) == 0 && exitCode != 0 {
+		result.addMissing(provided, stdout, stderr)
+	}
+	return result
+}
+
+// treePath is a path a tool printed, relative to its working folder dir or
+// absolute inside the tree copy work, made slash-separated and relative to
+// the tree root.
+func treePath(name, dir, work string) string {
+	name = strings.ReplaceAll(name, `\`, "/")
+	if work != "" {
+		if relative, ok := strings.CutPrefix(name, strings.ReplaceAll(work, `\`, "/")+"/"); ok {
+			return path.Clean(relative)
+		}
+	}
+	if path.IsAbs(name) || len(name) > 1 && name[1] == ':' {
+		return name
+	}
+	return path.Join(dir, name)
 }
 
 // missingDependencyPatterns recognise the messages toolchains print when a

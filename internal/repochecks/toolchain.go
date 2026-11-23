@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 )
 
 // toolchain is what a check needs from the host: where its programs are,
@@ -39,11 +40,17 @@ func (h host) resolve(check Check) (string, toolchain, error) {
 	if err != nil {
 		return "", toolchain{}, err
 	}
-	bin := filepath.Dir(located)
-	chain := toolchain{path: []string{bin}, readOnly: []string{h.toolchainRoot(bin)}}
-	if other := h.toolchainRoot(filepath.Dir(target)); other != chain.readOnly[0] {
-		chain.readOnly = append(chain.readOnly, other)
+	chain := toolchain{}
+	// Go linters load packages through the go command, which comes first on
+	// the path.
+	if check.Stack == "go" && check.Tool != "go" {
+		_, goLocated, goTarget, err := h.find("go")
+		if err != nil {
+			return "", toolchain{}, err
+		}
+		chain.add(h, goLocated, goTarget)
 	}
+	chain.add(h, located, target)
 	switch check.Stack {
 	case "go":
 		chain.env = []string{"GOCACHE=$HOME/.cache/go-build", "GOPATH=$HOME/go", "GOPROXY=off", "GOSUMDB=off", "GOTOOLCHAIN=local",
@@ -73,6 +80,18 @@ func (h host) resolve(check Check) (string, toolchain, error) {
 		}
 	}
 	return program, chain, nil
+}
+
+// add puts the folder of the program found at located on the path and
+// shows its toolchain, and that of the file it links to, read-only.
+func (chain *toolchain) add(h host, located, target string) {
+	bin := filepath.Dir(located)
+	chain.path = append(chain.path, bin)
+	for _, root := range []string{h.toolchainRoot(bin), h.toolchainRoot(filepath.Dir(target))} {
+		if !slices.Contains(chain.readOnly, root) {
+			chain.readOnly = append(chain.readOnly, root)
+		}
+	}
 }
 
 // toolchainRoot is the folder above a bin folder, unless that would be the

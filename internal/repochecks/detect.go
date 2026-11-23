@@ -2,6 +2,7 @@ package repochecks
 
 import (
 	"encoding/json"
+	"io"
 	"io/fs"
 	"os"
 	"path"
@@ -10,6 +11,9 @@ import (
 	"slices"
 	"sort"
 	"strings"
+
+	"github.com/georgejieh/open-trestle/repoindex"
+	"github.com/georgejieh/open-trestle/repoprofile"
 )
 
 // Check is one command detected from a repository's tree.
@@ -65,12 +69,66 @@ func Detect(root string, scope Scope) ([]Check, error) {
 		return data
 	}
 	exists := func(name string) bool { return isFile(filepath.Join(root, filepath.FromSlash(name))) }
+	used := usedTools(root, files)
 	var checks []Check
-	checks = append(checks, detectGo(files, exists, scope)...)
+	checks = append(checks, detectGo(files, exists, used, scope)...)
 	checks = append(checks, detectNode(files, read, scope)...)
-	checks = append(checks, detectPython(files, read, scope)...)
-	checks = append(checks, detectRust(files, scope)...)
+	checks = append(checks, detectPython(files, read, used, scope)...)
+	checks = append(checks, detectRust(files, used, scope)...)
 	return checks, nil
+}
+
+// usedTools are the tools that the repository's CI, task runners, hooks or
+// configuration files use, as repoprofile reads them.
+func usedTools(root string, files []string) map[string]bool {
+	entries := make([]repoindex.FileEntry, len(files))
+	for index, file := range files {
+		// ConfigPaths reads only entries with content, which every listed
+		// file has.
+		entries[index] = repoindex.FileEntry{Path: file, Object: "file"}
+	}
+	contents := map[string][]byte{}
+	for _, name := range repoprofile.ConfigPaths(entries) {
+		if data, err := readBounded(filepath.Join(root, filepath.FromSlash(name)), repoprofile.MaxFileBytes); err == nil {
+			contents[name] = data
+		}
+	}
+	used := map[string]bool{}
+	for _, check := range repoprofile.Detect(nil, nil, contents).Checks {
+		used[check.Tool] = true
+	}
+	return used
+}
+
+// readBounded reads at most limit bytes and one more of a file, so a larger
+// file is seen to be too large without being held.
+func readBounded(name string, limit int64) ([]byte, error) {
+	file, err := os.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	return io.ReadAll(io.LimitReader(file, limit+1))
+}
+
+// linter is a linter or type checker that runs when the repository uses
+// tool, with arguments that keep it offline, leave the tree unchanged,
+// keep its caches in the sandbox and print one line per diagnostic.
+type linter struct {
+	tool, name, program string
+	args                []string
+}
+
+var goLinters = []linter{
+	{tool: "staticcheck", name: "staticcheck", program: "staticcheck"},
+	{tool: "golangci-lint", name: "golangci-lint run", program: "golangci-lint", args: []string{"run", "--fix=false", "--new=false", "--path-mode=abs", "--max-issues-per-linter=0", "--max-same-issues=0",
+		"--output.text.path=stdout", "--output.text.print-issued-lines=false", "--output.text.colors=false", "--show-stats=false"}},
+}
+
+var pythonLinters = []linter{
+	{tool: "ruff", name: "ruff check", program: "ruff", args: []string{"check", "--no-cache", "--no-fix", "--output-format=concise", "--quiet", "."}},
+	{tool: "flake8", name: "flake8", program: "flake8", args: []string{"."}},
+	{tool: "mypy", name: "mypy", program: "mypy", args: []string{"--cache-dir=$TMPDIR/mypy-cache", "--no-error-summary", "--no-pretty", "--no-color-output", "."}},
 }
 
 // listFiles returns the tree's files, slash-separated and sorted.
@@ -96,7 +154,7 @@ func listFiles(root string) ([]string, error) {
 	return files, err
 }
 
-func detectGo(files []string, exists func(string) bool, scope Scope) []Check {
+func detectGo(files []string, exists func(string) bool, used map[string]bool, scope Scope) []Check {
 	var modules []string
 	packages := map[string]bool{}
 	for _, file := range files {
@@ -136,10 +194,28 @@ func detectGo(files []string, exists func(string) bool, scope Scope) []Check {
 			patterns = []string{"./..."}
 		}
 		vendored := exists(path.Join(module, "vendor", "modules.txt"))
+		listed := strings.Join(patterns, " ")
 		checks = append(checks,
-			Check{Name: "go test " + strings.Join(patterns, " "), Stack: "go", Tool: "go", Dir: module, Args: []string{"test", "-json", "-count=1"}, Packages: patterns, Vendored: vendored, Format: FormatGoJSON},
-			Check{Name: "go vet " + strings.Join(patterns, " "), Stack: "go", Tool: "go", Dir: module, Args: []string{"vet"}, Packages: patterns, Vendored: vendored, Format: FormatExit},
+			Check{Name: "go test " + listed, Stack: "go", Tool: "go", Dir: module, Args: []string{"test", "-json", "-count=1"}, Packages: patterns, Vendored: vendored, Format: FormatGoJSON},
+			Check{Name: "go vet " + listed, Stack: "go", Tool: "go", Dir: module, Args: []string{"vet"}, Packages: patterns, Vendored: vendored, Format: FormatDiagnostics},
 		)
+		for _, linter := range goLinters {
+			if used[linter.tool] {
+				checks = append(checks, Check{Name: linter.name + " " + listed, Stack: "go", Tool: linter.program, Dir: module, Args: linter.args, Packages: patterns, Vendored: vendored, Format: FormatDiagnostics})
+			}
+		}
+	}
+	return checks
+}
+
+// lintChecks are the checks of the linters the repository uses, run in the
+// tree root.
+func lintChecks(linters []linter, stack string, used map[string]bool) []Check {
+	var checks []Check
+	for _, linter := range linters {
+		if used[linter.tool] {
+			checks = append(checks, Check{Name: linter.name, Stack: stack, Tool: linter.program, Dir: ".", Args: linter.args, Format: FormatDiagnostics})
+		}
 	}
 	return checks
 }
@@ -210,8 +286,15 @@ func detectNode(files []string, read func(string) []byte, scope Scope) []Check {
 // detectPython runs pytest when the repository configures it, and
 // unittest discovery otherwise, when the tree has Python tests and a Python
 // file changed. Either runs the whole suite: which tests cover a changed
-// module is not known here.
-func detectPython(files []string, read func(string) []byte, scope Scope) []Check {
+// module is not known here. The linters the repository uses run after them.
+func detectPython(files []string, read func(string) []byte, used map[string]bool, scope Scope) []Check {
+	if !touches(scope, ".py", "pyproject.toml", "setup.cfg", "pytest.ini", "tox.ini", "ruff.toml", "mypy.ini", ".flake8") {
+		return nil
+	}
+	return append(pythonTests(files, read, scope), lintChecks(pythonLinters, "python", used)...)
+}
+
+func pythonTests(files []string, read func(string) []byte, scope Scope) []Check {
 	var tests []string
 	pytest := false
 	for _, file := range files {
@@ -243,11 +326,15 @@ func isPythonTest(file string) bool {
 	return strings.HasSuffix(base, ".py") && (strings.HasPrefix(base, "test_") || strings.HasSuffix(base, "_test.py"))
 }
 
-func detectRust(files []string, scope Scope) []Check {
-	if !slices.Contains(files, "Cargo.toml") || !touches(scope, ".rs", "Cargo.toml", "Cargo.lock") {
+func detectRust(files []string, used map[string]bool, scope Scope) []Check {
+	if !slices.Contains(files, "Cargo.toml") || !touches(scope, ".rs", "Cargo.toml", "Cargo.lock", "clippy.toml") {
 		return nil
 	}
-	return []Check{{Name: "cargo test", Stack: "rust", Tool: "cargo", Dir: ".", Args: []string{"test", "--offline"}, Format: FormatLibtest}}
+	checks := []Check{{Name: "cargo test", Stack: "rust", Tool: "cargo", Dir: ".", Args: []string{"test", "--offline"}, Format: FormatLibtest}}
+	if used["clippy"] {
+		checks = append(checks, Check{Name: "cargo clippy", Stack: "rust", Tool: "cargo", Dir: ".", Args: []string{"clippy", "--offline", "--message-format=short"}, Format: FormatDiagnostics})
+	}
+	return checks
 }
 
 // touches reports whether a changed or dependent file has one of the
