@@ -26,9 +26,11 @@ the wizard asks for the key right after you choose the models:
   API key: OPEN_TRESTLE_PROVIDER_OPENROUTER has no key in
   this shell or in ~/.config/open-trestle/credentials. Paste
   the key from your OpenRouter account. It stays hidden while
-  you type, and Open Trestle never prints it, logs it or puts
-  it in a model request. Press Enter on an empty line to skip.
+  you type; afterwards only its length and last four
+  characters are shown. Open Trestle never logs it or puts it
+  in a model request. Press Enter on an empty line to skip.
   API key for OpenRouter (hidden):
+    Received ********9f2c (73 characters).
   ✓ OpenRouter accepted the key (one GET /api/v1/key, which
     costs nothing and sends no source).
   Save this key for future reviews? (Y/n):
@@ -84,6 +86,10 @@ API keys (the environment first, then the keys saved in ~/.config/open-trestle/c
   OPEN_TRESTLE_PROVIDER_OPENROUTER    saved in ~/.config/open-trestle/credentials · ends in …a41e
 Change one: trestle keys set NAME · delete a saved one: trestle keys remove NAME
 ```
+
+Hidden input shows nothing while you type or paste. After Enter it shows the
+key's length and last four characters, and asks again when the same text was
+pasted twice.
 
 `set` asks for the key with hidden input on a terminal, or reads one line from a
 pipe (`pass show openrouter | trestle keys set OPEN_TRESTLE_PROVIDER_OPENROUTER`),

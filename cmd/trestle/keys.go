@@ -135,7 +135,7 @@ func readKeyInput(ctx context.Context, name string, stdin io.Reader, stdout, std
 			}
 		})
 		defer prompt.close()
-		fmt.Fprintf(stdout, "  Paste the key for %s. It stays hidden while you type and is never printed.\n", name)
+		fmt.Fprintf(stdout, "  Paste the key for %s. It stays hidden while you type; afterwards only its length and last four characters are shown.\n", name)
 		return prompt.askSecret("API key for "+name+" (hidden)", terminal)
 	}
 	line, err := readInitLine(bufio.NewReaderSize(stdin, initMaxAnswerBytes))

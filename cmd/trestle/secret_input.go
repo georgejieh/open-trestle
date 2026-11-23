@@ -9,8 +9,9 @@ import (
 
 // Hidden input for an API key. The prompter reads plain lines; for a key it
 // turns the terminal's echo off first, so the characters typed are never
-// shown and never reach scrollback, and turns it back on before anything else
-// is printed. It needs a real terminal on standard input: stdlib termios on
+// shown, and turns it back on before anything else is printed. Afterwards it
+// shows the key's length and last four characters, so the person can tell
+// what arrived. It needs a real terminal on standard input: stdlib termios on
 // Linux and macOS, the console mode on Windows. Anything else, including a
 // pipe or a file, is never asked for a key.
 
@@ -41,8 +42,9 @@ var openEchoTerminal = func(in io.Reader) (echoTerminal, bool) {
 
 // askSecret reads one answer with echo off and returns it without
 // surrounding spaces; "" means Enter on an empty line. The prompt is shown
-// only once echo is off, the answer is never printed, and echo is restored
-// before askSecret returns, including when input ends or is interrupted.
+// only once echo is off, only the answer's receipt is printed, and echo is
+// restored before askSecret returns, including when input ends or is
+// interrupted. An answer that is one text pasted twice is asked for again.
 func (p *initPrompter) askSecret(question string, terminal echoTerminal) (string, error) {
 	for range initMaxTries {
 		restore, err := terminal.hideInput()
@@ -64,7 +66,28 @@ func (p *initPrompter) askSecret(question string, terminal echoTerminal) (string
 			p.say("    That is longer than any API key. Please try again.")
 			continue
 		}
+		if half := len(answer) / 2; half >= minSecretReceiptLength && answer[:half] == answer[half:] {
+			p.say(fmt.Sprintf("    That is the same text twice (%d characters each). Paste the key once.", half))
+			continue
+		}
+		if answer != "" {
+			p.say("    Received " + secretReceipt(answer) + ".")
+		}
 		return answer, nil
 	}
 	return "", errInitTooManyTries
+}
+
+// minSecretReceiptLength is the shortest answer whose last four characters
+// are shown; a shorter one would show too much of itself.
+const minSecretReceiptLength = 12
+
+// secretReceipt describes a typed key without showing it: its length, and
+// its last four characters when it is long enough.
+func secretReceipt(answer string) string {
+	characters := []rune(answer)
+	if len(characters) < minSecretReceiptLength {
+		return fmt.Sprintf("%d characters", len(characters))
+	}
+	return fmt.Sprintf("********%s (%d characters)", string(characters[len(characters)-4:]), len(characters))
 }
