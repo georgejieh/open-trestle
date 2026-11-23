@@ -58,7 +58,7 @@ func (w *initWizard) askProviderKey(name, provider, label string, saveNow bool) 
 	} else if state.problem != nil {
 		w.say("  %s %s: %s.", w.wait, name, state.where())
 	}
-	w.say("\n  API key: %s has no key in this shell or in %s. Paste the key from your %s account. It stays hidden while you type, and Open Trestle never prints it, logs it or puts it in a model request. Press Enter on an empty line to skip.", name, providerCredentialDisplayDirectory(), label)
+	w.say("\n  API key: %s has no key in this shell or in %s. Paste the key from your %s account. It stays hidden while you type; afterwards only its length and last four characters are shown. Open Trestle never logs it or puts it in a model request. Press Enter on an empty line to skip.", name, providerCredentialDisplayDirectory(), label)
 	for attempt := 0; attempt < initMaxTries; attempt++ {
 		key, err := w.prompt.askSecret("API key for "+label+" (hidden)", w.terminal)
 		if errors.Is(err, errInitSecretUnavailable) {
