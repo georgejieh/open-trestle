@@ -1,5 +1,7 @@
 # Read-only LSP diagnostics
 
+The daemon and the surfaces that depend on it are frozen: no new work is planned, and they may be removed. For reviews, use `trestle review`, the `trestle` home screen or the [VS Code command](vscode.md).
+
 `trestle lsp` is a Language Server Protocol 3.17 server that shows Open Trestle's verified review findings as diagnostics in an editor. It is read-only: it cannot start a review, edit files or publish anything. It serves the findings of reviews that already exist, through the pull-diagnostic interface of the protocol.
 
 The server returns only verified findings, and it handles each diagnostic-set version as follows:
@@ -74,7 +76,5 @@ A removed file has no open head document, so its findings appear in the other ou
 The daemon keeps one immutable diagnostic set for each review scope, in a private store that survives crashes. The authenticated API can only retrieve diagnostics. It has no public endpoint for uploading them. The local export mode needs no daemon.
 
 The server cannot push refresh notifications yet, and that work is separate. Editors get updates by sending ordinary pull requests and comparing result identities.
-
-The packaged [VS Code extension](vscode.md) uses the daemon-backed mode. It also uses machine-scoped settings, SecretStorage, a restricted child process environment and a client-side gate that allows only pull diagnostics.
 
 Reference: <https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocument_diagnostic>

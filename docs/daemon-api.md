@@ -1,5 +1,7 @@
 # Daemon API and client
 
+The daemon and the surfaces that depend on it are frozen: no new work is planned, and they may be removed. For reviews, use `trestle review`, the `trestle` home screen or the [VS Code command](vscode.md).
+
 `trestled` is the Open Trestle daemon. It keeps review runs in durable storage and exposes them through a versioned HTTP API. The Go client and the `trestle runs` commands use the same contracts. The daemon does not publish reviews to a forge, and workers must pass the provider authorization gates.
 
 ## Start a local daemon

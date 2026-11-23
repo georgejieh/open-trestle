@@ -12,17 +12,21 @@ if (
 )
   throw new Error("extension trust or license boundary changed");
 if (
-  Object.keys(properties).length !== 6 ||
-  Object.values(properties).some((value) => value.scope !== "machine")
+  JSON.stringify(Object.keys(properties)) !== '["openTrestle.executable"]' ||
+  properties["openTrestle.executable"].scope !== "machine" ||
+  properties["openTrestle.executable"].default !== "trestle"
 )
-  throw new Error("connection settings must remain machine-scoped");
-if (properties["openTrestle.autoStart"]?.default !== false)
-  throw new Error("automatic startup must default off");
+  throw new Error("the only setting must be the machine-scoped executable");
+const commands = (manifest.contributes?.commands ?? [])
+  .map((entry) => entry.command)
+  .sort()
+  .join(",");
 if (
-  Object.keys(manifest.dependencies ?? {})
-    .sort()
-    .join(",") !== "vscode-jsonrpc,vscode-languageserver-protocol"
+  commands !==
+  "openTrestle.clearFindings,openTrestle.reviewBranch,openTrestle.setUp"
 )
+  throw new Error(`unexpected commands: ${commands}`);
+if (Object.keys(manifest.dependencies ?? {}).length !== 0)
   throw new Error("unexpected runtime dependency");
 const bundle = new URL("dist/extension.js", root);
 const archive = new URL("dist/open-trestle.vsix", root);
@@ -49,13 +53,8 @@ const bundled = [
       .filter(Boolean),
   ),
 ].sort();
-const expectedPackages = [
-  "vscode-jsonrpc",
-  "vscode-languageserver-protocol",
-  "vscode-languageserver-types",
-];
-if (JSON.stringify(bundled) !== JSON.stringify(expectedPackages))
-  throw new Error(`bundled dependency inventory changed: ${bundled.join(",")}`);
+if (bundled.length !== 0)
+  throw new Error(`bundle includes packages: ${bundled.join(",")}`);
 const expected = [
   "[Content_Types].xml",
   "extension.vsixmanifest",
@@ -63,7 +62,6 @@ const expected = [
   "extension/LICENSE.txt",
   "extension/NOTICE",
   "extension/readme.md",
-  "extension/THIRD_PARTY_LICENSES/vscode-protocol-family-MIT.txt",
   "extension/dist/extension.js",
   "extension/icon.png",
   "extension/package.json",
@@ -80,6 +78,7 @@ const entries = await new Promise((resolve, reject) =>
         name: entry.fileName,
         date: entry.lastModFileDate,
         time: entry.lastModFileTime,
+        mode: entry.externalFileAttributes >>> 16,
       });
       zip.readEntry();
     });
@@ -92,10 +91,13 @@ const names = entries.map((entry) => entry.name).sort();
 if (
   JSON.stringify(names) !== JSON.stringify(expected) ||
   entries.some(
-    (entry) => entry.date !== ((20 << 9) | (1 << 5) | 1) || entry.time !== 0,
+    (entry) =>
+      entry.date !== ((20 << 9) | (1 << 5) | 1) ||
+      entry.time !== 0 ||
+      entry.mode !== 0o100644,
   )
 )
-  throw new Error("VSIX file set or timestamps are not canonical");
+  throw new Error("VSIX file set, timestamps or modes are not canonical");
 console.log(
   JSON.stringify({
     bundleBytes: (await stat(bundle)).size,

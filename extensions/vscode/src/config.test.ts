@@ -1,58 +1,31 @@
 import { describe, expect, it } from "vitest";
-import {
-  ConfigurationError,
-  buildChildEnvironment,
-  buildLaunchConfiguration,
-} from "./config";
-const settings = {
-  executable: "trestle",
-  server: "http://127.0.0.1:8741",
-  tenant: "tenant-a",
-  repository: "repo-a",
-  run: "run-a",
-};
-describe("extension launch authority", () => {
-  it("builds one exact read-only LSP launch", () => {
-    const value = buildLaunchConfiguration(settings, "x".repeat(32));
-    expect(value.command).toBe("trestle");
-    expect(value.args).toEqual(["lsp", "--server", "http://127.0.0.1:8741"]);
-    expect(value.initializationOptions).toEqual({
-      tenant_id: "tenant-a",
-      repository_id: "repo-a",
-      review_run_id: "run-a",
+import { childEnvironment, validExecutable } from "./config";
+describe("settings", () => {
+  it("accepts a command name or an absolute path only", () => {
+    expect(validExecutable("trestle")).toBe(true);
+    expect(validExecutable("/usr/local/bin/trestle")).toBe(true);
+    for (const value of ["", "./workspace/trestle", "trestle --x", "a\nb", 1])
+      expect(validExecutable(value)).toBe(false);
+  });
+  it("passes only the allowlisted environment", () => {
+    const environment = childEnvironment({
+      PATH: "/usr/bin",
+      HOME: "/home/operator",
+      APPDATA: "C:\\Users\\o\\AppData\\Roaming",
+      XDG_CONFIG_HOME: "/config",
+      OPEN_TRESTLE_PROVIDER_OLLAMA_CLOUD: "key",
+      OPEN_TRESTLE_API_TOKEN: "x".repeat(32),
+      OPEN_TRESTLE_GITHUB_API_TOKEN: "do-not-forward",
+      AWS_SECRET_ACCESS_KEY: "do-not-forward",
+      NO_COLOR: "0",
     });
-    expect(value.environment.OPEN_TRESTLE_API_TOKEN).toBe("x".repeat(32));
-  });
-  it("rejects remote plaintext, URL credentials, invalid scope, and unsafe tokens", () => {
-    for (const value of [
-      { ...settings, server: "http://example.com" },
-      { ...settings, server: "http://2130706433" },
-      { ...settings, server: "http://0177.0.0.1" },
-      { ...settings, server: "https://user:secret@example.com" },
-      { ...settings, tenant: "../other" },
-      { ...settings, executable: "./workspace/trestle" },
-    ])
-      expect(() => buildLaunchConfiguration(value, "x".repeat(32))).toThrow(
-        ConfigurationError,
-      );
-    expect(() => buildLaunchConfiguration(settings, "short secret")).toThrow(
-      ConfigurationError,
-    );
-  });
-  it("passes only bounded process environment needed by the LSP client", () => {
-    const environment = buildChildEnvironment(
-      {
-        PATH: "/usr/bin",
-        HOME: "/home/operator",
-        AWS_SECRET_ACCESS_KEY: "do-not-forward",
-        OPENAI_API_KEY: "do-not-forward",
-      },
-      "x".repeat(32),
-    );
-    expect(environment.PATH).toBe("/usr/bin");
-    expect(environment.HOME).toBe("/home/operator");
-    expect(environment.OPEN_TRESTLE_API_TOKEN).toBe("x".repeat(32));
-    expect(environment.AWS_SECRET_ACCESS_KEY).toBeUndefined();
-    expect(environment.OPENAI_API_KEY).toBeUndefined();
+    expect(environment).toEqual({
+      PATH: "/usr/bin",
+      HOME: "/home/operator",
+      APPDATA: "C:\\Users\\o\\AppData\\Roaming",
+      XDG_CONFIG_HOME: "/config",
+      OPEN_TRESTLE_PROVIDER_OLLAMA_CLOUD: "key",
+      NO_COLOR: "1",
+    });
   });
 });

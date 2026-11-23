@@ -1,5 +1,7 @@
 # Web console
 
+The daemon and the surfaces that depend on it are frozen: no new work is planned, and they may be removed. For reviews, use `trestle review`, the `trestle` home screen or the [VS Code command](vscode.md).
+
 The web console is a read-only browser view of one Open Trestle review run. `trestled` serves it at `/console/`, and it uses the same authenticated REST API as the CLI and the editor clients. It shows a run that the daemon already holds. It cannot start a review, and it is not a way to review your own change: use `trestle review` for that.
 
 The console has no way to publish, change policy, take a worker lease, run a shell, edit source or execute tools. `/console` redirects to `/console/`. The daemon's routes are listed in the [daemon API](daemon-api.md#http-contracts).

@@ -199,6 +199,9 @@ type latestReviewOptions struct {
 	// checks and noChecks allow or skip the repository's checks for this
 	// review, whatever the stored answer.
 	checks, noChecks bool
+	// stopOnStdinClose cancels the review when standard input reaches end of
+	// file, as Ctrl-C does.
+	stopOnStdinClose bool
 }
 
 // latestReviewCommand is the saved review command with fresh commits and the
@@ -256,7 +259,7 @@ func latestReviewCommand(template []string, base, head string, options latestRev
 }
 
 func writeLatestReviewUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: trestle review [--format text|json|sarif|markdown] [--all] [--verbose] [--timeout DURATION] [--profile ID | --specialists auto|none|ID[,ID...] [--max-specialists N]] [--exit-code-policy default|findings|strict|always-zero] [--base REF] [--head REF] [--checks|--no-checks] [--directory PATH]")
+	fmt.Fprintln(w, "usage: trestle review [--format text|json|sarif|markdown] [--all] [--verbose] [--timeout DURATION] [--profile ID | --specialists auto|none|ID[,ID...] [--max-specialists N]] [--exit-code-policy default|findings|strict|always-zero] [--base REF] [--head REF] [--checks|--no-checks] [--directory PATH] [--stop-on-stdin-close]")
 	fmt.Fprintln(w, "       review the latest change (HEAD against its merge base with the default branch) with the setup trestle init made; see docs/getting-started.md")
 	fmt.Fprintln(w, "       trestle review <path>   (review a local fixture file)")
 }
@@ -273,6 +276,7 @@ func parseLatestReviewFlags(args []string, stdout, stderr io.Writer) (latestRevi
 	flags.BoolVar(&options.verbose, "verbose", false, "verbose")
 	flags.BoolVar(&options.checks, "checks", false, "checks")
 	flags.BoolVar(&options.noChecks, "no-checks", false, "no-checks")
+	flags.BoolVar(&options.stopOnStdinClose, "stop-on-stdin-close", false, "stop-on-stdin-close")
 	seen := map[string]bool{}
 	for _, argument := range args {
 		if name := strings.TrimLeft(strings.SplitN(argument, "=", 2)[0], "-"); strings.HasPrefix(argument, "-") && name != "" {
@@ -379,8 +383,8 @@ func missingReviewKeys(setup initSetup) []string {
 	return missing
 }
 
-// reviewChecksInput is where a review reads the answer to the checks
-// question; tests replace it.
+// reviewChecksInput is a review's standard input: the checks question reads
+// it, or --stop-on-stdin-close watches it. Tests replace it.
 var reviewChecksInput io.Reader = os.Stdin
 
 // runLatestReview is `trestle review` without a fixture path.
@@ -388,6 +392,15 @@ func runLatestReview(ctx context.Context, args []string, stdout, stderr io.Write
 	options, code, done := parseLatestReviewFlags(args, stdout, stderr)
 	if done {
 		return code
+	}
+	if options.stopOnStdinClose {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithCancel(ctx)
+		defer cancel()
+		go func() {
+			_, _ = io.Copy(io.Discard, reviewChecksInput)
+			cancel()
+		}()
 	}
 	checkout, err := findRepositoryCheckout(ctx)
 	if err != nil {
@@ -447,7 +460,13 @@ func reviewLatestChange(ctx context.Context, w *initWizard, repo repositorySetup
 	}
 	w.say("  A review sends the selected source to %s.", repo.setup.destination())
 	command := latestReviewCommand(repo.template, source.base, source.head, options)
-	if reviewChecksAllowed(ctx, w, repo.directory, options, reviewChecksInput) {
+	// With --stop-on-stdin-close, standard input is watched, so the checks
+	// question is never asked.
+	input := reviewChecksInput
+	if options.stopOnStdinClose {
+		input = nil
+	}
+	if reviewChecksAllowed(ctx, w, repo.directory, options, input) {
 		command = append(command, "--repository-checks")
 	}
 	if _, _, _, _, err := parseLocalModelReview(command[3:]); err != nil {

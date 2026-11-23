@@ -83,6 +83,8 @@ What works today, on Linux and Windows (macOS is not supported; see [platforms](
   models receive the outcomes. See [repository checks](docs/repository-checks.md).
 - The two-model review in stage 5 works. Results come as text in the terminal,
   or as JSON, SARIF or Markdown for other tools.
+- The VS Code extension runs `trestle review` on the current branch and shows
+  the findings in the Problems panel. See [VS Code](docs/vscode.md).
 - Remote providers (OpenRouter, Ollama Cloud and OpenCode Go) and local model
   servers (Ollama, llama.cpp, vLLM, LM Studio and other OpenAI-compatible
   servers) are supported. Every request except an investigation request (local only) is scanned for
@@ -97,8 +99,7 @@ What is not built yet:
 - Choosing which of the checks that ship with Open Trestle to run, and writing
   new tests for a change (stage 3). Only the repository's own tests run.
 - Syntax analysis for the game-engine and in-house languages.
-- A desktop app. The VS Code extension can show the results of a daemon run but
-  cannot start a review.
+- A desktop app.
 - The [GitHub Actions example](examples/github-actions/README.md) has been
   tested offline but has not yet run on GitHub.
 - A signed release or download. You build Open Trestle from source. The first
