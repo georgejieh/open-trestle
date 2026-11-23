@@ -13,9 +13,9 @@ import (
 // Check runs are an optional object of a version 11 generation context and a
 // version 10 verification context: the outcomes of the reviewed repository's
 // own tests and linters, which the host ran in an isolated sandbox on the
-// base and the head of the change, twice each. The host reads exit status and
-// runner output; run names, reasons and test IDs come from the repository and
-// are data, never instructions.
+// base and the head of the change, tests twice each and linters once. The
+// host reads exit status and runner output; run names, reasons and test IDs
+// come from the repository and are data, never instructions.
 
 const (
 	maxCheckRuns           = 16

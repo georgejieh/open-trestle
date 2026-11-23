@@ -69,7 +69,9 @@ func run(ctx context.Context, spec Spec) (result Result, err error) {
 		return Result{}, err
 	}
 	environment := environmentFor(spec, paths)
-	return runContained(ctx, spec, container, application, commandLine, environment, filepath.Join(work, spec.Dir), scratch, temporary)
+	result, err = runContained(ctx, spec, container, application, commandLine, environment, filepath.Join(work, spec.Dir), scratch, temporary)
+	result.Work = work
+	return result, err
 }
 
 func runContained(ctx context.Context, spec Spec, container *appContainer, application, commandLine string, environment []uint16, directory, scratch, temporary string) (Result, error) {

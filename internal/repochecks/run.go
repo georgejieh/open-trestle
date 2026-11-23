@@ -1,8 +1,9 @@
 // Package repochecks detects a repository's own tests and linters, runs
-// them in the check sandbox on the base and head trees of a change, twice
-// each, and reports regressions: tests that pass on base and fail on head.
-// Results come only from the exit status and the structured output the
-// harness asks each runner for.
+// them in the check sandbox on the base and head trees of a change, tests
+// twice each and linters once, and reports regressions: tests that pass on
+// base and fail on head, and diagnostics that only head has. Results come
+// only from the exit status and the structured output the harness asks
+// each runner for.
 package repochecks
 
 import (
@@ -124,14 +125,15 @@ func runCheck(ctx context.Context, machine host, input Input, check Check, trees
 		Path: chain.path, ReadOnly: chain.readOnly, Env: chain.env, Report: check.Report, Limits: input.Limits,
 	}
 	if check.Stack == "go" {
-		spec.HomeSeed = seeds.home(ctx, program, chain, []string{trees.base, trees.head})
+		// The go command comes first on a Go check's path; see resolve.
+		spec.HomeSeed = seeds.home(ctx, "go", toolchain{path: chain.path[:1], readOnly: chain.readOnly, env: chain.env}, []string{trees.base, trees.head})
 	}
-	base, problem := runSide(ctx, input.Runner, spec, check, trees, trees.base)
+	base, _, problem := runSide(ctx, input.Runner, spec, check, trees, trees.base)
 	if problem != nil {
 		result.Reason = problem.reason("base")
 		return result
 	}
-	head, problem := runSide(ctx, input.Runner, spec, check, trees, trees.head)
+	head, located, problem := runSide(ctx, input.Runner, spec, check, trees, trees.head)
 	switch {
 	case problem != nil && problem.headFailure != "":
 		// Base ran within its limits; head did not.
@@ -144,27 +146,41 @@ func runCheck(ctx context.Context, machine host, input Input, check Check, trees
 	}
 	result.Ran = true
 	compare(&result, [2][2]map[string]Outcome{base, head}, deletedTests(check, input.Scope, trees))
+	// A new diagnostic is shown with its head line.
+	for index, id := range result.NewFailures {
+		if line, ok := located[id]; ok {
+			result.NewFailures[index] = line
+		}
+	}
+	slices.Sort(result.NewFailures)
 	return result
 }
 
-// runSide runs the check twice on tree and returns both runs' results, or
-// the problem that stopped it. A tree without the check's folder or any of
-// its Go packages has no results: the check is new there.
-func runSide(ctx context.Context, runner Runner, spec checksandbox.Spec, check Check, trees trees, tree string) ([2]map[string]Outcome, *problem) {
+// runSide runs the check twice on tree and returns both runs' results, with
+// the located form of any diagnostics, or the problem that stopped it.
+// Diagnostics do not change between runs, so a diagnostics check runs once
+// and its results stand for both. A tree without the check's folder or any
+// of its Go packages has no results: the check is new there.
+func runSide(ctx context.Context, runner Runner, spec checksandbox.Spec, check Check, trees trees, tree string) ([2]map[string]Outcome, map[string]string, *problem) {
 	runs := [2]map[string]Outcome{{}, {}}
 	args, present := sideArgs(check, tree)
 	if !present {
-		return runs, nil
+		return runs, nil, nil
 	}
 	spec.Tree, spec.Args = tree, append(slices.Clip(spec.Args), args...)
+	var located map[string]string
 	for attempt := range runs {
-		tests, problem := runOnce(ctx, runner, spec, check, trees)
-		if problem != nil {
-			return runs, problem
+		if attempt > 0 && check.Format == FormatDiagnostics {
+			runs[attempt] = runs[0]
+			continue
 		}
-		runs[attempt] = tests
+		parsed, problem := runOnce(ctx, runner, spec, check, trees)
+		if problem != nil {
+			return runs, nil, problem
+		}
+		runs[attempt], located = parsed.tests, parsed.located
 	}
-	return runs, nil
+	return runs, located, nil
 }
 
 // sideArgs are the check's arguments on tree, and false when the check has
@@ -234,9 +250,9 @@ func platformArgs(check Check) []string {
 // not know, as older versions do for the test runner's options.
 const nodeInvalidArgument = 9
 
-// runOnce runs the check once and returns its results, or the problem that
-// left it without any.
-func runOnce(ctx context.Context, runner Runner, spec checksandbox.Spec, check Check, trees trees) (map[string]Outcome, *problem) {
+// runOnce runs the check once and returns what its output says, or the
+// problem that left it without any results.
+func runOnce(ctx context.Context, runner Runner, spec checksandbox.Spec, check Check, trees trees) (*parsed, *problem) {
 	if ctx.Err() != nil {
 		return nil, errBudget
 	}
@@ -258,7 +274,12 @@ func runOnce(ctx context.Context, runner Runner, spec checksandbox.Spec, check C
 	case outcome.DiskExceeded:
 		return nil, &problem{text: "it filled its scratch space", sided: true, headFailure: "scratch space filled"}
 	}
-	parsed := parseRun(check.Format, check.Name, outcome.ExitCode, outcome.Stdout, outcome.Stderr, outcome.Report, trees.provides)
+	var parsed *parsed
+	if check.Format == FormatDiagnostics {
+		parsed = parseDiagnostics(outcome.Stdout, outcome.Stderr, check.Dir, outcome.Work, outcome.ExitCode, trees.provides)
+	} else {
+		parsed = parseRun(check.Format, check.Name, outcome.ExitCode, outcome.Stdout, outcome.Stderr, outcome.Report, trees.provides)
+	}
 	switch {
 	case parsed.overflow:
 		return nil, &problem{text: fmt.Sprintf("it reported more than %d results", maxRunResults), sided: true}
@@ -266,12 +287,12 @@ func runOnce(ctx context.Context, runner Runner, spec checksandbox.Spec, check C
 		if check.Format != FormatExit {
 			recordExitStatus(parsed, check.Name, outcome.ExitCode)
 		}
-		return parsed.tests, nil
+		return parsed, nil
 	case len(parsed.missing) > 0:
 		slices.Sort(parsed.missing)
 		return nil, &problem{text: "missing dependency: " + strings.Join(slices.Compact(parsed.missing), ", "), sided: true}
 	case outcome.ExitCode == 0:
-		return map[string]Outcome{}, nil
+		return newParsed(), nil
 	case check.Tool == "node" && outcome.ExitCode == nodeInvalidArgument:
 		return nil, &problem{text: "this Node.js version does not accept the test options the check uses"}
 	}

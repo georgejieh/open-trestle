@@ -94,6 +94,9 @@ type Result struct {
 	// Report is the report file's content, or nil when it was not written.
 	Report   []byte
 	Duration time.Duration
+	// Work is the tree copy's path as the command saw it, so absolute paths
+	// in its output can be read relative to the tree.
+	Work string
 	// Leftover names the scratch folder when it could not be removed after
 	// the run, such as when a process the run left is still writing to it.
 	// SweepStale tries again later.

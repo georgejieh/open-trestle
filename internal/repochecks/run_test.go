@@ -110,7 +110,7 @@ func TestRunFindsRegressionsAndDropsFlakyTests(t *testing.T) {
 	if !test.Ran || !slices.Equal(test.Regressions, []string{"m/a.TestBroken"}) || !slices.Equal(test.NewFailures, []string{"m/a.TestNew"}) || test.Flaky != 1 || test.Tests != 4 {
 		t.Fatalf("go test result %+v", test)
 	}
-	if vet := report.Results[1]; !vet.Ran || len(vet.Regressions) != 0 || vet.Tests != 1 {
+	if vet := report.Results[1]; !vet.Ran || len(vet.Regressions) != 0 || vet.Tests != 0 {
 		t.Fatalf("go vet result %+v", vet)
 	}
 }
@@ -330,8 +330,52 @@ func TestRunCollectsScratchFoldersThatCouldNotBeRemoved(t *testing.T) {
 		}
 		return result, nil
 	})
-	if len(report.Leftovers) != 4 || report.Leftovers[0] != "/tmp/open-trestle-check-1" {
+	// Two go test runs and one go vet run on head.
+	if len(report.Leftovers) != 3 || report.Leftovers[0] != "/tmp/open-trestle-check-1" {
 		t.Fatalf("leftovers %v", report.Leftovers)
+	}
+}
+
+// A diagnostic that only head has is new and shown with its head line; one
+// that moved down is still failing; one that only base has is gone. Each
+// side runs a diagnostics check once.
+func TestRunReportsNewDiagnosticsWithTheirHeadLine(t *testing.T) {
+	base, head := goTrees(t)
+	fake := &fakeRunner{base: base, calls: map[string]int{}, answers: func(side string, _ int, spec checksandbox.Spec) (checksandbox.Result, error) {
+		if spec.Args[1] != "vet" {
+			return checksandbox.Result{Stdout: goEvents(map[string]string{"TestA": "pass"})}, nil
+		}
+		stderr := "a/a.go:3:2: self-assignment of x\na/a.go:8:2: unreachable code\n"
+		if side == "head" {
+			stderr = "# m/a\na/a.go:9:2: self-assignment of x\na/a.go:5:2: self-assignment of x\n/work/a/a.go:7:1: result of fmt.Sprint call not used\n"
+		}
+		return checksandbox.Result{ExitCode: 1, Stderr: []byte(stderr), Work: "/work"}, nil
+	}}
+	report, err := runWith(context.Background(), Input{BaseTree: base, HeadTree: head, Scope: Scope{Changed: []string{"a/a.go"}}, Limits: checksandbox.DefaultLimits(), Runner: fake.run}, fakeHost(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	vet := report.Results[1]
+	want := []string{"a/a.go:7: result of fmt.Sprint call not used", "a/a.go:9: self-assignment of x"}
+	if !vet.Ran || !slices.Equal(vet.NewFailures, want) || vet.StillFailing != 1 || len(vet.Regressions) != 0 || len(vet.StoppedRunning) != 0 || vet.Tests != 3 || vet.Flaky != 0 {
+		t.Fatalf("go vet result %+v", vet)
+	}
+	if fake.calls["basego vet ./a"] != 1 || fake.calls["headgo vet ./a"] != 1 || fake.calls["basego test -json -count=1 ./a"] != 2 {
+		t.Fatalf("calls %v", fake.calls)
+	}
+}
+
+// A linter that exits with a failure and prints no diagnostic it can read
+// fails as a run, as before.
+func TestRunTreatsALinterFailureWithoutDiagnosticsAsARegression(t *testing.T) {
+	report := runFake(t, func(side string, _ int, spec checksandbox.Spec) (checksandbox.Result, error) {
+		if side == "head" && spec.Args[1] == "vet" {
+			return checksandbox.Result{ExitCode: 1, Stderr: []byte("go: internal error\n")}, nil
+		}
+		return checksandbox.Result{Stdout: goEvents(map[string]string{"TestA": "pass"})}, nil
+	})
+	if got := report.Results[1]; !got.Ran || !slices.Equal(got.Regressions, []string{"go vet ./a (exit status 1 without results on head)"}) {
+		t.Fatalf("result %+v", got)
 	}
 }
 

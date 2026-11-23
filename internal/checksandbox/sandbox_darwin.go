@@ -110,7 +110,7 @@ func run(ctx context.Context, spec Spec) (result Result, err error) {
 	_ = syscall.Kill(-group, syscall.SIGKILL)
 	outputExceeded := stdout.exceededLimit() || stderr.exceededLimit()
 	result = Result{
-		ExitCode: -1, Stdout: stdout.bytes(), Stderr: stderr.bytes(), Duration: time.Since(started),
+		ExitCode: -1, Stdout: stdout.bytes(), Stderr: stderr.bytes(), Duration: time.Since(started), Work: work,
 		OutputExceeded: outputExceeded, DiskExceeded: diskOver.Load() || meter.exceeded(),
 	}
 	var exit *exec.ExitError

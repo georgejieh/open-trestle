@@ -227,7 +227,7 @@ func (w *initWizard) askChecksConsent() {
 // one check that could not run; it never stops the review. A change that no
 // check applies to is an outcome too, so the walkthrough says so.
 func runRepositoryChecks(ctx context.Context, objectsPath string, base, head evidence.RevisionIdentity, index *reviewIndexContext, stderr io.Writer) *review.CheckRuns {
-	fmt.Fprintln(stderr, "Running this repository's checks for the change in a sandbox (twice on each side)...")
+	fmt.Fprintln(stderr, "Running this repository's checks for the change in a sandbox (tests twice on each side, linters once)...")
 	checksandbox.SweepStale()
 	dependents, scope := index.dependents(ctx)
 	switch scope {
