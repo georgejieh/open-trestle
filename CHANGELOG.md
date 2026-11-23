@@ -125,6 +125,9 @@ All notable changes to released versions of Open Trestle will be documented in t
 
 ### Fixed
 
+- Fixed the first review inside `trestle init`, which printed the result before the progress lines written earlier. When that review fails, the last line now points to the reason and hint above it, and suggests checking that the models are reachable only when the review reported no reason.
+- Fixed the `model_output_exhausted` hint, which named `setup bootstrap init --max-output-tokens`. It now names the command that changes the allowance: `trestle init --directory NEW_FOLDER --max-output-tokens N`.
+- Fixed repeated repository check names in a repository with several Go modules. A check of a module below the root now names its folder, for example `go test . (in _examples)`.
 - Fixed Rust checks on Linux, which could not link because the sandbox's search path left out `/usr/bin` and `/bin`. Those folders were already readable there; programs in them are now found by name.
 - Reviews on Windows now read packed Git objects. They were refused, because the reader treated Windows as unable to open a file without waiting for a writer.
 - A review run no longer fails when the machine's wall clock steps backwards during the run, as after an NTP correction, a virtual machine resume or in WSL. The control plane refused any transition observed earlier than the last recorded event with "run transition sequence mismatch", which surfaced as a failed review with `run: unknown` or an invalid session. Such a transition is now recorded at the last event's time, so recorded event times still never decrease. Lease expiry, renewal and retry times are measured against those recorded times, so a step can neither expire nor extend a lease.
