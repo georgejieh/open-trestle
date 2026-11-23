@@ -181,3 +181,11 @@ func TestSandboxGoesFirstToTheOutOfMemoryKiller(t *testing.T) {
 		t.Fatalf("result %+v stdout %q", result, result.Stdout)
 	}
 }
+
+func TestSystemProgramsAreFoundByName(t *testing.T) {
+	spec := probeSpec(t)
+	spec.Args = []string{"/usr/bin/env", "sh", "-c", "exit 7"}
+	if result := runProbe(t, spec); result.ExitCode != 7 {
+		t.Fatalf("result %+v stderr %q", result, result.Stderr)
+	}
+}

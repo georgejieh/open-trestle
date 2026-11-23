@@ -77,7 +77,9 @@ func run(ctx context.Context, spec Spec) (result Result, err error) {
 
 	paths := sandboxPaths{home: sandboxHome, temporary: sandboxTemp, work: sandboxWork}
 	env := append([]string{
-		"PATH=" + strings.Join(spec.Path, ":"),
+		// The system folders, mounted read-only, hold what toolchains start by
+		// name, such as the C linker that cargo calls.
+		"PATH=" + strings.Join(append(append([]string{}, spec.Path...), "/usr/bin", "/bin"), ":"),
 		"HOME=" + sandboxHome, "TMPDIR=" + sandboxTemp, "USER=sandbox", "LANG=C.UTF-8", "TZ=UTC",
 	}, paths.env(spec.Env)...)
 	limits := spec.Limits
