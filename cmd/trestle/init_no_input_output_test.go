@@ -38,8 +38,8 @@ func TestInitNoInputPrintsNoPromptHintsOrEmptySteps(t *testing.T) {
 		"  confirmed findings are reported. Setup sends no source.",
 		"  --no-input: every answer comes from a flag.",
 		"",
-		"●○○○○○  Step 1 of 6 · What will be reviewed",
-		"───────────────────────────────────────────",
+		"●○○○○  Step 1 of 5 · What will be reviewed",
+		"──────────────────────────────────────────",
 		"  Repository: " + initDisplayPath(top) + "  (on branch " + branch + ")",
 		"  Base:       refs/heads/base  (" + base + ")",
 		"  Head:       refs/heads/review  (" + head + ")",
@@ -48,13 +48,13 @@ func TestInitNoInputPrintsNoPromptHintsOrEmptySteps(t *testing.T) {
 		"  Open Trestle compares exactly these two commits; it does",
 		"  not fetch.",
 		"",
-		"●●○○○○  Step 2 of 6 · Where the models run",
-		"──────────────────────────────────────────",
+		"●●○○○  Step 2 of 5 · Where the models run",
+		"─────────────────────────────────────────",
 		"  Using: A model server on this machine (Ollama, llama.cpp,",
 		"  vLLM, LM Studio)",
 		"",
-		"●●●○○○  Step 3 of 6 · The two models",
-		"────────────────────────────────────",
+		"●●●○○  Step 3 of 5 · The two models",
+		"───────────────────────────────────",
 		"",
 		"  Limits: context 32768 and output 4096 tokens; start both",
 		"  servers with this context length (llama.cpp --ctx-size,",
@@ -90,7 +90,7 @@ func TestInitNoInputCompleteSetupHasNoEmptySteps(t *testing.T) {
 	if result.code != initExitDone {
 		t.Fatalf("exit=%d\n%s\n%s", result.code, result.stdout, result.stderr)
 	}
-	for _, unwanted := range []string{"Enter accepts", "Ctrl-D", "[brackets]", "Step 3 of 6"} {
+	for _, unwanted := range []string{"Enter accepts", "Ctrl-D", "[brackets]", "Step 3 of 5"} {
 		if initHas(result.stdout, unwanted) {
 			t.Fatalf("--no-input output contains %q:\n%s", unwanted, result.stdout)
 		}
@@ -105,7 +105,7 @@ func TestInitNoInputCompleteSetupHasNoEmptySteps(t *testing.T) {
 			t.Fatalf("a step header has nothing under it:\n%s", result.stdout)
 		}
 	}
-	if got := len(headers); got != 5 {
-		t.Fatalf("shown steps = %d, want 1, 2, 4, 5 and 6:\n%s", got, result.stdout)
+	if got := len(headers); got != 4 {
+		t.Fatalf("shown steps = %d, want 1, 2, 4 and 5:\n%s", got, result.stdout)
 	}
 }

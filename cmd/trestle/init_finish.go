@@ -209,7 +209,9 @@ func (w *initWizard) resume() (int, error) {
 	if !outcome.ready {
 		return w.notReady(setup, outcome), nil
 	}
-	w.askChecksConsent()
+	if w.prompt == nil || latest {
+		w.askChecksConsent()
+	}
 	if !latest {
 		w.say("\n  Setup checks: %s. Review the latest change any time with:", outcome.summary)
 		w.sayVerbatim("    " + w.latestCommand())
@@ -335,7 +337,7 @@ func (w *initWizard) bootstrapArgs() []string {
 }
 
 func (w *initWizard) stepWrite() (int, error) {
-	w.header(6, "Save and check")
+	w.header(5, "Save and check")
 	dir := w.a.directory
 	if dir == "" {
 		return 0, initStopf(initExitUsage, "cannot find your home folder for the default setup folder. Pass --directory PATH.")
@@ -735,7 +737,9 @@ func (w *initWizard) finish(setup initSetup, outcome initOutcome) (int, error) {
 			return 0, err
 		}
 	}
-	w.askChecksConsent()
+	if w.prompt == nil || run {
+		w.askChecksConsent()
+	}
 	if !run {
 		w.say("  No review was run. Run the command above when you are ready.")
 		return initExitDone, nil

@@ -12,8 +12,8 @@ import (
 // provider's key variable has no key in the environment or the credential
 // store, and standard input is an interactive terminal, the wizard asks for
 // the key with echo off. It checks the key with a call that costs nothing
-// where the provider has one (OpenRouter's GET /api/v1/key), asks whether to
-// save it, and keeps it in this process's memory until the setup is saved.
+// where the provider has one (OpenRouter's GET /api/v1/key), and keeps it in
+// this process's memory until the setup is saved, then saves it.
 // The key never appears on screen, in an argument, a log, a setup file or a
 // result, and never in a model request: it is sent only as the bearer
 // credential. Without a terminal nothing is asked and the
@@ -46,8 +46,8 @@ func (w *initWizard) checkProviderKey(provider, key string) (initKeyCheck, strin
 }
 
 // askProviderKey asks for the key of one variable with hidden input. With
-// saveNow (a setup that is already saved) a key the operator wants kept is
-// saved at once; otherwise it is saved by saveEnteredKey after the setup.
+// saveNow (a setup that is already saved) the key is saved at once;
+// otherwise it is saved by saveEnteredKey after the setup.
 func (w *initWizard) askProviderKey(name, provider, label string, saveNow bool) error {
 	if w.prompt == nil || w.terminal == nil || name == "" || initSpendingProvider(provider) == "" {
 		return nil
@@ -58,7 +58,7 @@ func (w *initWizard) askProviderKey(name, provider, label string, saveNow bool) 
 	} else if state.problem != nil {
 		w.say("  %s %s: %s.", w.wait, name, state.where())
 	}
-	w.say("\n  API key: %s has no key in this shell or in %s. Paste the key from your %s account. It stays hidden while you type; afterwards only its length and last four characters are shown. Open Trestle never logs it or puts it in a model request. Press Enter on an empty line to skip.", name, providerCredentialDisplayDirectory(), label)
+	w.say("\n  API key: %s has no key in this shell or in %s. Paste the key from your %s account. It stays hidden while you type; afterwards only its length and last four characters are shown. It is saved there with the setup, and Open Trestle never logs it or puts it in a model request. Press Enter on an empty line to skip.", name, providerCredentialDisplayDirectory(), label)
 	for attempt := 0; attempt < initMaxTries; attempt++ {
 		key, err := w.prompt.askSecret("API key for "+label+" (hidden)", w.terminal)
 		if errors.Is(err, errInitSecretUnavailable) {
@@ -90,15 +90,6 @@ func (w *initWizard) askProviderKey(name, provider, label string, saveNow bool) 
 			}
 		}
 		setProviderSessionKey(name, key)
-		save, err := w.prompt.confirm("Save this key for future reviews?", true)
-		if err != nil {
-			return err
-		}
-		if !save {
-			w.say("  The key is used for this session only. To use it in later reviews, export it in your shell without showing it, or save it with `trestle keys set %s`:", name)
-			w.sayVerbatim("    read -rs " + name + " && export " + name)
-			return nil
-		}
 		if saveNow {
 			w.saveKey(name, key)
 			return nil
@@ -122,11 +113,13 @@ func (w *initWizard) saveKey(name, key string) {
 		w.say("  %s The key could not be saved (%v). It is used for this session only; save it later with `trestle keys set %s`.", w.bad, err, name)
 		return
 	}
-	w.say("  %s Saved the key for %s in %s (%s). `trestle keys remove %s` deletes it.", w.ok, name, providerCredentialDisplayDirectory(), providerCredentialProtection(), name)
+	w.say("  %s Saved the key for %s in %s (%s). To change it or remove it:", w.ok, name, providerCredentialDisplayDirectory(), providerCredentialProtection())
+	w.sayVerbatim("    trestle keys set " + name)
+	w.sayVerbatim("    trestle keys remove " + name)
 }
 
-// saveEnteredKey saves the keys the operator asked to keep, once the setup is
-// saved, so declining the setup writes nothing.
+// saveEnteredKey saves the typed keys once the setup is saved, so declining
+// the setup writes nothing.
 func (w *initWizard) saveEnteredKey() {
 	for _, name := range w.enteredKeys {
 		if key := providerSessionKey(name); key != "" {

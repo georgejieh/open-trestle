@@ -66,7 +66,7 @@ not scanned and go only to a local server. It sends no telemetry. The
 What works today, on Linux and Windows (macOS is not supported; see [platforms](docs/platforms.md)):
 
 - `trestle init` sets up a repository in one guided pass. It asks where the two
-  models run, takes API keys through hidden input, and can store them in an
+  models run, takes API keys through hidden input, and stores them in an
   owner-only credential file.
 - `trestle review` reviews every change on your current branch against your
   default branch, which is the same set of changes a pull request shows. Running

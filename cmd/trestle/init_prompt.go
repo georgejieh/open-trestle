@@ -137,21 +137,6 @@ func (p *initPrompter) ask(question, proposed string, validate func(string) (str
 	return "", errInitTooManyTries
 }
 
-// askOptional returns one answer that may be empty (Enter skips).
-func (p *initPrompter) askOptional(question string) (string, error) {
-	for range initMaxTries {
-		answer, err := p.next("  " + question + ": ")
-		if err != nil {
-			return "", err
-		}
-		if answer != "\x00too-long" {
-			return answer, nil
-		}
-		p.say("    That answer is too long. Please try again.")
-	}
-	return "", errInitTooManyTries
-}
-
 // choose prints numbered options and returns the zero-based index of the choice.
 func (p *initPrompter) choose(question string, options []string) (int, error) {
 	for i, option := range options {
@@ -191,24 +176,6 @@ func (p *initPrompter) confirm(question string, defaultYes bool) (bool, error) {
 			return false, nil
 		}
 		p.say("    Please answer y or n.")
-	}
-	return false, errInitTooManyTries
-}
-
-// typedYes requires the full word "yes"; "no" declines. Nothing is pre-answered.
-func (p *initPrompter) typedYes(question string) (bool, error) {
-	for range initMaxTries {
-		answer, err := p.next("  " + question + " Type yes or no: ")
-		if err != nil {
-			return false, err
-		}
-		switch strings.ToLower(answer) {
-		case "yes":
-			return true, nil
-		case "no", "n":
-			return false, nil
-		}
-		p.say("    Please type the full word yes to confirm, or no to stop.")
 	}
 	return false, errInitTooManyTries
 }

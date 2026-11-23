@@ -9,9 +9,10 @@ import (
 	"github.com/georgejieh/open-trestle/spending"
 )
 
-// The spending part of `trestle init`: one optional question, a monthly
-// spending limit for the key, asked only for a remote provider that charges
-// per token. It replaces the per-request cost question; the per-request bound
+// The spending part of `trestle init`: one question, a monthly spending limit
+// for the key (none is an answer), asked only for a remote provider that
+// charges per token. The alert percentage is not asked: 80 unless
+// --spending-alert gives another. It replaces the per-request cost question; the per-request bound
 // is now computed (costLimit). The limit is saved only after the setup is
 // saved, in the same usage folder `trestle usage` and every review read.
 
@@ -66,7 +67,7 @@ func (w *initWizard) spendingScope() (spending.Scope, bool) {
 	return scope, err == nil
 }
 
-// spendingLimit asks the optional monthly spending limit for the key. It shows
+// spendingLimit asks the monthly spending limit for the key. It shows
 // OpenRouter's own figures first when the key variable is set, and keeps a
 // limit the key already has.
 func (w *initWizard) spendingLimit() error {
@@ -114,24 +115,23 @@ func (w *initWizard) spendingLimit() error {
 	if w.prompt == nil {
 		return nil
 	}
-	w.say("\n  Optional: a spending limit for this key. Open Trestle adds up what each review may have cost, prints an alert when the month's total reaches the alert percent, and refuses to start a review once it reaches the limit. The total is an upper-bound estimate at the highest pinned price, not a bill, and the limit is best effort: other tools using this key and price changes are invisible to it, so your provider's own limit is the guarantee.")
+	w.say("\n  Spending limit for this key. Open Trestle adds up what each review may have cost, prints an alert when the month's total reaches 80%% of the limit, and refuses to start a review once it reaches the limit. The total is an upper-bound estimate at the highest pinned price, not a bill, and the limit is best effort: other tools using this key and price changes are invisible to it, so your provider's own limit is the guarantee. Type none for no limit.")
 	if lines := usageProviderLines(w.ctx, scope); len(lines) != 0 {
 		for _, line := range lines {
 			w.say("  %s", strings.TrimSpace(line))
 		}
 	}
-	value, err := w.prompt.ask("Spending limit for this key, USD per month (optional)", "none", initSpendingAmount)
+	value, err := w.prompt.ask("Spending limit for this key, USD per month", initSpendingDefault, initSpendingAmount)
 	if err != nil || value == "" {
 		return err
 	}
 	a.spendingLimit, _ = strconv.ParseUint(value, 10, 64)
-	percent, err := w.prompt.ask("Alert at percent", "80", initSpendingPercent)
-	if err != nil {
-		return err
-	}
-	a.spendingAlert, _ = strconv.Atoi(percent)
+	a.spendingAlert = 80
 	return nil
 }
+
+// initSpendingDefault is the monthly limit Enter accepts.
+const initSpendingDefault = "20"
 
 // spendingRow is the summary panel's spending line, or false when the setup
 // has no key that charges per token.

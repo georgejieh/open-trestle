@@ -4,7 +4,7 @@ A review can run the repository's own tests and linters before it calls any mode
 
 ## Turn it on or off
 
-- `trestle init` asks once: "Run this repository's tests inside a sandbox on this machine? It has no network and no access to your home folder or keys." The answer is saved for the setup. With `--no-input`, pass `--checks` to answer yes; without it the answer is no.
+- `trestle init` asks once, when you choose to run the first review: "Run this repository's tests inside a sandbox on this machine? It has no network and no access to your home folder or keys." The answer is saved for the setup. If no review runs, the first review asks instead. With `--no-input`, pass `--checks` to answer yes; without it the answer is no.
 - `trestle checks on`, `trestle checks off` and `trestle checks status` change or show the answer later (add `--directory PATH` for a setup in another folder). `status` also says whether this machine has what the sandbox needs.
 - If a review runs with no saved answer, it asks in the terminal: Allow this time, Deny, or Always allow for this repository. Without a terminal it runs no checks and says so.
 - `trestle review --checks` runs them for one review, and `--no-checks` skips them, whatever the saved answer says. `trestle local-git model-review --repository-checks` is the same consent for the direct command; it cannot be combined with `--investigation-policy`.

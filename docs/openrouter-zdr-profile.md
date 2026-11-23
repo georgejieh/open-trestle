@@ -1,6 +1,6 @@
 # OpenRouter zero data retention
 
-OpenRouter can require zero data retention (ZDR) on a single request. With `"provider": {"zdr": true}` in the request, it routes the request only to endpoints on its ZDR list. Open Trestle uses that per-request switch. `trestle init` recommends it and selects it by default; setup can continue without it.
+OpenRouter can require zero data retention (ZDR) on a single request. With `"provider": {"zdr": true}` in the request, it routes the request only to endpoints on its ZDR list. Open Trestle uses that per-request switch. `trestle init` requires it without asking; `--without-zdr`, or keeping a model that has no ZDR endpoint, continues without it.
 
 This page describes what setup reads from OpenRouter, what it records, what each request sends, and how a route without ZDR is labelled. The setup steps are in [getting started](getting-started.md) and [remote model review](remote-model-review.md#openrouter).
 
@@ -71,7 +71,7 @@ The setup summary, `bootstrap check` (`data_retention: required_per_request`) an
 
 This route is a generic `private_remote` Chat Completions connection to `https://openrouter.ai/api/v1`, like Ollama Cloud. Its requests carry no `provider` object, so OpenRouter routes them by its defaults and by your account and key settings. The model provider may keep prompts under its own terms. Your account or key may still enforce ZDR, and in that case OpenRouter refuses a model that has no ZDR endpoint.
 
-`trestle init` chooses this route only after it explains the trade-off in two sentences and you answer yes, or when you pass `--without-zdr`. Running `setup bootstrap init --provider openrouter` makes the same choice directly.
+`trestle init` chooses this route when you pass `--without-zdr`, or when a chosen model has no ZDR endpoint and you press Enter to keep it. It explains the trade-off in two sentences, and the summary and the one confirmation under it say that ZDR is not required. Running `setup bootstrap init --provider openrouter` makes the same choice directly.
 
 Every place that shows the route labels it:
 

@@ -13,9 +13,9 @@ import (
 // The OpenRouter part of `trestle init`. Setup reads OpenRouter's public model
 // list and zero-data-retention (ZDR) endpoint list once and fills in every
 // model fact from them. It asks only what the operator alone can decide: the
-// two models, whether to require ZDR (recommended, the default), an optional
-// spending limit for the key and consent to send source. Nothing asked here is evidence, a timestamp or a
-// provider slug.
+// two models, a spending limit for the key and consent to send source. ZDR is
+// required unless --without-zdr is given or a model without it is kept.
+// Nothing asked here is evidence, a timestamp or a provider slug.
 
 func (w *initWizard) openRouterModels() error {
 	if raw, ok := w.flags["provider"]; ok && raw == "openrouter-zdr" && w.bools["without-zdr"] {
@@ -156,29 +156,18 @@ func (w *initWizard) openRouterSummary() {
 	}
 }
 
-// openRouterChooseZDR decides whether every request requires zero data
-// retention. With ZDR endpoints for both models it proposes yes; a model
-// without one is warned about and, interactively, can be replaced.
+// openRouterChooseZDR requires zero data retention on every request unless
+// --without-zdr turns it off. A model without a ZDR endpoint is named, and
+// interactively one answer either replaces it or keeps it without ZDR.
 func (w *initWizard) openRouterChooseZDR() error {
 	observation := w.openRouter
 	required := w.flags["provider"] == "openrouter-zdr"
+	if w.bools["without-zdr"] {
+		return w.declineZDR()
+	}
 	if observation.err != nil {
-		w.say("\n  Without OpenRouter's API, Open Trestle cannot check which models have zero-data-retention endpoints. It can still require zero data retention on every request.")
-		if w.bools["without-zdr"] {
-			return w.declineZDR()
-		}
-		yes := true
-		if !required {
-			var err error
-			if yes, err = w.confirm("Require zero data retention on every request (recommended)?", true, true); err != nil {
-				return err
-			}
-		}
-		if !yes {
-			return w.declineZDR()
-		}
 		w.zdr = true
-		w.say("  Requests to a model without a zero-data-retention endpoint will be refused by OpenRouter.")
+		w.say("\n  Without OpenRouter's API, Open Trestle cannot check which models have zero-data-retention endpoints. Every request still requires zero data retention, so OpenRouter refuses a model without one (--without-zdr turns this off).")
 		return nil
 	}
 	for range initMaxTries {
@@ -201,18 +190,19 @@ func (w *initWizard) openRouterChooseZDR() error {
 			}
 			return w.declineZDR()
 		}
-		replace, err := w.prompt.confirm("Choose a model that has zero-data-retention endpoints instead (recommended)?", true)
+		keep := model
+		if required {
+			keep = ""
+			w.say("  --provider openrouter-zdr requires zero data retention, so pick one of these models that have it:")
+		} else {
+			w.say("  Pick one of these models that have it, or press Enter to keep %s and continue without zero data retention:", model)
+		}
+		choice, err := w.repickWithZDR(missing, keep)
 		if err != nil {
 			return err
 		}
-		if !replace {
-			if required {
-				return initStopf(initExitRefused, "stopped: --provider openrouter-zdr needs zero-data-retention endpoints for both models. Nothing was written.")
-			}
+		if choice == model {
 			return w.declineZDR()
-		}
-		if err := w.repickWithZDR(missing); err != nil {
-			return err
 		}
 		w.openRouterSummary()
 	}
@@ -221,28 +211,14 @@ func (w *initWizard) openRouterChooseZDR() error {
 			return errInitTooManyTries
 		}
 	}
-	w.say("\n  Both models have zero-data-retention endpoints.")
-	if w.bools["without-zdr"] {
-		return w.declineZDR()
-	}
-	yes := true
-	if !required {
-		var err error
-		if yes, err = w.confirm("Require zero data retention on every request (recommended)?", true, true); err != nil {
-			return err
-		}
-	}
-	if !yes {
-		return w.declineZDR()
-	}
 	w.zdr = true
-	w.say("  Every request will require zero data retention and use only the endpoints listed above.")
+	w.say("\n  Both models have zero-data-retention endpoints. Every request will require zero data retention and use only the endpoints listed above (--without-zdr turns this off).")
 	return nil
 }
 
 // repickWithZDR asks the role's model again from the models that have
-// zero-data-retention endpoints.
-func (w *initWizard) repickWithZDR(role string) error {
+// zero-data-retention endpoints; Enter keeps keep when it is set.
+func (w *initWizard) repickWithZDR(role, keep string) (string, error) {
 	candidates := []modelcatalog.Model{}
 	for _, model := range w.openRouter.catalog {
 		if w.openRouter.facts(model.Selector).hasZDR() {
@@ -259,20 +235,21 @@ func (w *initWizard) repickWithZDR(role string) error {
 	if role == "verification" {
 		question = "Checker model with zero data retention"
 	}
-	choice, err := w.pickModel(role+"-model", question, candidates, exclude)
+	choice, err := w.pickModel(role+"-model", question, candidates, exclude, keep)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if role == "generation" {
 		w.a.generationModel = choice
 	} else {
 		w.a.verificationModel = choice
 	}
-	return nil
+	return choice, nil
 }
 
-// declineZDR explains the route without zero data retention and continues
-// after one yes (or --without-zdr).
+// declineZDR explains the route without zero data retention. With --no-input
+// it continues only with --without-zdr; interactively the summary states it
+// before the one confirmation.
 func (w *initWizard) declineZDR() error {
 	w.zdr = false
 	w.say("  Without zero data retention, the model provider may keep your prompts under its own terms (%s). Open Trestle will not require it; your account or key settings still may.", openRouterDocsZDR)
@@ -282,13 +259,6 @@ func (w *initWizard) declineZDR() error {
 	}
 	if w.prompt == nil {
 		return initStopf(initExitUsage, "zero data retention is not available for these models. Pass --without-zdr to continue without it, or choose models that list zero-data-retention endpoints. Nothing was written.")
-	}
-	yes, err := w.prompt.confirm("Continue without zero data retention?", false)
-	if err != nil {
-		return err
-	}
-	if !yes {
-		return initStopf(initExitRefused, "stopped: nothing was written. Run `trestle init` again and choose models with zero-data-retention endpoints.")
 	}
 	return nil
 }
@@ -396,16 +366,18 @@ func (w *initWizard) openRouterAllowance(route openRouterRoute, target uint64, e
 
 // openRouterConsent is the single consent of an OpenRouter setup: the facts
 // came from the API, so the operator states only what only they know.
-func (w *initWizard) openRouterConsent() error {
+func (w *initWizard) openRouterConsent() {
 	retention := "every request requires zero data retention, so OpenRouter uses only zero-data-retention endpoints"
 	if !w.zdr {
 		retention = "Open Trestle does not require zero data retention, so a model provider may keep your prompts under its own terms"
 	}
 	w.a.extra = w.openRouterExtra()
-	return w.declare("declare-remote-route", "sending your source to OpenRouter", "docs/remote-model-review.md#openrouter", []string{
-		"each review sends the selected source, after secret scanning, to OpenRouter for " + w.a.generationModel + " and " + w.a.verificationModel,
-		retention,
-		"you have not turned on prompt logging for this key in your OpenRouter settings",
+	w.declare("declare-remote-route", "sending your source to OpenRouter", "docs/remote-model-review.md#openrouter", func() []string {
+		return []string{
+			"each review sends the selected source, after secret scanning, to OpenRouter for " + w.a.generationModel + " and " + w.a.verificationModel,
+			retention,
+			"you have not turned on prompt logging for this key in your OpenRouter settings",
+		}
 	})
 }
 

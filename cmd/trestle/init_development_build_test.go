@@ -34,9 +34,8 @@ func TestInitDevelopmentBuildReportsSavedRemoteSetup(t *testing.T) {
 			"2", "y", // Ollama Cloud with a development build: set it up anyway
 			"1", "2", // the two listed models
 			"128000", "8192",
-			"n",   // no per-token charge
-			"",    // use the settings shown
-			"yes", // route declaration
+			"n", // no per-token charge
+			"",  // one confirmation of the settings and the route declaration
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

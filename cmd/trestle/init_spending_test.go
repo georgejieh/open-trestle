@@ -24,7 +24,7 @@ func openRouterSpendingScope(t *testing.T) spending.Scope {
 	return scope
 }
 
-func TestInitAsksTheOptionalSpendingLimitAndSavesItAfterTheSetup(t *testing.T) {
+func TestInitAsksTheSpendingLimitWithADefaultAndSavesItAfterTheSetup(t *testing.T) {
 	store := spendingTestStore(t)
 	remoteScannerInstalled(t)
 	t.Setenv("OPEN_TRESTLE_PROVIDER_OPENROUTER", remoteTestKey)
@@ -33,14 +33,11 @@ func TestInitAsksTheOptionalSpendingLimitAndSavesItAfterTheSetup(t *testing.T) {
 	checkout := remoteBootstrapCheckout(t)
 	dir := filepath.Join(t.TempDir(), "setup")
 	result := runInitScript(t, checkout, []string{"--directory", dir, "--base", "refs/heads/base", "--head", "refs/heads/review"},
-		"1", "generator", "1", "", "other/verifier",
-		"",      // require zero data retention
-		"ten",   // not an amount: asked again
-		"10.00", // a $10.00 monthly limit
-		"",      // alert at the proposed 80%
-		"",      // use the settings shown
-		"yes",   // consent
-		"n",     // no review now
+		"1", "generator", "1", "other/verifier",
+		"ten", // not an amount: asked again
+		"",    // the proposed $20.00 monthly limit
+		"",    // one confirmation
+		"n",   // no review now
 	)
 	if result.code != initExitDone {
 		t.Fatalf("init exit=%d\nstdout:\n%s\nstderr:\n%s", result.code, result.stdout, result.stderr)
@@ -48,29 +45,29 @@ func TestInitAsksTheOptionalSpendingLimitAndSavesItAfterTheSetup(t *testing.T) {
 	// Lines wrap at 60 columns; compare positions in the unwrapped text.
 	shown := strings.Join(strings.Fields(result.stdout), " ")
 	reportAt := strings.Index(shown, "OpenRouter reports $0.08 used this month of this key's $50.00 monthly limit")
-	questionAt := strings.Index(shown, "Spending limit for this key, USD per month (optional) [none]:")
+	questionAt := strings.Index(shown, "Spending limit for this key, USD per month [20]:")
 	if reportAt < 0 || questionAt < 0 || reportAt > questionAt || report.requests != 1 {
 		t.Fatalf("OpenRouter's own limit was not shown before the question (%d reads):\n%s", report.requests, shown)
 	}
 	initAssertOutput(t, result,
 		"Type an amount in US dollars with at most two decimals, such as 10 or 25.50, or none.",
-		"Alert at percent [80]:",
-		"Spending $10.00 a month for this key · alerts at 80%",
-		"Saved a $10.00 monthly limit for OPEN_TRESTLE_PROVIDER_OPENROUTER, alerts at 80% and 100%.",
+		"Spending limit: $20.00 a month for this key · alerts at 80% and 100%",
+		"Spending $20.00 a month for this key · alerts at 80%",
+		"Saved a $20.00 monthly limit for OPEN_TRESTLE_PROVIDER_OPENROUTER, alerts at 80% and 100%.",
 		spending.Note,
 	)
-	if strings.Index(shown, "Saved protected configuration") > strings.Index(shown, "Saved a $10.00 monthly limit") {
+	if strings.Index(shown, "Saved protected configuration") > strings.Index(shown, "Saved a $20.00 monthly limit") {
 		t.Fatal("the limit was saved before the setup")
 	}
 	limit, found, err := store.Limit(openRouterSpendingScope(t))
-	if err != nil || !found || limit.AmountMicroUSD != 10_000_000 || limit.Period != spending.PeriodMonth || !slices.Equal(limit.AlertPercents, []int{80, 100}) {
+	if err != nil || !found || limit.AmountMicroUSD != 20_000_000 || limit.Period != spending.PeriodMonth || !slices.Equal(limit.AlertPercents, []int{80, 100}) {
 		t.Fatalf("saved limit %+v %v %v", limit, found, err)
 	}
 	// Running init again shows the key's state as trestle usage does, and
 	// changes nothing.
 	again := runInitScript(t, checkout, []string{"--directory", dir}, "3")
 	initAssertOutput(t, again,
-		"Spending: $0.00 of your $10.00 monthly limit for OPEN_TRESTLE_PROVIDER_OPENROUTER this month (0%), alerts at 80% and 100%.",
+		"Spending: $0.00 of your $20.00 monthly limit for OPEN_TRESTLE_PROVIDER_OPENROUTER this month (0%), alerts at 80% and 100%.",
 		"OpenRouter reports $0.08 used this month of this key's $50.00 monthly limit.",
 		spending.Note, "Nothing was changed.")
 }
@@ -86,7 +83,7 @@ func TestInitKeepsAnExistingLimitAndTakesTheLimitAsFlags(t *testing.T) {
 		t.Fatal(err)
 	}
 	result := runInitScript(t, checkout, []string{"--directory", filepath.Join(t.TempDir(), "setup"), "--base", "refs/heads/base", "--head", "refs/heads/review"},
-		"1", "generator", "1", "", "other/verifier", "", "", "yes", "n")
+		"1", "generator", "1", "other/verifier", "", "n")
 	if result.code != initExitDone || initHas(result.stdout, "Spending limit for this key") {
 		t.Fatalf("an existing limit was asked again: exit=%d\n%s", result.code, result.stdout)
 	}
@@ -163,7 +160,7 @@ func TestInitFirstReviewRefusedAtTheSpendingLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	result := runInitScript(t, remoteBootstrapCheckout(t), []string{"--directory", filepath.Join(t.TempDir(), "setup"), "--base", "refs/heads/base", "--head", "refs/heads/review"},
-		"1", "generator", "1", "", "other/verifier", "", "", "yes", "y")
+		"1", "generator", "1", "other/verifier", "", "y")
 	if result.code != initExitRefused || len(transport.requests) != 0 {
 		t.Fatalf("exit=%d requests=%v\n%s", result.code, transport.requests, result.stdout)
 	}
