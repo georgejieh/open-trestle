@@ -248,7 +248,8 @@ One panel shows everything, whether you answered it or the wizard filled it in:
 The key variable has the provider's usual name. The `Key` row says where its key
 comes from: the environment, `~/.config/open-trestle/credentials`, a key to be
 saved with the setup, a key entered for this session only, or not set yet. The
-key itself is never printed and never written to the setup folder.
+key itself is never written to the setup folder, and only its length and last
+four characters are ever shown, once, when you enter it.
 
 The names come from the URL of `origin` (its host, namespace and name; a
 credential in the URL is ignored) or from the folder name. The owner comes from

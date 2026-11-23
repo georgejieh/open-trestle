@@ -195,6 +195,9 @@ func detectGo(files []string, exists func(string) bool, used map[string]bool, sc
 		}
 		vendored := exists(path.Join(module, "vendor", "modules.txt"))
 		listed := strings.Join(patterns, " ")
+		if module != "." {
+			listed += " (in " + module + ")"
+		}
 		checks = append(checks,
 			Check{Name: "go test " + listed, Stack: "go", Tool: "go", Dir: module, Args: []string{"test", "-json", "-count=1"}, Packages: patterns, Vendored: vendored, Format: FormatGoJSON},
 			Check{Name: "go vet " + listed, Stack: "go", Tool: "go", Dir: module, Args: []string{"vet"}, Packages: patterns, Vendored: vendored, Format: FormatDiagnostics},

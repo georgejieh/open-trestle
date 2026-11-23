@@ -486,6 +486,24 @@ func TestInitNoInputCompleteSetupRunsReviewOnlyWithFlag(t *testing.T) {
 	if reviewed.code != initExitDone || len(transport.requests) != 2 || !initHas(reviewed.stdout, "Review finished") {
 		t.Fatalf("rerun with --run-review: exit=%d requests=%v\n%s\n%s", reviewed.code, transport.requests, reviewed.stdout, reviewed.stderr)
 	}
+	progress, result := strings.Index(reviewed.stdout, "│ Indexing the repository"), strings.Index(reviewed.stdout, "│ status: ")
+	if progress < 0 || result < 0 || progress > result {
+		t.Fatalf("progress is not shown before the result:\n%s", reviewed.stdout)
+	}
+}
+
+func TestInitFailedReviewPointsToItsReason(t *testing.T) {
+	remoteScannerInstalled(t)
+	t.Setenv("OPEN_TRESTLE_PROVIDER_REMOTE_TEST", remoteTestKey)
+	transport := &remoteModelTransport{t: t, target: "https://ollama.com/v1/chat/completions", models: map[string]string{"gemma4:31b": "", "qwen3.5:397b": ""}, verificationStatus: http.StatusServiceUnavailable}
+	remoteModelClient(t, transport)
+	checkout := latestChangeCheckout(t)
+	dir := filepath.Join(t.TempDir(), "setup")
+	args := []string{"--no-input", "--directory", dir, "--base", "refs/heads/base", "--head", "refs/heads/review", "--provider", "ollama-cloud", "--generation-model", "gemma4:31b", "--verification-model", "qwen3.5:397b", "--context-tokens", "128000", "--output-tokens", "8192", "--input-micro-usd-per-million-tokens", "0", "--output-micro-usd-per-million-tokens", "0", "--max-cost-micro-usd", "0", "--credential-env", "OPEN_TRESTLE_PROVIDER_REMOTE_TEST", "--declare-remote-route", "--run-review"}
+	reviewed := runInitScript(t, checkout, args)
+	if reviewed.code != initExitFailed || !initHas(reviewed.stdout, "│ hint: ") || !initHas(reviewed.stdout, "for the reason shown above") || initHas(reviewed.stdout, "reachable") {
+		t.Fatalf("failed review: exit=%d\n%s\n%s", reviewed.code, reviewed.stdout, reviewed.stderr)
+	}
 }
 
 func TestInitEndOfInputMidFlowLeavesNoFiles(t *testing.T) {
