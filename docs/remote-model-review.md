@@ -467,9 +467,9 @@ an unknown model ID or a parameter that the model or endpoint does not accept. O
 an OpenRouter route a 404 records `provider_no_allowed_endpoint` instead (see
 [OpenRouter zero data retention](openrouter-zdr-profile.md#when-openrouter-refuses-a-request)).
 
-A rate limit is the only retried failure. The provider refused the request before
-processing it, so the model handler retries it on the same route at most twice
-inside the task attempt. Each retry waits for the `Retry-After` of the provider
+A rate limit is the only retried provider refusal. The provider refused the
+request before processing it, so the model handler retries it on the same route
+at most twice inside the task attempt. Each retry waits for the `Retry-After` of the provider
 and at least one second. If the `Retry-After` is beyond 15 minutes or would end
 after the review's `--timeout`, the task fails at once. A retry takes over the
 cost reservation of the refused attempt, and the refused attempt records known
@@ -490,6 +490,22 @@ Ollama Cloud sign-in route, a single outer Markdown code fence (with no
 language or with `json`) around the whole answer is removed. A reply that stops at the output limit records
 `model_output_exhausted` (see
 [Output allowance and request deadline](#output-allowance-and-request-deadline)).
+
+In `trestle review`, an answer that is not usable is sent once more: a
+`model_output_invalid` answer other than a `refusal`, or a reply that ends as
+`model_output_exhausted`. The finder and the checker each get one such retry. It
+is the same request on the same route, with nothing added and without the
+rejected answer. When the second answer is valid the review goes on. When it is
+not, the review fails with the second answer's detail and class. The retry is a
+second paid request with its own cost reservation. The rejected answer's tokens
+and cost stay counted in `token_usage`, `actual_cost_micro_usd` and the usage
+ledger, and the retry is refused if it could take a key past its spending limit
+(see [spending limits](spending-limits.md)). A request has at most two same-route
+retries in all, so a request that was already rate-limited twice gets no answer
+retry. The result's `limitations` gains `model_answer_retried`, and text output
+prints `answer retried: a model answer was not usable, so its request was sent
+once more`. Neither quotes the rejected answer. The daemon does not retry
+answers.
 
 A daemon run classifies refusals the same way and records the same detail as its
 task failure reason. `trestle runs status` prints the detail and its hint on

@@ -594,7 +594,7 @@ A result that opened a run reports `token_usage`: the input, output and cached-i
 "token_usage":{"known":true,"route_attempts":2,"input_tokens":200,"output_tokens":200,"cached_input_tokens":0,"generation":{"known":true,"route_attempts":1,"input_tokens":100,"output_tokens":100,"cached_input_tokens":0},"verification":{"known":true,"route_attempts":1,"input_tokens":100,"output_tokens":100,"cached_input_tokens":0}}
 ```
 
-- `route_attempts` is the number of claimed attempts that were summed. A direct review claims one generation and one verification attempt, plus one for each retry after a rate limit. A run with `--investigation-policy` claims one for each turn.
+- `route_attempts` is the number of claimed attempts that were summed. A direct review claims one generation and one verification attempt, plus one for each retry after a rate limit or after an answer that was not usable (`model_answer_retried` in `limitations`). A run with `--investigation-policy` claims one for each turn.
 - `input_tokens` includes `cached_input_tokens`. The counts are the provider's report, not a tokenization by Open Trestle.
 - `known` is true only when every summed attempt reported usage. Otherwise it is false and the counts are absent, never zero, for example `{"known":false,"route_attempts":1}`. A rate limit records known zero usage. Any other HTTP error, a transport failure or an invalid reply counts as unknown.
 - `usage_known` and `actual_cost_micro_usd` cover the same claimed attempts. The cost is reported only when every attempt has a known settlement.

@@ -46,6 +46,9 @@ type remoteModelTransport struct {
 	// verificationSeverity, when set, is the severity every verdict reports
 	// instead of high.
 	verificationSeverity string
+	// invalidVerifications answers that many first verification requests
+	// with text that is not JSON.
+	invalidVerifications int
 	mu                   sync.Mutex
 	requests             []string                     // "task:model"
 	providers            []map[string]json.RawMessage // each request's provider object, nil when absent
@@ -159,11 +162,20 @@ func (r *remoteModelTransport) RoundTrip(request *http.Request) (*http.Response,
 	r.providers = append(r.providers, wire.Provider)
 	r.reasoning = append(r.reasoning, wire.Model+" "+string(wire.Reasoning))
 	r.payloads = append(r.payloads, wire.Messages[1].Content)
+	verifications := 0
+	for _, sent := range r.requests {
+		if strings.HasPrefix(sent, "candidate_verification:") {
+			verifications++
+		}
+	}
 	r.mu.Unlock()
 	if packet.Task == "candidate_verification" && r.verificationStatus != 0 {
 		return &http.Response{StatusCode: r.verificationStatus, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("")), Request: request}, nil
 	}
 	text, _ := json.Marshal(output)
+	if packet.Task == "candidate_verification" && verifications <= r.invalidVerifications {
+		text = append([]byte("<|message|>"), text...)
+	}
 	usage := map[string]any{"prompt_tokens": 120, "completion_tokens": 80, "total_tokens": 200}
 	if strings.HasPrefix(r.target, "https://openrouter.ai/") {
 		usage["cost"], usage["is_byok"] = 0.0012, false

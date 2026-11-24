@@ -60,7 +60,8 @@ func NewRateLimitedRetryAttemptAuthorization(previous RouteAttemptAuthorization,
 // IsSameReservationRetryOf reports whether attempt is authorization itself or
 // a same-route retry of it, at most MaxRateLimitRetries deep, that kept its
 // request, route, terms and reservation and changed only the retry lineage, as
-// NewRateLimitedRetryAttemptAuthorization grants after a rate limit.
+// NewRateLimitedRetryAttemptAuthorization grants after a rate limit and
+// NewAnswerRetryAttemptAuthorization after a rejected answer.
 func IsSameReservationRetryOf(authorization, attempt RouteAttemptAuthorization) bool {
 	if authorization.Validate() != nil || attempt.Validate() != nil {
 		return false

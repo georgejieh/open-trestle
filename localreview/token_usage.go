@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/georgejieh/open-trestle/internal/gateway"
 	"github.com/georgejieh/open-trestle/internal/provider"
 )
 
@@ -210,22 +211,23 @@ func accountRouteAttempts(claims []string, recorded map[string]recordedAttempt, 
 }
 
 // validCompletedTokenUsage checks the token usage of a completed direct
-// review: one generation and one verification attempt, each a usage report a
-// provider adapter could return, whose counts sum to the total, known exactly
-// when the result's cost usage is known.
+// review: a generation and a verification request, each of one attempt and at
+// most gateway.MaxRateLimitRetries same-route retries, a one-attempt stage a
+// usage report a provider adapter could return, whose counts sum to the
+// total, known exactly when the result's cost usage is known.
 func validCompletedTokenUsage(usage TokenUsage, usageKnown bool) bool {
-	if usage.RouteAttempts != 2 || usage.Known != usageKnown || !usage.TokenCount.validate() {
+	if usage.RouteAttempts != usage.Generation.RouteAttempts+usage.Verification.RouteAttempts || usage.Known != usageKnown || !usage.TokenCount.validate() {
 		return false
 	}
 	known := true
 	var input, output, cached uint64
 	for _, stage := range []TokenCount{usage.Generation, usage.Verification} {
-		if stage.RouteAttempts != 1 || !stage.validate() {
+		if stage.RouteAttempts < 1 || stage.RouteAttempts > 1+gateway.MaxRateLimitRetries || !stage.validate() {
 			return false
 		}
 		known = known && stage.Known
 		if stage.Known {
-			if _, err := provider.NewRouteTokenUsage(*stage.InputTokens, *stage.OutputTokens, *stage.CachedInputTokens); err != nil {
+			if _, err := provider.NewRouteTokenUsage(*stage.InputTokens, *stage.OutputTokens, *stage.CachedInputTokens); stage.RouteAttempts == 1 && err != nil {
 				return false
 			}
 			input, output, cached = input+*stage.InputTokens, output+*stage.OutputTokens, cached+*stage.CachedInputTokens

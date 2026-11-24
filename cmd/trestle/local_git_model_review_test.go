@@ -275,8 +275,9 @@ func TestRunLocalGitModelReviewFailsClosedAtRuntimeBoundaries(t *testing.T) {
 		{"per-request cost cap", localModelFixtureOptions{expensive: true}, 4, "refused", 0, 0},
 		{"full readable payload capacity", localModelFixtureOptions{capacity: true}, 4, "refused", 0, 0},
 		{"explicit local egress refusal", localModelFixtureOptions{remote: true}, 4, "refused", 0, 0},
-		{"malformed generation", localModelFixtureOptions{generationMode: "malformed"}, 1, "failed", 1, 0},
-		{"wrong candidate identity", localModelFixtureOptions{verificationMode: "wrong_candidate"}, 1, "failed", 1, 1},
+		// An answer that is not usable is sent once more, never a third time.
+		{"malformed generation", localModelFixtureOptions{generationMode: "malformed"}, 1, "failed", 2, 0},
+		{"wrong candidate identity", localModelFixtureOptions{verificationMode: "wrong_candidate"}, 1, "failed", 1, 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newLocalModelFixture(t, tc.options)
@@ -286,7 +287,7 @@ func TestRunLocalGitModelReviewFailsClosedAtRuntimeBoundaries(t *testing.T) {
 			if result.Status != tc.status || result.CI == "pass" || result.RunStatus == "active" || result.Readiness != "" || len(result.Diagnostics.Findings) != 0 || gc > tc.maxGeneration || vc > tc.maxVerification {
 				t.Fatal("refusal produced downstream readiness or repeated model effects")
 			}
-			if strings.Contains(tc.name, "malformed") && gc != 1 || tc.name == "wrong candidate identity" && (gc != 1 || vc != 1) {
+			if strings.Contains(tc.name, "malformed") && gc != 2 || tc.name == "wrong candidate identity" && (gc != 1 || vc != 2) {
 				t.Fatal("malformed result test did not reach the actual model adapter")
 			}
 		})

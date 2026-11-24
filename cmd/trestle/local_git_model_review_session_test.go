@@ -373,7 +373,7 @@ func TestLocalModelSessionCapacityAndTimingRemainBounded(t *testing.T) {
 }
 
 func TestLocalModelSessionCannotReceiveForgeOrCustomHandlerCapabilities(t *testing.T) {
-	allowed := map[string]bool{"TenantID": true, "RepositoryID": true, "Repository": true, "ObjectsRoot": true, "ObjectStoreProfile": true, "ObjectAlgorithm": true, "Inventory": true, "Policy": true, "Egress": true, "Credentials": true, "Clock": true, "Timeout": true, "ArtifactCapacity": true, "RenewalInterval": true, "Retention": true, "RetainedMemoryInput": true, "GenerationSanitizer": true, "VerificationSanitizer": true, "ModelHTTPClient": true, "ModelHTTPClientIdentity": true, "IndexContext": true, "Scanner": true, "CheckRuns": true}
+	allowed := map[string]bool{"TenantID": true, "RepositoryID": true, "Repository": true, "ObjectsRoot": true, "ObjectStoreProfile": true, "ObjectAlgorithm": true, "Inventory": true, "Policy": true, "Egress": true, "Credentials": true, "Clock": true, "Timeout": true, "ArtifactCapacity": true, "RenewalInterval": true, "Retention": true, "RetainedMemoryInput": true, "GenerationSanitizer": true, "VerificationSanitizer": true, "ModelHTTPClient": true, "ModelHTTPClientIdentity": true, "IndexContext": true, "Scanner": true, "CheckRuns": true, "AnswerRetry": true}
 	options := reflect.TypeOf(localreview.SessionOptions{})
 	// The policy-approved transport is a plain identity-bound HTTP client, not a handler.
 	if field, ok := options.FieldByName("ModelHTTPClient"); !ok || field.Type != reflect.TypeOf((*http.Client)(nil)) {
@@ -400,6 +400,10 @@ func TestLocalModelSessionCannotReceiveForgeOrCustomHandlerCapabilities(t *testi
 	// Check runs are immutable host-observed outcomes, not a handler.
 	if runs, ok := options.FieldByName("CheckRuns"); !ok || runs.Type != reflect.TypeOf((*review.CheckRuns)(nil)) {
 		t.Fatal("check runs option must be a pointer to the immutable outcomes")
+	}
+	// The answer retry option only allows or refuses a retry's spend.
+	if retry, ok := options.FieldByName("AnswerRetry"); !ok || retry.Type != reflect.TypeOf(func(uint64) bool { return false }) {
+		t.Fatal("answer retry option must remain a spend decision")
 	}
 	for i := 0; i < options.NumField(); i++ {
 		field := options.Field(i)

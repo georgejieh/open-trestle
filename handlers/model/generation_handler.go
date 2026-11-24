@@ -34,6 +34,17 @@ type GenerationHandler struct {
 	// answerRejected, when set, is told the class of each answer recorded as
 	// model_output_invalid.
 	answerRejected AnswerRejectionObserver
+	// answerRetry, when set, lets a request whose answer was not usable be
+	// sent once more.
+	answerRetry AnswerRetryGate
+}
+
+// WithAnswerRetry returns a copy of h that sends a request once more when its
+// answer was not usable and gate allows the retry's reservation.
+func (h *GenerationHandler) WithAnswerRetry(gate AnswerRetryGate) *GenerationHandler {
+	copied := *h
+	copied.answerRetry = gate
+	return &copied
 }
 
 // AnswerRejectionObserver is told the content-free class of an answer that a
@@ -146,7 +157,8 @@ func deriveGenerationHandlerIdentity(catalogIdentity string, expected review.Sca
 
 // Execute performs one task attempt. Control-plane retry authority is rejected;
 // within the attempt a request the provider rate-limited is retried on the
-// same route at most twice (settleRouteAttempts).
+// same route at most twice (settleRouteAttempts), and with WithAnswerRetry a
+// request whose answer was not usable is sent once more (settleAnswer).
 func (h *GenerationHandler) Execute(ctx context.Context, task controlplane.TaskExecutionRequest) controlplane.TaskCompletion {
 	if nilInterface(ctx) || h == nil || h.Validate() != nil || task.Validate() != nil ||
 		task.Task().Kind() != controlplane.TaskGenerateCandidates ||
@@ -241,27 +253,26 @@ func (h *GenerationHandler) Execute(ctx context.Context, task controlplane.TaskE
 		}
 		return gateway.DispatchAuthorizedRouteFromCatalog(ctx, h.catalog, authorization, providerRequest)
 	}
-	attempt, failed, settled := settleRouteAttempts(ctx, task, h.ledger, h.clock, h.wait, input.Authorization(), started, dispatch)
+	var candidates review.CandidateBatch
+	parse := func(attempt routeAttempt) error {
+		// The context version selects the candidate schema and identifies
+		// repository_context sources that cannot anchor a candidate.
+		var err error
+		candidates, err = review.ParseContextCandidateBatch(
+			attempt.result.Response(), contextArtifact.Payload(), input.Snapshot(), input.EvidenceItems(),
+		)
+		if errors.Is(err, review.ErrInvalidCandidateDocumentShape) {
+			// Failure to persist the witness remains an unproven internal failure.
+			_ = h.recordDocumentShapeRejection(ctx, task, inputArtifact, contextArtifact, input, attempt.authorization, attempt.outcome, attempt.reconciliation)
+		}
+		return err
+	}
+	attempt, failed, settled := settleAnswer(ctx, task, h.ledger, h.clock, h.wait, h.answerRetry, input.Authorization(), started, dispatch, parse, h.answerRejected)
 	if !settled {
 		return failed
 	}
-	// After a rate-limited retry the last attempt holds its own authorization.
-	authorization, dispatchResult, outcome, reconciliation, finished := attempt.authorization, attempt.result, attempt.outcome, attempt.reconciliation, attempt.finished
-	if dispatchResult.Status() == gateway.RouteDispatchFailed {
-		return routeFailureCompletion(task, dispatchResult)
-	}
-	// The context version selects the candidate schema and identifies
-	// repository_context sources that cannot anchor a candidate.
-	candidates, err := review.ParseContextCandidateBatch(
-		dispatchResult.Response(), contextArtifact.Payload(), input.Snapshot(), input.EvidenceItems(),
-	)
-	if err != nil {
-		if errors.Is(err, review.ErrInvalidCandidateDocumentShape) {
-			// Failure to persist the witness remains an unproven internal failure.
-			_ = h.recordDocumentShapeRejection(ctx, task, inputArtifact, contextArtifact, input, authorization, outcome, reconciliation)
-		}
-		return answerFailureCompletion(task, dispatchResult.Response(), err, h.answerRejected)
-	}
+	// After a retry the last attempt holds its own authorization.
+	authorization, outcome, reconciliation, finished := attempt.authorization, attempt.outcome, attempt.reconciliation, attempt.finished
 	outputReceipt, err := gateway.NewSuccessfulRouteOutputReceipt(
 		gateway.RouteOutputCandidateBatch, input.ContextIdentity(), candidates.Identity(),
 		providerRequest, authorization, outcome,

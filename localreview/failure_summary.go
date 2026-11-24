@@ -68,6 +68,16 @@ const LimitationOpenRouterZDRNotRequired = "openrouter_zero_data_retention_not_r
 // person needs even when the limitations list is left out.
 const ZeroDataRetentionNotRequiredText = "zero data retention: not required on an OpenRouter route this review used (no claim either way about what the provider keeps)\n"
 
+// LimitationModelAnswerRetried marks a run in which a model answer was not
+// usable (model_output_invalid other than a refusal, or
+// model_output_exhausted) and its request was sent once more. Both requests
+// count in token_usage and cost; the rejected answer is never recorded.
+const LimitationModelAnswerRetried = "model_answer_retried"
+
+// ModelAnswerRetriedText is the text line of a result that carries
+// LimitationModelAnswerRetried.
+const ModelAnswerRetriedText = "answer retried: a model answer was not usable, so its request was sent once more\n"
+
 // failureHints are plain-language explanations of each run failure class.
 // They describe what the class usually means; they are not diagnoses.
 var failureHints = map[string]string{

@@ -78,6 +78,12 @@ type rateLimitRun struct {
 // answers with results in turn, under ctx.
 func runRateLimitedGeneration(t *testing.T, ctx context.Context, results ...gateway.RouteDispatchResult) rateLimitRun {
 	t.Helper()
+	return runGeneration(t, ctx, nil, results...)
+}
+
+// runGeneration is runRateLimitedGeneration with an answer retry gate.
+func runGeneration(t *testing.T, ctx context.Context, gate AnswerRetryGate, results ...gateway.RouteDispatchResult) rateLimitRun {
+	t.Helper()
 	scope, snapshot, packet, contextArtifact, providerRequest := generationContextFixture(t)
 	authorization := generationAuthorization(t, scope, providerRequest)
 	dispatcher := &sequencedDispatcher{recordingDispatcher: recordingDispatcher{adapterID: "test-model"}, results: results}
@@ -93,6 +99,9 @@ func runRateLimitedGeneration(t *testing.T, ctx context.Context, results ...gate
 	}
 	run := rateLimitRun{dispatcher: dispatcher, ledger: ledger, scope: scope, initial: authorization, store: store, context: contextArtifact, clock: clock}
 	handler.wait = clock.waitFor(&run.delays)
+	if gate != nil {
+		handler = handler.WithAnswerRetry(gate)
+	}
 	input, _ := NewGenerationInput(contextArtifact, packet, snapshot, authorization)
 	inputArtifact, _ := NewGenerationInputArtifact(input, contextArtifact, []string{strings.Repeat("4", 64)}, time.UnixMilli(70))
 	_, _ = store.Put(context.Background(), inputArtifact, time.UnixMilli(70))
