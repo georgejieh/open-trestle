@@ -56,9 +56,10 @@ func LoadProtectedFeedbackReview(ctx context.Context, path, tenant, repositoryID
 		}
 	}
 	// A version 6 result may also carry the review's recorded judgement (rank,
-	// pre_existing and declaration_anchors) and its walkthrough. The feedback
-	// review does not use them; they appear only beside token_usage.
-	for _, key := range []string{"rank", "pre_existing", "declaration_anchors", "walkthrough"} {
+	// pre_existing and declaration_anchors), its walkthrough and its check
+	// regressions. The feedback review does not use them; they appear only
+	// beside token_usage.
+	for _, key := range []string{"rank", "pre_existing", "declaration_anchors", "walkthrough", "check_regressions"} {
 		if _, ok := fields[key]; ok {
 			if !counted {
 				return fail()

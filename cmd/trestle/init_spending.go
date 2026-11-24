@@ -127,6 +127,10 @@ func (w *initWizard) spendingLimit() error {
 	}
 	a.spendingLimit, _ = strconv.ParseUint(value, 10, 64)
 	a.spendingAlert = 80
+	if standard, _ := initSpendingAmount(initSpendingDefault); value == standard {
+		w.say("  Using the default limit of %s a month. To change it later:", spending.FormatUSD(a.spendingLimit))
+		w.sayVerbatim("    trestle usage set --credential-env " + scope.CredentialEnvironment + " --limit USD")
+	}
 	return nil
 }
 

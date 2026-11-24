@@ -18,11 +18,12 @@ const (
 	// ExitPolicyDefault is the historical mapping: 4 blocked, 3 inconclusive, 1 error.
 	ExitPolicyDefault ExitPolicy = "default"
 	// ExitPolicyFindings exits 0 when the review ran to completion and no
-	// verified high/critical finding exists; it keeps the historical code when a
-	// blocking finding exists or the review could not run to completion.
+	// verified high/critical finding or check regression exists; it keeps the
+	// historical code when one exists or the review could not run to completion.
 	ExitPolicyFindings ExitPolicy = "findings"
 	// ExitPolicyStrict exits 0 only when the review ran to completion with no
-	// candidates at all, no verified findings of any severity and no coverage gap.
+	// candidates at all, no verified findings of any severity, no check
+	// regression and no coverage gap.
 	ExitPolicyStrict ExitPolicy = "strict"
 	// ExitPolicyAlwaysZero exits 0 whenever a valid terminal result was produced,
 	// including refused and failed runs. It is for advisory-only steps.
@@ -48,11 +49,11 @@ func (r Result) ExitCodeFor(policy ExitPolicy) int {
 	case ExitPolicyAlwaysZero:
 		return 0
 	case ExitPolicyFindings:
-		if completed && !r.hasBlockingFinding() {
+		if completed && !r.hasBlockingFinding() && r.wire.CheckRegressions == nil {
 			return 0
 		}
 	case ExitPolicyStrict:
-		if completed && r.wire.Status == "no_candidates" {
+		if completed && r.wire.Status == "no_candidates" && r.wire.CheckRegressions == nil {
 			return 0
 		}
 	}
@@ -197,6 +198,9 @@ type Report struct {
 	StyleAdvice StyleAdvice
 	// Walkthrough is a direct run's walkthrough, or nil.
 	Walkthrough *Walkthrough
+	// CheckRegressions are the tests the repository's own checks proved
+	// broken, or nil. They are not findings, and they block CI.
+	CheckRegressions *CheckRegressions
 }
 
 // Report projects the result for an exporter such as SARIF. It fails for an
@@ -236,6 +240,7 @@ func (r Result) Report() (Report, error) {
 	if r.wire.Walkthrough != nil {
 		report.Walkthrough = r.wire.Walkthrough.clone()
 	}
+	report.CheckRegressions = r.wire.CheckRegressions.clone()
 	set := r.diagnostics
 	if set.Identity() != "" {
 		report.HeadRevision, report.DiagnosticSet = set.HeadRevision(), set.Identity()

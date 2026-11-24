@@ -441,11 +441,14 @@ type modelReviewSetWire struct {
 	// the secret scan and verifier totals over the completed members, with
 	// each one's own account in verified_by_member, and the shared per-file
 	// summary and deduplicated missing-verification notes.
-	Walkthrough            *localreview.SetWalkthrough `json:"walkthrough,omitempty"`
-	Findings               []setFindingWire            `json:"findings"`
-	Bounds                 setBoundsWire               `json:"bounds"`
-	Limitations            []string                    `json:"limitations"`
-	ComprehensiveClearance bool                        `json:"comprehensive_clearance"`
+	Walkthrough *localreview.SetWalkthrough `json:"walkthrough,omitempty"`
+	// CheckRegressions are the tests the repository's own checks proved
+	// broken; they make the set blocked whatever its members did.
+	CheckRegressions       *localreview.CheckRegressions `json:"check_regressions,omitempty"`
+	Findings               []setFindingWire              `json:"findings"`
+	Bounds                 setBoundsWire                 `json:"bounds"`
+	Limitations            []string                      `json:"limitations"`
+	ComprehensiveClearance bool                          `json:"comprehensive_clearance"`
 	// StyleAdvice repeats the general member's style advice once for the set,
 	// inline. Its fields are omitted when it has none, so a set without advice
 	// keeps its version 1 bytes.
@@ -566,9 +569,16 @@ func runLocalModelReviewSet(ctx, execution context.Context, options localModelRe
 		}
 	}
 	set := buildModelReviewSet(selection, members, notLaunched, options, concurrency, sequentialReason)
+	if regressions := localreview.NewCheckRegressions(inputs.checks); regressions != nil {
+		set.CheckRegressions, set.CI = regressions, "blocked"
+	}
 	inputs.spending.finish()
 	if observe != nil {
-		observe(modelReviewOutcome{status: set.Status, findings: len(set.Findings), advisory: set.Status == "findings" && set.CI == "inconclusive"})
+		outcome := modelReviewOutcome{status: set.Status, findings: len(set.Findings), advisory: set.Status == "findings" && set.CI == "inconclusive"}
+		if set.CheckRegressions != nil {
+			outcome.regressions = set.CheckRegressions.Count
+		}
+		observe(outcome)
 	}
 	return writeModelReviewSet(options.format, options.exitPolicy, options.renderOptions(), set, stdout, stderr)
 }
@@ -912,12 +922,14 @@ func (f setFindingWire) contributorLabels() []string {
 }
 
 // exitCode applies the exit policy to the merged set:
-//   - default: 4 blocked (a blocking finding or a refused member), 3
-//     inconclusive (including an advisory set whose findings are all low
-//     severity or pre-existing), 1 error.
-//   - findings: 0 when every member completed and no merged finding is error
-//     severity (verified high/critical); otherwise the default code.
-//   - strict: 0 only when every member completed with no candidates.
+//   - default: 4 blocked (a blocking finding, a check regression or a
+//     refused member), 3 inconclusive (including an advisory set whose
+//     findings are all low severity or pre-existing), 1 error.
+//   - findings: 0 when every member completed, no merged finding is error
+//     severity (verified high/critical) and no check regression exists;
+//     otherwise the default code.
+//   - strict: 0 only when every member completed with no candidates and no
+//     check regression exists.
 //   - always-zero: 0 when the general review completed, even if a specialist
 //     member was refused or failed; when the general review did not complete,
 //     the default code (so a refused general review exits 4).
@@ -939,7 +951,7 @@ func (s modelReviewSetWire) exitCode(policy localreview.ExitPolicy) int {
 			return 0
 		}
 	case localreview.ExitPolicyStrict:
-		if s.Complete && s.Status == "no_candidates" {
+		if s.Complete && s.Status == "no_candidates" && s.CheckRegressions == nil {
 			return 0
 		}
 	}
@@ -947,6 +959,9 @@ func (s modelReviewSetWire) exitCode(policy localreview.ExitPolicy) int {
 }
 
 func (s modelReviewSetWire) hasBlockingFinding() bool {
+	if s.CheckRegressions != nil {
+		return true
+	}
 	for _, member := range s.Members {
 		if member.statusFindingsEmpty || !member.reportAvailable {
 			return true
@@ -1032,6 +1047,9 @@ func renderModelReviewSetText(set modelReviewSetWire, options localreview.Render
 				fmt.Fprintf(&buffer, "hint: %s: %s\n", member.Member, member.failureHint)
 			}
 		}
+	}
+	for _, line := range localreview.CheckRegressionsText(set.CheckRegressions, set.Complete) {
+		buffer.WriteString(line)
 	}
 	if options.Verbose {
 		writeModelReviewSetDetails(&buffer, set)
@@ -1161,6 +1179,9 @@ func renderModelReviewSetMarkdown(set modelReviewSetWire, options localreview.Re
 			fmt.Fprintf(&buffer, "\n- %s did not finish: %s.\n", localreview.MarkdownCode(member.Member), localreview.MarkdownText(localreview.FailureLine(member.Failure, member.FailureTask, member.FailureDetail)))
 		}
 	}
+	if set.CheckRegressions != nil {
+		buffer.WriteString("\n" + localreview.CheckRegressionsMarkdown(set.CheckRegressions, set.Complete))
+	}
 	if set.Walkthrough != nil {
 		buffer.WriteString("\n" + localreview.SetWalkthroughMarkdown(set.Walkthrough))
 	}
@@ -1197,7 +1218,7 @@ func encodeModelReviewSetSARIF(set modelReviewSetWire) ([]byte, error) {
 	report := localreview.Report{
 		Status: set.Status, CIDisposition: set.CI, RunStatus: set.runStatus, Failure: set.failure, Independence: set.independence,
 		Limitations: append([]string{}, set.Limitations...), HeadRevision: set.headRevision, Findings: []localreview.ReportFinding{}, Omissions: []localreview.ReportOmission{},
-		StyleAdvice: set.StyleAdvice,
+		StyleAdvice: set.StyleAdvice, CheckRegressions: set.CheckRegressions,
 	}
 	if set.report != nil && set.report.HasSourceCoverage {
 		report.HasSourceCoverage = true
@@ -1236,7 +1257,7 @@ func encodeModelReviewSetSARIF(set modelReviewSetWire) ([]byte, error) {
 		if set.report == nil || !set.report.HasSourceCoverage {
 			coverage = " Source coverage counts are unavailable for this run."
 		}
-		log.Runs[0].Invocations[0].ToolExecutionNotifications = []sarifNotification{{Level: "error", Message: sarifMessage{Text: "One or more review set members did not complete (status=" + set.Status + "); the results list only verified findings from members that completed. This is not a clean result." + coverage + " Limitations: " + strings.Join(set.Limitations, ", ") + "."}}}
+		log.Runs[0].Invocations[0].ToolExecutionNotifications = append([]sarifNotification{{Level: "error", Message: sarifMessage{Text: "One or more review set members did not complete (status=" + set.Status + "); the results list only verified findings from members that completed. This is not a clean result." + coverage + " Limitations: " + strings.Join(set.Limitations, ", ") + "."}}}, checkRegressionNotifications(set.CheckRegressions)...)
 	}
 	encoded, err := json.Marshal(log)
 	if err != nil {

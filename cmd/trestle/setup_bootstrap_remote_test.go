@@ -46,6 +46,10 @@ type remoteModelTransport struct {
 	// verificationSeverity, when set, is the severity every verdict reports
 	// instead of high.
 	verificationSeverity string
+	// generation, when set, answers every generation request with no
+	// candidates ("empty") or with a document that is not valid JSON
+	// ("malformed").
+	generation string
 	// invalidVerifications answers that many first verification requests
 	// with text that is not JSON.
 	invalidVerifications int
@@ -172,7 +176,13 @@ func (r *remoteModelTransport) RoundTrip(request *http.Request) (*http.Response,
 	if packet.Task == "candidate_verification" && r.verificationStatus != 0 {
 		return &http.Response{StatusCode: r.verificationStatus, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("")), Request: request}, nil
 	}
+	if packet.Task == "candidate_generation" && r.generation == "empty" {
+		output = map[string]any{"schema_version": 2, "candidates": []any{}}
+	}
 	text, _ := json.Marshal(output)
+	if packet.Task == "candidate_generation" && r.generation == "malformed" {
+		text = []byte(`{"schema_version":2,"candidates":[`)
+	}
 	if packet.Task == "candidate_verification" && verifications <= r.invalidVerifications {
 		text = append([]byte("<|message|>"), text...)
 	}

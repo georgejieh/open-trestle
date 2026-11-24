@@ -275,6 +275,9 @@ type modelReviewOutcome struct {
 	// advisory is set for a review with findings none of which blocks CI:
 	// each is low severity or pre-existing (ci_disposition inconclusive).
 	advisory bool
+	// regressions counts the tests the repository's own checks proved
+	// broken.
+	regressions int
 }
 
 // advisoryOutcomeNote follows the finished-review line of an advisory review.
@@ -286,7 +289,11 @@ func observeModelResult(observe func(modelReviewOutcome), result localreview.Res
 		return
 	}
 	if report, err := result.Report(); err == nil {
-		observe(modelReviewOutcome{status: report.Status, findings: len(report.Findings), advisory: report.Status == "findings" && report.CIDisposition == "inconclusive"})
+		outcome := modelReviewOutcome{status: report.Status, findings: len(report.Findings), advisory: report.Status == "findings" && report.CIDisposition == "inconclusive"}
+		if report.CheckRegressions != nil {
+			outcome.regressions = report.CheckRegressions.Count
+		}
+		observe(outcome)
 	}
 }
 
@@ -302,11 +309,15 @@ func runLocalGitModelReviewObserved(ctx context.Context, args []string, stdout, 
 		writeLocalGitModelReviewUsage(stderr)
 		return 2
 	}
+	// Check regressions are reported whatever the model review did, so every
+	// result takes the ones that ran.
+	var checks *review.CheckRuns
 	unstarted := func(status string) int {
 		result, err := localreview.NewUnstartedSpecialistResult(status, options.objectStoreProfile, options.specialist)
 		if err != nil {
 			return 1
 		}
+		result = localreview.WithCheckRegressions(result, checks)
 		observeModelResult(observe, result)
 		return writeLocalModelResultWithOptions(options.format, options.exitPolicy, options.renderOptions(), result, stdout, stderr)
 	}
@@ -326,6 +337,7 @@ func runLocalGitModelReviewObserved(ctx context.Context, args []string, stdout, 
 	defer cancel()
 	inputs, status := prepareLocalModelReview(execution, &options, repository, base, head, stderr)
 	defer inputs.index.close()
+	checks = inputs.checks
 	if status == "" {
 		inputs.spending = newReviewSpending(inputs, options, stderr)
 	}
@@ -343,8 +355,9 @@ func runLocalGitModelReviewObserved(ctx context.Context, args []string, stdout, 
 		fmt.Fprintln(stderr, partialCheckoutHint)
 	}
 	inputs.spending.finish()
-	observeModelResult(observe, member.result)
-	return writeLocalModelResultWithOptions(options.format, options.exitPolicy, options.renderOptions(), member.result, stdout, stderr)
+	result := localreview.WithCheckRegressions(member.result, checks)
+	observeModelResult(observe, result)
+	return writeLocalModelResultWithOptions(options.format, options.exitPolicy, options.renderOptions(), result, stdout, stderr)
 }
 
 // localModelReviewInputs is the protected configuration and pinned revisions
@@ -655,5 +668,5 @@ func writeLocalModelResultWithOptions(format string, policy localreview.ExitPoli
 func writeLocalGitModelReviewUsage(stderr io.Writer) {
 	fmt.Fprintln(stderr, "usage: trestle local-git model-review --objects-root PATH --repository-authority AUTHORITY --repository-namespace SEGMENT[/SEGMENT...] --repository-name NAME --revision-algorithm sha1|sha256 --base-revision-digest HEX --head-revision-digest HEX --tenant ID --repository ID --route-inventory PATH --runtime-policy PATH --egress local-only|policy-approved --timeout DURATION [--object-store loose-only|loose-and-pack-index-v1] [--format json|text|sarif|markdown] [--all] [--verbose] [--repository-checks] [--exit-code-policy default|findings|strict|always-zero] [--investigation-policy PATH | --retained-memory-input PATH] [--profile PROFILE_ID | --specialists auto|none|ID[,ID...] [--max-specialists N]]")
 	fmt.Fprintln(stderr, "       checkout source alternative: --checkout PATH --base FULL_REF_OR_COMMIT --head FULL_REF_OR_COMMIT (replaces --objects-root and revision flags)")
-	fmt.Fprintln(stderr, "       --repository-checks runs the repository's own tests for the change in a sandbox first and gives the outcomes to the models; see docs/repository-checks.md")
+	fmt.Fprintln(stderr, "       --repository-checks runs the repository's own tests for the change in a sandbox first and gives the outcomes to the models; a test regression is reported and blocks even without them; see docs/repository-checks.md")
 }

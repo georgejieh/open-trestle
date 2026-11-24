@@ -165,6 +165,7 @@ func buildModelReviewSARIFWithContributors(report localreview.Report, contributo
 		properties.InstructionLikeSourceCount = sarifPointer(report.InstructionLikeSources)
 	}
 	properties.StyleAdvice = modelReviewStyleAdvice(report.StyleAdvice)
+	properties.CheckRegressions = report.CheckRegressions
 	log := sarifLog{Schema: sarifSchemaURI, Version: "2.1.0", Runs: []sarifRun{{
 		Tool:        sarifTool{Driver: sarifDriver{Name: "Open Trestle", Rules: ruleList}},
 		Invocations: []sarifInvocation{withUnplacedFindings(modelReviewInvocation(report, len(results)), unplaced)},
@@ -205,11 +206,28 @@ func modelReviewInvocation(report localreview.Report, findings int) sarifInvocat
 	case findings != 0:
 		invocation.ToolExecutionNotifications = []sarifNotification{{Level: "note", Message: sarifMessage{Text: "The review completed. The listed findings were independently verified; the review is still bounded and is not a clearance of the rest of the change."}}}
 	}
+	invocation.ToolExecutionNotifications = append(invocation.ToolExecutionNotifications, checkRegressionNotifications(report.CheckRegressions)...)
 	// Style advice has no source location, so it is a note, never a result.
 	for _, line := range report.StyleAdvice.Lines() {
 		invocation.ToolExecutionNotifications = append(invocation.ToolExecutionNotifications, sarifNotification{Level: "note", Message: sarifMessage{Text: strings.TrimSuffix(line, "\n")}})
 	}
 	return invocation
+}
+
+// checkRegressionNotifications are the error notifications of check
+// regressions, which name no source line and so are never results.
+func checkRegressionNotifications(regressions *localreview.CheckRegressions) []sarifNotification {
+	if regressions == nil {
+		return nil
+	}
+	var notifications []sarifNotification
+	for _, test := range regressions.Tests {
+		notifications = append(notifications, sarifNotification{Level: "error", Message: sarifMessage{Text: "Check regression (source: repository check, not a model finding): " + test.Check + ": " + test.Test + " passed on base and failed on head."}})
+	}
+	if regressions.NotListed > 0 {
+		notifications = append(notifications, sarifNotification{Level: "error", Message: sarifMessage{Text: fmt.Sprintf("Check regressions: %d more not listed.", regressions.NotListed)}})
+	}
+	return notifications
 }
 
 // modelReviewStyleAdvice projects style advice into the run property, or nil

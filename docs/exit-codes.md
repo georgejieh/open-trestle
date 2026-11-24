@@ -17,7 +17,7 @@ the saved setup, and returns its code.
 | Code | Meaning |
 | --- | --- |
 | `0` | Never by default, even when the review finds nothing: a completed review is not a clearance. Only an [exit-code policy](#exit-code-policy) returns `0`. |
-| `4` | The result is blocked: a confirmed medium, high or critical finding, or a policy or resource refusal (a provider refused the request, a limit was reached, a spending limit stopped the review). |
+| `4` | The result is blocked: a confirmed medium, high or critical finding, a test regression the [repository checks](repository-checks.md) proved (also when the model review failed), or a policy or resource refusal (a provider refused the request, a limit was reached, a spending limit stopped the review). |
 | `3` | The result is inconclusive: only low-severity or pre-existing findings (advisory), no candidates, incomplete coverage, or a canceled review. For `trestle review` alone, also nothing was sent: no setup (run `trestle init`), no committed change, or no API key (run `trestle keys set NAME`). |
 | `2` | Invalid usage, for example an unknown `--format` or a `--base` that is not a commit. |
 | `1` | The run failed, for example a model reply could not be accepted or a provider failed temporarily. |
@@ -25,8 +25,8 @@ the saved setup, and returns its code.
 A review set (`--specialists`) merges the results of its members. The exit code
 is `4` when a member did not finish and the merged set has an introduced
 finding of high or critical severity, when every member finished and the set
-has an introduced finding of medium severity or higher, or when a member was
-refused. See
+has an introduced finding of medium severity or higher, when a member was
+refused, or when the repository checks proved a test regression. See
 [the set table](local-model-review.md#specialist-review-set-opt-in).
 
 ### Exit-code policy
@@ -39,8 +39,8 @@ change is clear.
 | Policy | Exit `0` when | Otherwise |
 | --- | --- | --- |
 | `default` (when the flag is absent) | never | `4`, `3`, `2` or `1` as above |
-| `findings` | the run succeeded and no verified finding that is not pre-existing has high or critical severity, including no candidates, medium or low findings only, and coverage gaps | the default code |
-| `strict` | the run succeeded with no candidates at all | the default code, so any verified finding fails the step |
+| `findings` | the run succeeded, no verified finding that is not pre-existing has high or critical severity, including no candidates, medium or low findings only, and coverage gaps, and there is no check regression | the default code |
+| `strict` | the run succeeded with no candidates at all and no check regression | the default code, so any verified finding or check regression fails the step |
 | `always-zero` | a valid result was written, including a refused or failed run (for a review set, the general review must have succeeded) | `1` if the result could not be written, `2` for invalid usage |
 
 Under `always-zero`, a passing step says nothing about whether the review ran, so

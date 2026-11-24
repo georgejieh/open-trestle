@@ -215,7 +215,7 @@ review of two requests can cost. `--max-cost-micro-usd` sets a different bound.
 
 For a provider that charges per token, the wizard then asks one question,
 "Spending limit for this key, USD per month [20]". Enter accepts $20 a month,
-and `none` means no limit. The limit alerts at 80% and at the limit;
+and the wizard says so and prints the command that changes it; `none` means no limit. The limit alerts at 80% and at the limit;
 `--spending-limit` with `--spending-alert` sets another percentage. For OpenRouter,
 the wizard first shows OpenRouter's own figures for the key when the key
 variable is set. Open Trestle checks the limit before each review and counts its

@@ -58,6 +58,7 @@ The result is a single document on standard output. Read the `status`, `ci_dispo
 - A run that succeeded means that the pipeline finished. It does not mean that the repository is clear.
 - Verified findings give `ci_disposition: blocked`. The exception is an [advisory](#advisory-results) run, which gives `inconclusive`.
 - No candidates, incomplete evidence and an abstention all give `inconclusive`.
+- A test regression that the [repository checks](repository-checks.md) proved gives `blocked`, whatever the models did (see [check regressions](#check-regressions)).
 - Refusal and failure are separate terminal statuses.
 - An empty finding list is not an approval, and the result carries `comprehensive_clearance: false`.
 
@@ -69,7 +70,7 @@ By default the command never exits with 0:
 
 | Exit | Meaning |
 | --- | --- |
-| 4 | There are verified findings that block (an introduced medium, high or critical finding), or the run was refused for policy or resource reasons. |
+| 4 | There are verified findings that block (an introduced medium, high or critical finding), the repository checks proved a test regression, or the run was refused for policy or resource reasons. |
 | 3 | There are only [advisory](#advisory-results) findings, or there are no candidates, the evidence is incomplete, the source is unsupported, or the run was canceled. |
 | 2 | The command was used incorrectly. |
 | 1 | The result was internal or malformed, or the output failed. |
@@ -154,9 +155,11 @@ Fix guidance is a result property, not a SARIF `fixes[]` entry, because it is pr
 
 A run that was refused, could not read the change, was canceled or failed is still valid SARIF. It has zero `results`, `executionSuccessful: false` and one `error` notification. A run that completed with no candidates or with coverage gaps has an empty result list, `executionSuccessful: true` and a `note` or `warning` notification.
 
+[Check regressions](#check-regressions) name no source line, so they are not results. Each listed one is an `error` notification, and the run property `trestleCheckRegressions` carries the `check_regressions` object.
+
 ### Markdown output
 
-`--format markdown` writes a pull request summary comment with a `## Open Trestle review` heading, then `### What was verified`, `### Changes`, `### Missing verification`, `### Confirmed findings` (a numbered list in rank order), `### Pre-existing findings`, the hidden count, and a footer that states that comprehensive clearance is false and that titles, claims and fix text are untrusted model output. A review set adds the members that confirmed each finding.
+`--format markdown` writes a pull request summary comment with a `## Open Trestle review` heading, then `### Check regressions` when there are any, `### What was verified`, `### Changes`, `### Missing verification`, `### Confirmed findings` (a numbered list in rank order), `### Pre-existing findings`, the hidden count, and a footer that states that comprehensive clearance is false and that titles, claims and fix text are untrusted model output. A review set adds the members that confirmed each finding.
 
 Titles, claims, fix text, paths and declaration names are escaped. They cannot open emphasis, a link, an image, a heading, a table cell or an HTML tag, and they cannot mention anyone or become an autolink.
 
@@ -167,11 +170,11 @@ By default the exit status follows the table above and is never 0. A CI step tha
 | Policy | Exit 0 when | Otherwise |
 | --- | --- | --- |
 | `default` (when the flag is absent) | never | 4, 3, 2 or 1 as in the table |
-| `findings` | the run succeeded and no verified finding has high or critical severity (including no candidates, medium or low findings only, and coverage gaps) | the default code |
-| `strict` | the run succeeded with no candidates at all | the default code, so any verified finding fails the step |
+| `findings` | the run succeeded, no verified finding has high or critical severity (including no candidates, medium or low findings only, and coverage gaps) and there is no check regression | the default code |
+| `strict` | the run succeeded with no candidates at all and no check regression | the default code, so any verified finding or check regression fails the step |
 | `always-zero` | a valid result was written, including a refused or failed run | 1 only if the result could not be written; 2 for invalid usage |
 
-`always-zero` is for advisory use only. Pair it with SARIF or the JSON status, because a green step says nothing about whether the review ran.
+`always-zero` is for advisory use only. Pair it with SARIF or the JSON status, because a green step says nothing about whether the review ran or whether a check regression was found.
 
 ### Shallow and pull-request checkouts
 
@@ -338,6 +341,7 @@ The JSON output is `open-trestle/local-git-model-review-set` schema version 1. I
 - `selection`: the mode, the status, a features summary, the plan identities, and the selected, dropped and inactive profiles.
 - `members`: one entry per member (`general`, then the profile IDs) with its status, CI disposition, run status, failure, identities, usage and cost, verification counts, limitations and [`token_usage`](#token-usage).
 - `walkthrough`: the [walkthrough](#walkthrough) of the general member.
+- `check_regressions`: the [check regressions](#check-regressions) of the change, once for the set.
 - `findings`: the merged verified findings in [rank order](#rank). Each has its `rank`, the location of the representative and every contributor with its own finding identity, severity and range. Only members whose run succeeded contribute. Merging uses the [duplicate rule](#duplicates), so findings that a person would merge can stay apart (`deduplication_is_heuristic`).
 - `summary`, `bounds`, `limitations` and `comprehensive_clearance: false`.
 - `style_recommendations` and related fields: the [style advice](#style-recommendations) of the general review, once for the set.
@@ -353,15 +357,15 @@ The status and CI disposition of the set follow the members:
 | Every member completed with no candidates | `no_candidates` | `inconclusive` | 3 |
 | Every member completed, otherwise | `incomplete` | `inconclusive` | 3 |
 
-An incomplete set never demotes the verified high or critical finding of a completed member.
+An incomplete set never demotes the verified high or critical finding of a completed member. A check regression makes any set `blocked` and keeps its status.
 
 Text output starts with `status:` and `ci:`, then lists the reviewers that ran (`reviewers: general, bug_hunter, backend (3 of 3 ran)`). A member whose run did not succeed gets a `not finished:` line and a `hint:` line, and a member that was not started gets a `not run:` line. The walkthrough, the merged findings in rank order (each with a `confirmed by:` line and, when wordings were merged, an `also reported as:` line), the pre-existing findings, the hidden count, the token total, the style advice and `comprehensive clearance: false` follow. `--verbose` adds the selection trace, one `member:` line for each member and the `limitations:` list. `--format markdown` renders the set as a pull request summary. The SARIF output is one run whose results are the merged findings, each with a `trestleContributors` property.
 
 The exit-code policies apply to the merged set:
 
 - `default` maps `blocked` to 4, `inconclusive` to 3 and `error` to 1.
-- `findings` exits 0 only when every member completed and no introduced merged finding is high or critical.
-- `strict` exits 0 only when every member completed with no candidates.
+- `findings` exits 0 only when every member completed, no introduced merged finding is high or critical and there is no check regression.
+- `strict` exits 0 only when every member completed with no candidates and there is no check regression.
 - `always-zero` exits 0 when the general review completed, even if a specialist was refused or failed.
 
 ## Snapshot investigation (opt-in)
@@ -448,6 +452,28 @@ Only a medium, high or critical finding that the change introduced blocks CI. A 
 | `always-zero` | 0 | 0 | 0 |
 
 A review set follows the same rule over its merged findings. A merged finding is pre-existing only when every contributor is.
+
+### Check regressions
+
+When the review ran the [repository checks](repository-checks.md), a test that passed on base and failed on head is a proven regression. The command reports each one itself, from the check outcomes and not from a model answer, so it is reported when the models found nothing and when the model review failed. A regression is not a verified finding and has no source line. The result lists it in `check_regressions`:
+
+```json
+"check_regressions": {"source": "repository_check", "count": 1, "tests": [{"check": "go test ./calc", "test": "example.com/calc.TestDivide"}]}
+```
+
+`tests` lists at most 16 and `not_listed` counts the rest. The check names and test IDs are repository text, cut and with control characters replaced, as in the walkthrough. A result with check regressions has `ci_disposition` `blocked` and keeps the `status` and findings of the model review. The exit code is 4 under `default`, `findings` and `strict`, and 0 under `always-zero`, the same as for a blocking finding. A review set reports them once for the set.
+
+Text output puts them after the status lines:
+
+```text
+status: no_candidates
+ci: blocked
+run: succeeded
+check regressions: 1 test passed on base and failed on head in the repository's own checks (source: repository check, not a model finding)
+check regression: go test ./calc: example.com/calc.TestDivide
+```
+
+When the model review did not finish, the result keeps its failure lines and adds `check regressions: the model review did not finish; these come from the repository's own tests alone`. `trestle review` also prints the count on standard error.
 
 ### Review context
 
