@@ -91,15 +91,12 @@ func TestInitOpenRouterBothModelsWithZDRRequiresItByDefault(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "setup")
 	result := runInitScript(t, checkout, []string{"--directory", dir, "--base", "refs/heads/base", "--head", "refs/heads/review"},
 		"1",              // OpenRouter
-		"generator", "1", // finder from the filtered list
-		"",                 // checker: no filter, type the ID
-		"vendor/generator", // same model: must re-prompt
+		"generator", "1", // finder: narrow the list, then pick
+		"vendor/generator", // checker: the same model must re-prompt
 		"other/verifier",
-		"",    // require zero data retention (the default)
-		"",    // no spending limit (the optional question; Enter means none)
-		"",    // use the settings shown
-		"yes", // consent
-		"y",   // run the review
+		"none", // no spending limit
+		"",     // one confirmation of the settings and the consent
+		"y",    // run the review
 	)
 	if result.code != initExitDone {
 		t.Fatalf("init exit=%d\nstdout:\n%s\nstderr:\n%s", result.code, result.stdout, result.stderr)
@@ -110,11 +107,15 @@ func TestInitOpenRouterBothModelsWithZDRRequiresItByDefault(t *testing.T) {
 		"other/verifier has no zero-data-retention endpoint that allows 16384 output tokens, so its usable endpoints are pinned and each model request may write up to 16000 tokens.",
 		"Prices: up to $3.30 input and $16.50 output", "Endpoints that may keep prompts for Safety Retention are left out.",
 		// The per-request bound is set for the full context and shown in the
-		// panel; the only cost question is the optional spending limit.
-		"Optional: a spending limit for this key.", "The total is an upper-bound estimate at the highest pinned price, not a bill, and the limit is best effort",
+		// panel; the only cost question is the spending limit.
+		"Spending limit for this key. Open Trestle adds up", "The total is an upper-bound estimate at the highest pinned price, not a bill, and the limit is best effort",
 		"OpenRouter's usage could not be read: OpenRouter could not be reached",
-		"Spending limit for this key, USD per month (optional) [none]:",
+		"Spending limit for this key, USD per month [20]:",
 		"$16.50 out per million tokens ·", "up to $0.69 a request, $1.38 a review", "Spending no limit (optional; trestle usage set adds",
+		"Every request will require zero data retention and use only the endpoints listed above (--without-zdr turns this off).",
+		"Declaration: sending your source to OpenRouter", "each review sends the selected source, after secret scanning, to OpenRouter for vendor/generator and other/verifier",
+		"every request requires zero data retention, so OpenRouter uses only zero-data-retention endpoints",
+		"Spending limit: no limit", "Confirm all of the above and save this setup? (Y/n):",
 		"Zero data retention is required on every request", "Review finished: 1 confirmed finding",
 		"A review sends the selected source to OpenRouter (https://openrouter.ai/api/v1), zero data retention required on every request")
 	if initHas(result.stdout, "openrouter_zero_data_retention_not_required") {
@@ -170,21 +171,19 @@ func TestInitOpenRouterFilterRanksExactIDFirstAndCountsOnlyMatches(t *testing.T)
 	checkout := remoteBootstrapCheckout(t)
 	dir := filepath.Join(t.TempDir(), "setup")
 	result := runInitScript(t, checkout, []string{"--directory", dir, "--base", "refs/heads/base", "--head", "refs/heads/review"},
-		"1",                     // OpenRouter
-		"vendor/generator", "1", // the exact ID is listed first, ahead of a longer name
-		"model", "other/verifier", // 43 fillers match; 40 are listed
-		"",    // require zero data retention
-		"",    // no spending limit
-		"",    // use the settings shown
-		"yes", // consent
-		"n",   // no review
+		"1",              // OpenRouter
+		"generator", "1", // the exact name is listed first, ahead of a longer one
+		"model", "other/verifier", // 43 fillers match; 40 are listed; a listed ID picks at once
+		"none", // no spending limit
+		"",     // one confirmation
+		"n",    // no review
 	)
 	if result.code != initExitDone {
 		t.Fatalf("init exit=%d\nstdout:\n%s\nstderr:\n%s", result.code, result.stdout, result.stderr)
 	}
-	initAssertOutput(t, result, "1) vendor/generator (context 200000", "2) vendor/generator-pro", "Finder vendor/generator", "... 3 more match; type more of the name, or an exact ID.")
-	if initHas(result.stdout, "more; type an exact ID") {
-		t.Fatalf("a filtered list counted models that do not match:\n%s", result.stdout)
+	initAssertOutput(t, result, "... 7 more; type part of a name to narrow the list.", `Models whose ID contains "generator":`, "1) vendor/generator (context 200000", "2) vendor/generator-pro", "Finder vendor/generator", "... 3 more match; type more of the name, or an exact ID.")
+	if initHas(result.stdout, "Filter:") {
+		t.Fatalf("the wizard still asked a separate filter question:\n%s", result.stdout)
 	}
 }
 
@@ -196,15 +195,15 @@ func TestInitOpenRouterModelWithoutZDRWarnsAndSteersToOne(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "setup")
 	result := runInitScript(t, checkout, []string{"--directory", dir, "--base", "refs/heads/base", "--head", "refs/heads/review"},
 		"1", "generator", "1", "plain", "1",
-		"",  // choose a model with zero-data-retention endpoints instead
-		"2", // other/verifier from the ZDR-only list
-		"",  // require zero data retention
-		"", "", "yes", "n",
+		"2", // other/verifier from the ZDR-only list, in the same answer as keeping
+		"none", "", "n",
 	)
 	if result.code != initExitDone {
 		t.Fatalf("init exit=%d\nstdout:\n%s\nstderr:\n%s", result.code, result.stdout, result.stderr)
 	}
-	initAssertOutput(t, result, "plain/verifier has no zero-data-retention endpoint on OpenRouter", "key requires zero data retention, its requests will fail", "Checker model with zero data retention")
+	initAssertOutput(t, result, "plain/verifier has no zero-data-retention endpoint on OpenRouter", "key requires zero data retention, its requests will fail",
+		"Pick one of these models that have it, or press Enter to keep plain/verifier and continue without zero data retention:",
+		"Checker model with zero data retention", "Number, model ID, or part of a name [plain/verifier]:")
 	saved := initReadOpenRouterSetup(t, dir)
 	if saved.bootstrap["provider"] != "openrouter-zdr" || !strings.Contains(saved.raw, "other/verifier") || strings.Contains(saved.raw, "plain/verifier") {
 		t.Fatalf("the steered model was not saved: %v", saved.bootstrap)
@@ -220,19 +219,18 @@ func TestInitOpenRouterModelWithoutZDRContinuesOnlyWithConsent(t *testing.T) {
 	transport := &remoteModelTransport{t: t, target: "https://openrouter.ai/api/v1/chat/completions", models: map[string]string{"vendor/generator": "", "plain/verifier": ""}, maxTokens: 8192}
 	remoteModelClient(t, transport)
 	checkout := remoteBootstrapCheckout(t)
-	// Declining to continue writes nothing.
+	// Declining the one confirmation writes nothing.
 	declined := filepath.Join(t.TempDir(), "setup")
-	stopped := runInitScript(t, checkout, []string{"--directory", declined, "--base", "refs/heads/base", "--head", "refs/heads/review"}, "1", "generator", "1", "plain", "1", "n", "")
-	if stopped.code != initExitRefused || !initHas(stopped.stderr, "nothing was written") {
-		t.Fatalf("declining did not stop: exit=%d %s", stopped.code, stopped.stderr)
+	stopped := runInitScript(t, checkout, []string{"--directory", declined, "--base", "refs/heads/base", "--head", "refs/heads/review"}, "1", "generator", "1", "plain", "1", "", "none", "n", "5")
+	if stopped.code != initExitRefused || !initHas(stopped.stderr, "Nothing was written") || !initHas(stopped.stdout, "Open Trestle does not require zero data retention, so a model provider may keep your prompts under its own terms") {
+		t.Fatalf("declining did not stop: exit=%d\n%s\n%s", stopped.code, stopped.stdout, stopped.stderr)
 	}
 	initAssertAbsent(t, declined)
 	dir := filepath.Join(t.TempDir(), "setup")
 	result := runInitScript(t, checkout, []string{"--directory", dir, "--base", "refs/heads/base", "--head", "refs/heads/review"},
 		"1", "generator", "1", "plain", "1",
-		"n", // keep the model without zero data retention
-		"y", // continue without zero data retention
-		"", "", "yes", "y",
+		"", // keep the model and continue without zero data retention
+		"none", "", "y",
 	)
 	if result.code != initExitDone {
 		t.Fatalf("init exit=%d\nstdout:\n%s\nstderr:\n%s", result.code, result.stdout, result.stderr)
@@ -261,22 +259,19 @@ func TestInitOpenRouterModelWithoutZDRContinuesOnlyWithConsent(t *testing.T) {
 	initAssertNotLabelledZDR(t, saved, result.stdout)
 }
 
-func TestInitOpenRouterUserDeclinesZDR(t *testing.T) {
+func TestInitOpenRouterWithoutZDRFlagTurnsItOff(t *testing.T) {
 	remoteScannerInstalled(t)
 	t.Setenv("OPEN_TRESTLE_PROVIDER_OPENROUTER", remoteTestKey)
 	fakeOpenRouter(t, initOpenRouterModels()...)
 	checkout := remoteBootstrapCheckout(t)
 	dir := filepath.Join(t.TempDir(), "setup")
-	result := runInitScript(t, checkout, []string{"--directory", dir, "--base", "refs/heads/base", "--head", "refs/heads/review"},
-		"1", "generator", "1", "", "other/verifier",
-		"n", // do not require zero data retention
-		"y", // continue without it
-		"", "", "yes", "n",
+	result := runInitScript(t, checkout, []string{"--directory", dir, "--base", "refs/heads/base", "--head", "refs/heads/review", "--without-zdr"},
+		"1", "generator", "1", "other/verifier", "none", "", "n",
 	)
 	if result.code != initExitDone {
 		t.Fatalf("init exit=%d\nstdout:\n%s\nstderr:\n%s", result.code, result.stdout, result.stderr)
 	}
-	initAssertOutput(t, result, "Both models have zero-data-retention endpoints", "may keep your prompts under its own terms", "Zero data retention is not required by Open Trestle")
+	initAssertOutput(t, result, "Continuing without zero data retention (--without-zdr).", "may keep your prompts under its own terms", "Zero data retention is not required by Open Trestle")
 	saved := initReadOpenRouterSetup(t, dir)
 	if saved.bootstrap["provider"] != "openrouter" {
 		t.Fatalf("declined ZDR saved %v", saved.bootstrap["provider"])
@@ -336,11 +331,10 @@ func TestInitOpenRouterUnreachableAPIFallsBackToTypedAnswers(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "setup")
 	result := runInitScript(t, checkout, []string{"--directory", dir, "--base", "refs/heads/base", "--head", "refs/heads/review"},
 		"1", "vendor/generator", "other/verifier",
-		"",               // require zero data retention
 		"128000", "8192", // typed limits
 		"3", "15", // typed prices; the per-request bound is computed from them
-		"", // no spending limit
-		"", "yes", "y",
+		"none", // no spending limit
+		"", "y",
 	)
 	if result.code != initExitDone {
 		t.Fatalf("init exit=%d\nstdout:\n%s\nstderr:\n%s", result.code, result.stdout, result.stderr)
@@ -367,11 +361,11 @@ func TestInitOpenRouterZDRProviderDoesNotAskAgain(t *testing.T) {
 	api := fakeOpenRouter(t, initOpenRouterModels()...)
 	checkout := remoteBootstrapCheckout(t)
 	for _, reachable := range []bool{true, false} {
-		script := []string{"generator", "1", "", "other/verifier", "", "", "yes", "n"}
+		script := []string{"generator", "1", "other/verifier", "none", "", "n"}
 		if !reachable {
 			api.zdr = ""
-			// Typed limits and prices, then Enter for no spending limit.
-			script = []string{"vendor/generator", "other/verifier", "128000", "8192", "3", "15", "", "", "yes", "n"}
+			// Typed limits and prices, then no spending limit.
+			script = []string{"vendor/generator", "other/verifier", "128000", "8192", "3", "15", "none", "", "n"}
 		}
 		dir := filepath.Join(t.TempDir(), "setup")
 		result := runInitScript(t, checkout, []string{"--directory", dir, "--base", "refs/heads/base", "--head", "refs/heads/review", "--provider", "openrouter-zdr"}, script...)

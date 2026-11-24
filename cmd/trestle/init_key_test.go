@@ -80,14 +80,11 @@ func TestInitAsksForAMissingKeyHiddenChecksItAndSavesItAfterTheSetup(t *testing.
 	checkout := remoteBootstrapCheckout(t)
 	dir := filepath.Join(t.TempDir(), "setup")
 	result := runInitScript(t, checkout, []string{"--directory", dir, "--base", "refs/heads/base", "--head", "refs/heads/review"},
-		"1", "generator", "1", "", "other/verifier",
-		"",                 // require zero data retention
+		"1", "generator", "1", "other/verifier",
 		initRefusedTestKey, // OpenRouter refuses it: asked again
-		remoteTestKey,      // accepted
-		"",                 // save it (the default)
-		"",                 // no spending limit
-		"",                 // use the settings shown
-		"yes",              // consent
+		remoteTestKey,      // accepted, and saved with the setup without a question
+		"none",             // no spending limit
+		"",                 // one confirmation
 		"n",                // no review now
 	)
 	if result.code != initExitDone {
@@ -105,9 +102,13 @@ func TestInitAsksForAMissingKeyHiddenChecksItAndSavesItAfterTheSetup(t *testing.
 		"It will be saved in",
 		"OpenRouter reports $0.08 used this month",
 		"Key OPEN_TRESTLE_PROVIDER_OPENROUTER (to be", "saved in",
-		"✓ Saved the key for OPEN_TRESTLE_PROVIDER_OPENROUTER in",
+		"✓ Saved the key for OPEN_TRESTLE_PROVIDER_OPENROUTER in", "To change it or remove it:",
+		"\n    trestle keys set OPEN_TRESTLE_PROVIDER_OPENROUTER\n    trestle keys remove OPEN_TRESTLE_PROVIDER_OPENROUTER\n",
 		"✓ API key variable OPEN_TRESTLE_PROVIDER_OPENROUTER is set (saved in",
 	)
+	if initHas(result.stdout, "Save this key") {
+		t.Fatalf("the wizard asked whether to save the key:\n%s", result.stdout)
+	}
 	shown := strings.Join(strings.Fields(result.stdout), " ")
 	if strings.Index(shown, "Saved protected configuration") > strings.Index(shown, "Saved the key for") {
 		t.Fatal("the key was saved before the setup")
@@ -141,7 +142,7 @@ func TestInitTypedKeyIsNotSavedWhenTheSetupIsDeclined(t *testing.T) {
 	checkout := remoteBootstrapCheckout(t)
 	dir := filepath.Join(t.TempDir(), "setup")
 	args := []string{"--directory", dir, "--base", "refs/heads/base", "--head", "refs/heads/review", "--provider", "ollama-cloud", "--generation-model", "gemma4:31b", "--verification-model", "qwen3.5:397b", "--context-tokens", "128000", "--output-tokens", "8192", "--input-micro-usd-per-million-tokens", "0", "--output-micro-usd-per-million-tokens", "0", "--max-cost-micro-usd", "0", "--credential-env", "OPEN_TRESTLE_PROVIDER_OLLAMA_CLOUD"}
-	result := runInitScript(t, checkout, args, remoteTestKey, "", "", "no")
+	result := runInitScript(t, checkout, args, remoteTestKey, "n", "5") // decline the summary, then stop
 	if result.code != initExitRefused || !initHas(result.stderr, "Nothing was written") {
 		t.Fatalf("declined setup: exit=%d\n%s\n%s", result.code, result.stdout, result.stderr)
 	}
@@ -152,7 +153,7 @@ func TestInitTypedKeyIsNotSavedWhenTheSetupIsDeclined(t *testing.T) {
 	initAssertAbsent(t, dir)
 }
 
-func TestInitKeyForThisSessionOnlyRunsTheFirstReviewAndIsNotSaved(t *testing.T) {
+func TestInitTypedKeyIsSavedWithTheSetupAndRunsTheFirstReview(t *testing.T) {
 	keys := keyStoreForTest(t)
 	clearSessionKeys(t)
 	remoteScannerInstalled(t)
@@ -163,17 +164,16 @@ func TestInitKeyForThisSessionOnlyRunsTheFirstReviewAndIsNotSaved(t *testing.T) 
 	checkout := remoteBootstrapCheckout(t)
 	dir := filepath.Join(t.TempDir(), "setup")
 	args := []string{"--directory", dir, "--base", "refs/heads/base", "--head", "refs/heads/review", "--provider", "ollama-cloud", "--generation-model", "gemma4:31b", "--verification-model", "qwen3.5:397b", "--context-tokens", "128000", "--output-tokens", "8192", "--input-micro-usd-per-million-tokens", "0", "--output-micro-usd-per-million-tokens", "0", "--max-cost-micro-usd", "0", "--credential-env", "OPEN_TRESTLE_PROVIDER_REMOTE_TEST", "--declare-remote-route"}
-	result := runInitScript(t, checkout, args, remoteTestKey, "n", "", "y")
+	result := runInitScript(t, checkout, args, remoteTestKey, "", "y")
 	if result.code != initExitDone || len(transport.requests) != 2 {
-		t.Fatalf("session key review: exit=%d requests=%v\n%s\n%s", result.code, transport.requests, result.stdout, result.stderr)
+		t.Fatalf("typed key review: exit=%d requests=%v\n%s\n%s", result.code, transport.requests, result.stdout, result.stderr)
 	}
 	initAssertOutput(t, result,
-		"The key is used for this session only.",
-		"read -rs OPEN_TRESTLE_PROVIDER_REMOTE_TEST && export OPEN_TRESTLE_PROVIDER_REMOTE_TEST",
-		"✓ API key variable OPEN_TRESTLE_PROVIDER_REMOTE_TEST is set (entered for this session only)",
+		"✓ Saved the key for OPEN_TRESTLE_PROVIDER_REMOTE_TEST in",
+		"trestle keys set OPEN_TRESTLE_PROVIDER_REMOTE_TEST", "trestle keys remove OPEN_TRESTLE_PROVIDER_REMOTE_TEST",
 		"Review finished")
-	if _, err := os.Lstat(keys); !os.IsNotExist(err) {
-		t.Fatal("a session-only key was saved")
+	if content, _ := os.ReadFile(filepath.Join(keys, "OPEN_TRESTLE_PROVIDER_REMOTE_TEST")); string(content) != remoteTestKey {
+		t.Fatal("the typed key was not saved")
 	}
 	initAssertKeyAbsent(t, dir)
 }
@@ -188,7 +188,7 @@ func TestInitWithoutATerminalNeverAsksForTheKey(t *testing.T) {
 	checkout := remoteBootstrapCheckout(t)
 	dir := filepath.Join(t.TempDir(), "setup")
 	args := []string{"--directory", dir, "--base", "refs/heads/base", "--head", "refs/heads/review", "--provider", "ollama-cloud", "--generation-model", "gemma4:31b", "--verification-model", "qwen3.5:397b", "--context-tokens", "128000", "--output-tokens", "8192", "--input-micro-usd-per-million-tokens", "0", "--output-micro-usd-per-million-tokens", "0", "--max-cost-micro-usd", "0", "--credential-env", "OPEN_TRESTLE_PROVIDER_OLLAMA_CLOUD"}
-	result := runInitScript(t, checkout, args, "", "yes")
+	result := runInitScript(t, checkout, args, "")
 	if result.code != initExitPending || initHas(result.stdout, "(hidden)") {
 		t.Fatalf("exit=%d\n%s", result.code, result.stdout)
 	}

@@ -75,9 +75,11 @@ func TestInitAsksOnlyWhatOnlyTheUserKnows(t *testing.T) {
 		t.Setenv("OPEN_TRESTLE_PROVIDER_OPENROUTER", remoteTestKey)
 		fakeOpenRouter(t, initOpenRouterModels()...)
 		result := initQuestionCount(t, remoteBootstrapCheckout(t), []string{"--base", "refs/heads/base", "--head", "refs/heads/review", "--generation-model", "vendor/generator", "--verification-model", "other/verifier"},
-			"1", "", "", "", "yes", "n") // provider, ZDR, optional spending limit, settings, consent, review
-		// The per-request cost bound is computed, so it is not a question.
-		for _, unasked := range []string{"Review these changes?", "Environment variable that holds the key", "Keep these names?", "Context window", "provider slug", "Most one model request may cost"} {
+			"1", "none", "", "n") // provider, spending limit, one confirmation, review
+		// The per-request cost bound is computed, and zero data retention,
+		// saving the key, the alert percent and repository checks before a
+		// review are not questions.
+		for _, unasked := range []string{"Review these changes?", "Environment variable that holds the key", "Keep these names?", "Context window", "provider slug", "Most one model request may cost", "Require zero data retention", "Alert at percent", "Save this key", "Use these settings?", "Type yes or no", "Run this repository's tests"} {
 			if initHas(result.stdout, unasked) {
 				t.Fatalf("asked %q:\n%s", unasked, result.stdout)
 			}
@@ -88,7 +90,7 @@ func TestInitAsksOnlyWhatOnlyTheUserKnows(t *testing.T) {
 		initFakeModelList(t, "gemma4:31b", "qwen3.5:397b")
 		// The model list states no limits, so they are asked; the plan is the user's.
 		initQuestionCount(t, remoteBootstrapCheckout(t), []string{"--base", "refs/heads/base", "--head", "refs/heads/review"},
-			"2", "1", "2", "128000", "8192", "n", "", "yes", "n")
+			"2", "1", "2", "128000", "8192", "n", "", "n")
 	})
 	t.Run("local server found on this machine", func(t *testing.T) {
 		f := newLocalModelFixture(t, localModelFixtureOptions{noAuth: true, chatCompletions: true})
@@ -97,7 +99,7 @@ func TestInitAsksOnlyWhatOnlyTheUserKnows(t *testing.T) {
 		t.Cleanup(func() { initFakeLocalServers = nil })
 		checkout, _, _, _ := initLocalModelServers(t, false)
 		result := initQuestionCount(t, checkout, []string{"--base", "refs/heads/base", "--head", "refs/heads/review"},
-			"4", "1", "2", "", "yes", "n", "n") // provider, finder, checker, settings, consent, test requests, review
+			"4", "1", "2", "", "n", "n") // provider, finder, checker, one confirmation, test requests, review
 		for _, want := range []string{"Found Ollama at " + endpoint, "Limits: context 32768 and output 4096 tokens", "No key: requests to your local server are sent without one."} {
 			if !initHas(result.stdout, want) {
 				t.Fatalf("output lacks %q:\n%s", want, result.stdout)
@@ -111,6 +113,23 @@ func TestInitAsksOnlyWhatOnlyTheUserKnows(t *testing.T) {
 	})
 }
 
+// One model question narrows, picks by number, and takes an unlisted ID only
+// when the same text is typed twice.
+func TestInitModelQuestionNarrowsPicksAndTakesUnlistedIDTwice(t *testing.T) {
+	remoteScannerInstalled(t)
+	t.Setenv("OPEN_TRESTLE_PROVIDER_OLLAMA_CLOUD", remoteTestKey)
+	initFakeModelList(t, "gemma4:31b", "qwen3.5:397b", "qwen3-coder:480b")
+	dir := filepath.Join(t.TempDir(), "setup")
+	result := runInitScript(t, remoteBootstrapCheckout(t), []string{"--directory", dir, "--base", "refs/heads/base", "--head", "refs/heads/review"},
+		"2", "qwen", "2", // narrow to the two qwen models, pick the second
+		"custom:tag", "custom:tag", // matches nothing; the same text again is used as typed
+		"128000", "8192", "n", "", "n")
+	if result.code != initExitDone {
+		t.Fatalf("exit=%d\n%s\n%s", result.code, result.stdout, result.stderr)
+	}
+	initAssertOutput(t, result, `Models whose ID contains "qwen":`, `No listed model contains "custom:tag".`, "type custom:tag again to use it exactly as typed", "custom:tag is not in the list above; it will be used exactly as typed", "Finder qwen3-coder:480b", "Checker custom:tag")
+}
+
 func TestInitNamesComeFromTheGitRemoteAndCanBeChanged(t *testing.T) {
 	remoteScannerInstalled(t)
 	t.Setenv("OPEN_TRESTLE_PROVIDER_OPENROUTER", remoteTestKey)
@@ -121,11 +140,11 @@ func TestInitNamesComeFromTheGitRemoteAndCanBeChanged(t *testing.T) {
 	args := []string{"--base", "refs/heads/base", "--head", "refs/heads/review", "--generation-model", "vendor/generator", "--verification-model", "other/verifier"}
 	dir := filepath.Join(t.TempDir(), "setup")
 	result := runInitScript(t, checkout, append([]string{"--directory", dir}, args...),
-		"1", "", "",
+		"1", "none",
 		"n", "2", // change the names
 		"", "work", "", "", "", "", // keep each proposed name except the tenant
-		"", // use the settings shown
-		"yes", "n",
+		"", // confirm the settings shown
+		"n",
 	)
 	if result.code != initExitDone {
 		t.Fatalf("exit=%d\n%s\n%s", result.code, result.stdout, result.stderr)

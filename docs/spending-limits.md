@@ -25,25 +25,27 @@ Every spending message repeats this in one sentence.
 
 ## Setting a limit
 
-For a remote provider that charges per token, `trestle init` asks one optional
-question after the key variable is known:
+For a remote provider that charges per token, `trestle init` asks one question
+after the key variable is known:
 
 ```text
-  Optional: a spending limit for this key. Open Trestle adds
-  up what each review may have cost, prints an alert when
-  the month's total reaches the alert percent, and refuses
-  to start a review once it reaches the limit. ...
+  Spending limit for this key. Open Trestle adds up what each
+  review may have cost, prints an alert when the month's
+  total reaches 80% of the limit, and refuses to start a
+  review once it reaches the limit. ... Type none for no
+  limit.
   OpenRouter reports $0.08 used this month of this key's
   $50.00 monthly limit.
-  Spending limit for this key, USD per month (optional) [none]: 10
-  Alert at percent [80]:
+  Spending limit for this key, USD per month [20]:
 ```
 
-Enter means no limit. A limit alerts at the percentage you give and at the limit
-itself, and it is saved only after the setup is saved. If the key already has a
-limit, it keeps it, and the wizard says so instead of asking. With
-`--no-input`, `--spending-limit USD` and `--spending-alert PERCENT` answer the
-question. Without them there is no limit, and nothing is reported missing.
+Enter accepts $20 a month, and `none` means no limit. A limit alerts at 80% and
+at the limit itself; the percentage is not asked. It is saved only after the
+setup is saved. If the key already has a limit, it keeps it, and the wizard says
+so instead of asking. `--spending-limit USD` answers the question, and
+`--spending-alert PERCENT` with it sets another alert percentage. With
+`--no-input` and without them there is no limit, and nothing is reported
+missing.
 
 You can set or clear a limit at any time:
 

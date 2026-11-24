@@ -91,9 +91,8 @@ func TestInitLocalShowsTheProbeRefusalReason(t *testing.T) {
 		"1",
 		"5", verification,
 		"1",
-		"",    // use the settings shown
-		"yes", // local capabilities
-		"y",   // send the synthetic test requests
+		"",  // confirm the settings and the local capabilities
+		"y", // send the synthetic test requests
 	)
 	output := strings.Join(strings.Fields(result.stdout), " ")
 	_, retired, _ := routehint.ProviderRefusal(gateway.RouteFailureModelRetired)
@@ -119,9 +118,8 @@ func TestInitLocalNamesARefusedProbeReply(t *testing.T) {
 		"1",
 		"5", verification,
 		"1",
-		"",    // use the settings shown
-		"yes", // local capabilities
-		"y",   // send the synthetic test requests
+		"",  // confirm the settings and the local capabilities
+		"y", // send the synthetic test requests
 	)
 	output := strings.Join(strings.Fields(result.stdout), " ")
 	if result.code != 4 || !strings.Contains(output, "A model server answered the test request, but its reply was not in the expected format (provider_response_invalid). Check that both servers are running") || strings.Contains(output, "refused the test request") {
@@ -146,9 +144,8 @@ func TestInitLocalNamesARejectedProbeRequest(t *testing.T) {
 		"1",
 		"5", verification,
 		"1",
-		"",    // use the settings shown
-		"yes", // local capabilities
-		"y",   // send the synthetic test requests
+		"",  // confirm the settings and the local capabilities
+		"y", // send the synthetic test requests
 	)
 	output := strings.Join(strings.Fields(result.stdout), " ")
 	_, rejected, _ := routehint.ProviderRefusal(gateway.RouteFailureRequestRejected)
