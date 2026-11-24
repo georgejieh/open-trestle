@@ -39,7 +39,8 @@ after the key variable is known:
   Spending limit for this key, USD per month [20]:
 ```
 
-Enter accepts $20 a month, and `none` means no limit. A limit alerts at 80% and
+Enter accepts $20 a month, and the wizard then says so and prints the
+`trestle usage set` command that changes it; `none` means no limit. A limit alerts at 80% and
 at the limit itself; the percentage is not asked. It is saved only after the
 setup is saved. If the key already has a limit, it keeps it, and the wizard says
 so instead of asking. `--spending-limit USD` answers the question, and

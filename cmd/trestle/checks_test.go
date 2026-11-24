@@ -13,6 +13,7 @@ import (
 	"github.com/georgejieh/open-trestle/internal/checksandbox"
 	"github.com/georgejieh/open-trestle/internal/repochecks"
 	"github.com/georgejieh/open-trestle/internal/review"
+	"github.com/georgejieh/open-trestle/localreview"
 )
 
 func checksTestDir(t *testing.T) string {
@@ -211,5 +212,50 @@ func TestCheckRunsFromRunnerOutputKeepEveryRun(t *testing.T) {
 	}
 	if !slices.Contains(runs[0].StoppedRunning, "tests.test_a.A.test_a") {
 		t.Fatalf("stopped %v", runs[0].StoppedRunning)
+	}
+}
+
+// A check regression blocks a review set under every exit policy but
+// always-zero, and every format of the set shows it.
+func TestCheckRegressionsBlockAReviewSet(t *testing.T) {
+	runs, err := review.NewCheckRuns(strings.Repeat("a", 40), strings.Repeat("b", 40), review.CheckRunsChangedOnly, []review.CheckRun{
+		{Name: "go test ./calc", State: review.CheckRunRan, Tests: 3, Regressions: []string{"calc.TestDivide"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	set := modelReviewSetWire{Contract: modelReviewSetContract, Version: modelReviewSetVersion, Status: "no_candidates", CI: "inconclusive", Complete: true, runStatus: "succeeded",
+		Members:  []setMemberWire{{Member: generalMemberLabel, Launched: true, Status: "no_candidates", CI: "inconclusive", RunStatus: "succeeded", reportAvailable: true, Limitations: []string{}}},
+		Findings: []setFindingWire{}, Limitations: []string{}, Summary: setSummaryWire{BySeverity: map[string]int{}, ByCategory: map[string]int{}}}
+	for policy, want := range map[localreview.ExitPolicy]int{localreview.ExitPolicyDefault: 3, localreview.ExitPolicyFindings: 0, localreview.ExitPolicyStrict: 0, localreview.ExitPolicyAlwaysZero: 0} {
+		if code := set.exitCode(policy); code != want {
+			t.Fatalf("without regressions, exit for %s = %d, want %d", policy, code, want)
+		}
+	}
+	set.CheckRegressions, set.CI = localreview.NewCheckRegressions(&runs), "blocked"
+	for policy, want := range map[localreview.ExitPolicy]int{localreview.ExitPolicyDefault: 4, localreview.ExitPolicyFindings: 4, localreview.ExitPolicyStrict: 4, localreview.ExitPolicyAlwaysZero: 0} {
+		if code := set.exitCode(policy); code != want {
+			t.Fatalf("exit for %s = %d, want %d", policy, code, want)
+		}
+	}
+	text, err := renderModelReviewSetText(set, localreview.RenderOptions{})
+	if err != nil || !bytes.Contains(text, []byte("check regression: go test ./calc: calc.TestDivide\n")) || bytes.Contains(text, []byte("did not finish")) {
+		t.Fatalf("text: %v\n%s", err, text)
+	}
+	markdown, err := renderModelReviewSetMarkdown(set, localreview.RenderOptions{})
+	if err != nil || !bytes.Contains(markdown, []byte("### Check regressions")) || !bytes.Contains(markdown, []byte("- `go test ./calc`: `calc.TestDivide`\n")) {
+		t.Fatalf("Markdown: %v\n%s", err, markdown)
+	}
+	sarif, err := encodeModelReviewSetSARIF(set)
+	if err != nil || !bytes.Contains(sarif, []byte(`{"level":"error","message":{"text":"Check regression (source: repository check, not a model finding): go test ./calc: calc.TestDivide passed on base and failed on head."}}`)) || !bytes.Contains(sarif, []byte(`"trestleCheckRegressions":{"source":"repository_check","count":1,`)) {
+		t.Fatalf("SARIF: %v\n%s", err, sarif)
+	}
+	set.Complete, set.Status, set.runStatus = false, "failed", "failed"
+	set.Members[0].Status, set.Members[0].RunStatus = "failed", "failed"
+	if text, err := renderModelReviewSetText(set, localreview.RenderOptions{}); err != nil || !bytes.Contains(text, []byte("check regressions: the model review did not finish")) {
+		t.Fatalf("unfinished text: %v\n%s", err, text)
+	}
+	if sarif, err := encodeModelReviewSetSARIF(set); err != nil || !bytes.Contains(sarif, []byte("Check regression (source: repository check")) {
+		t.Fatalf("unfinished SARIF lost the regression: %v\n%s", err, sarif)
 	}
 }

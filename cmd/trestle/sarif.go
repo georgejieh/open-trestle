@@ -8,6 +8,7 @@ import (
 
 	"github.com/georgejieh/open-trestle/diagnostics"
 	"github.com/georgejieh/open-trestle/internal/review"
+	"github.com/georgejieh/open-trestle/localreview"
 )
 
 const (
@@ -149,6 +150,10 @@ type sarifRunProperties struct {
 	ComprehensiveClearance        *bool    `json:"trestleComprehensiveClearance,omitempty"`
 	// StyleAdvice is the model review's fixed style advice; it is never a result.
 	StyleAdvice *sarifStyleAdvice `json:"trestleStyleAdvice,omitempty"`
+	// CheckRegressions are the tests the repository's own checks proved
+	// broken. They name no source line, so each is also an error
+	// notification, never a result.
+	CheckRegressions *localreview.CheckRegressions `json:"trestleCheckRegressions,omitempty"`
 }
 
 type sarifStyleAdvice struct {

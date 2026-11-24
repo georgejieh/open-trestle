@@ -43,6 +43,8 @@ Results come only from the exit status and the runner output that Open Trestle a
 
 Both models receive the outcomes as the `check_runs` object: each check's name, whether it ran or why not (naming the base or head side where that matters), the regressions, new failing tests and new linter diagnostics, tests that stopped running, the fixed and still-failing counts, flaky tests dropped, and how many of the dependents were included. Test names and reasons come from the repository, so they are treated as untrusted data, kept short, shown with the home folder as `~`, and secret-scanned like other content before any remote request. The walkthrough has one "what ran" line, for example `ran 3 of 4 checks in the sandbox: 1 regression, 2 tests stopped running, 0 flaky dropped, 1 could not run (npm test: missing dependency: jest on base)`.
 
+The regressions do not depend on the models. The review reports each one as a [check regression](local-model-review.md#check-regressions) with source `repository_check`, naming the check and the test, in every output format, and the result is `blocked` (exit 4 unless `--exit-code-policy always-zero`). That holds when the models found nothing and when the model review failed; the output then says that the model review did not finish. New failing tests, new linter diagnostics and tests that stopped running stay hints for the models.
+
 ## What the sandbox allows
 
 | | Linux | Windows |

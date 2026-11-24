@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -67,6 +68,45 @@ func TestReviewRunsAllowedRepositoryChecks(t *testing.T) {
 	}
 	if !initHas(stdout, "ran 2 of 2 checks in the sandbox") {
 		t.Fatalf("the walkthrough lacks the what-ran line:\n%s", stdout)
+	}
+}
+
+// A regression the sandbox proves is reported and blocks when the model
+// finds nothing, and when its answer is not valid so the model review fails,
+// for a single review and for a review set.
+func TestReviewReportsAProvenRegressionWithoutAModelFinding(t *testing.T) {
+	if err := checksandbox.Available(); err != nil {
+		t.Skipf("the check sandbox is unavailable here: %v", err)
+	}
+	for _, test := range []struct {
+		name, generation, specialists string
+		args, want                    []string
+	}{
+		{"no candidates", "empty", "none", nil, []string{"status: no_candidates\nci: blocked\n", "check regressions: 1 test passed on base and failed on head in the repository's own checks (source: repository check, not a model finding)\ncheck regression: ", ": p.TestConsume\n"}},
+		{"invalid answer", "malformed", "none", nil, []string{"status: failed\nci: blocked\n", ": p.TestConsume\n", "check regressions: the model review did not finish; these come from the repository's own tests alone\n"}},
+		{"invalid answer in a set", "malformed", "auto", []string{"--format", "json"}, []string{`"contract":"open-trestle/local-git-model-review-set"`, `"status":"failed","ci_disposition":"blocked"`, `"check_regressions":{"source":"repository_check","count":1,"tests":[{"check":"`, `","test":"p.TestConsume"}]}`}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			checkout := checksChangeCheckout(t)
+			latestChangeSetupWith(t, checkout, "--specialists", test.specialists, "--checks")
+			transport := latestFixtureTransport(t)
+			transport.generation = test.generation
+			code, stdout, stderr := runReviewCommand(t, checkout, test.args...)
+			if initHas(stderr, "could not run (go test") && (initHas(stderr, "user namespaces") || initHas(stderr, "NUL device")) {
+				t.Skipf("Go cannot run in the check sandbox here:\n%s", stderr)
+			}
+			if code != 4 || !slices.ContainsFunc(transport.requests, func(request string) bool { return strings.HasPrefix(request, "candidate_generation") }) {
+				t.Fatalf("exit=%d requests=%v\nstdout:\n%s\nstderr:\n%s", code, transport.requests, stdout, stderr)
+			}
+			for _, want := range test.want {
+				if !strings.Contains(stdout, want) {
+					t.Fatalf("stdout lacks %q:\n%s", want, stdout)
+				}
+			}
+			if !initHas(stderr, "The repository's own tests show 1 regression: tests that passed on base fail on head.") {
+				t.Fatalf("stderr lacks the regression line:\n%s", stderr)
+			}
+		})
 	}
 }
 
