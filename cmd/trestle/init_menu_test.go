@@ -255,6 +255,39 @@ func TestInitPrompterChoosesWithAMenuOrADefaultLine(t *testing.T) {
 	}
 }
 
+func TestTypeSecretShowsOneStarPerCharacter(t *testing.T) {
+	terminal := &fakeKeyTerminal{fakeEchoTerminal: newFakeEchoTerminal()}
+	var out bytes.Buffer
+	keys := remoteTestKey + remoteTestKey + "\r" + remoteTestKey + "x\x7f\r"
+	prompt := newInitPrompter(context.Background(), strings.NewReader(keys), &out, initStyle{}, func(line string) { out.WriteString(line + "\n") })
+	defer prompt.close()
+	prompt.keys = terminal
+	answer, err := prompt.askSecret("API key for OpenRouter", terminal)
+	if err != nil || answer != remoteTestKey {
+		t.Fatalf("answer matched=%v err=%v", answer == remoteTestKey, err)
+	}
+	text := out.String()
+	room := initWidth - len("  API key for OpenRouter: ") - 1
+	stars := strings.Repeat("*", min(len(remoteTestKey), room))
+	if strings.Contains(text, remoteTestKey[:8]) || !strings.Contains(text, "  API key for OpenRouter: "+stars) || !strings.Contains(text, "the same text twice") || !strings.Contains(text, "Received ********"+remoteTestKey[len(remoteTestKey)-4:]) || strings.Contains(text, "(hidden)") {
+		t.Fatalf("key entry output: %q", text)
+	}
+	if hidden, hides, _, _ := terminal.state(); hidden || hides != 0 {
+		t.Fatal("echo was turned off although keys are read in raw mode")
+	}
+	terminal.assertRestored(t)
+	for _, keys := range map[error]string{errInitBack: "ab\x1b", errInitCanceled: "ab\x03", errInitInputEnded: "\x04"} {
+		prompt := newInitPrompter(context.Background(), strings.NewReader(keys), io.Discard, initStyle{}, func(string) {})
+		prompt.keys, prompt.canBack = terminal, true
+		_, err := prompt.askSecret("API key", terminal)
+		prompt.close()
+		if err == nil {
+			t.Fatalf("%q was read as a key", keys)
+		}
+	}
+	terminal.assertRestored(t)
+}
+
 // A first run with menus: back from the finder returns to the provider with
 // the earlier choice selected, and back from the checker asks the finder again.
 func TestInitMenusGoBackToEarlierAnswers(t *testing.T) {

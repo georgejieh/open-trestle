@@ -58,9 +58,9 @@ func (w *initWizard) askProviderKey(name, provider, label string, saveNow bool) 
 	} else if state.problem != nil {
 		w.say("  %s %s: %s.", w.wait, name, state.where())
 	}
-	w.say("\n  API key: %s has no key in this shell or in %s. Paste the key from your %s account. It stays hidden while you type; afterwards only its length and last four characters are shown. It is saved there with the setup, and Open Trestle never logs it or puts it in a model request. Press Enter on an empty line to skip.", name, providerCredentialDisplayDirectory(), label)
+	w.say("\n  API key: %s has no key in this shell or in %s. Paste the key from your %s account. %s It is saved there with the setup, and Open Trestle never logs it or puts it in a model request. Press Enter on an empty line to skip.", name, providerCredentialDisplayDirectory(), label, w.keyEntryNote())
 	for attempt := 0; attempt < initMaxTries; attempt++ {
-		key, err := w.prompt.askSecret("API key for "+label+" (hidden)", w.terminal)
+		key, err := w.prompt.askSecret("API key for "+label, w.terminal)
 		if errors.Is(err, errInitSecretUnavailable) {
 			w.say("  Hidden input is not available here, so no key was read. Save it later with `trestle keys set %s`, or export it in your shell.", name)
 			return nil
@@ -127,4 +127,12 @@ func (w *initWizard) saveEnteredKey() {
 		}
 	}
 	w.enteredKeys = nil
+}
+
+// keyEntryNote says how a typed key shows on screen.
+func (w *initWizard) keyEntryNote() string {
+	if w.prompt.keys != nil {
+		return "Each character shows as *; afterwards only its length and last four characters are shown."
+	}
+	return "It stays hidden while you type; afterwards only its length and last four characters are shown."
 }

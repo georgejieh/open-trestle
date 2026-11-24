@@ -93,7 +93,7 @@ Your source goes to the models only when you agree to run a review. See
 ## What the wizard asks
 
 The wizard asks only what you alone can answer: where the models run, which two
-models to use, the API key when none is set yet (with hidden input), a spending
+models to use, the API key when none is set yet (never shown), a spending
 limit for the API key, and one confirmation of the settings and where your
 source goes. On OpenRouter that is six questions, then "Run the first review
 now?". When you answer yes, it also asks once whether reviews may run the
@@ -232,7 +232,10 @@ depends on the provider.
   list does not state them, and asks whether your plan charges per token.
 
 If the provider's key variable has no key yet, in the environment or saved, and
-the wizard runs in a terminal, it asks for the key with hidden input. It checks
+the wizard runs in a terminal, it asks for the key. Where menus are shown, each
+character you type or paste shows as `*` and Backspace works; otherwise the
+input is hidden. After Enter, only the key's length and last four characters are
+shown, and a key pasted twice is asked for again. It checks
 an OpenRouter key with one free call and saves it once the setup is saved,
 without asking. Then it prints the commands that change or remove it,
 `trestle keys set NAME` and `trestle keys remove NAME`. Without a terminal, or

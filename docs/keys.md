@@ -25,12 +25,12 @@ the wizard asks for the key right after you choose the models:
 ```text
   API key: OPEN_TRESTLE_PROVIDER_OPENROUTER has no key in
   this shell or in ~/.config/open-trestle/credentials. Paste
-  the key from your OpenRouter account. It stays hidden while
-  you type; afterwards only its length and last four
-  characters are shown. It is saved there with the setup, and
-  Open Trestle never logs it or puts it in a model request.
-  Press Enter on an empty line to skip.
-  API key for OpenRouter (hidden):
+  the key from your OpenRouter account. Each character shows
+  as *; afterwards only its length and last four characters
+  are shown. It is saved there with the setup, and Open
+  Trestle never logs it or puts it in a model request. Press
+  Enter on an empty line to skip.
+  API key for OpenRouter: …********************************
     Received ********9f2c (73 characters).
   ✓ OpenRouter accepted the key (one GET /api/v1/key, which
     costs nothing and sends no source).
@@ -51,10 +51,14 @@ remove it:
 
 The prompt behaves as follows.
 
-- Your typing is hidden. The terminal's echo is turned off while you type (termios on
-  Linux, the console mode on Windows) and turned back on before
-  anything else is printed, also when you press Ctrl-C or Ctrl-D. The prompt
-  appears only once echo is off. If echo cannot be turned off, no key is read.
+- Your typing is never shown. Where the wizard shows menus, the terminal reads
+  single keys while you type (termios on Linux, the console mode on Windows),
+  each character typed or pasted shows as one `*`, Backspace and Ctrl-U erase,
+  Esc goes back and Ctrl-C stops. A long key scrolls within the line. Elsewhere
+  on a terminal, echo is turned off and the prompt reads
+  `API key for OpenRouter (hidden):`. Either way the terminal is restored
+  before anything else is printed, also when you press Ctrl-C or Ctrl-D. If the
+  terminal cannot be changed, no key is read.
   Only Linux has been tested; the Windows code is untested (see
   [platforms](platforms.md)).
 - Without a terminal, the wizard does not ask. With `--no-input`, or when

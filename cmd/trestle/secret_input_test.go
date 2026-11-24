@@ -91,7 +91,7 @@ func TestAskSecretReadsTheKeyOnlyWhileEchoIsOff(t *testing.T) {
 	var out bytes.Buffer
 	prompt := newInitPrompter(context.Background(), &gatedTerminalInput{terminal: terminal, lines: []string{"  " + remoteTestKey + "  "}}, &out, initStyle{}, func(line string) { out.WriteString(line + "\n") })
 	defer prompt.close()
-	answer, err := prompt.askSecret("API key for OpenRouter (hidden)", terminal)
+	answer, err := prompt.askSecret("API key for OpenRouter", terminal)
 	if err != nil || answer != remoteTestKey {
 		t.Fatalf("answer matched=%v err=%v", answer == remoteTestKey, err)
 	}
