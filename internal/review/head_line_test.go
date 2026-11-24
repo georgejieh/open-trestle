@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -112,9 +113,15 @@ func TestBaseSideFindingCarriesItsHeadLine(t *testing.T) {
 	verdict := func(cited string) string {
 		return `{"schema_version":1,"verdicts":[{"candidate_id":"c1","outcome":"verified","severity":"high","rationale":"The removed lines returned early when b was zero.","evidence_ids":` + cited + `}]}`
 	}
-	// Only removed_lines evidence covers a base-side location.
-	if _, err := ParseContextVerificationBatch(v7Response(t, verdict(`["`+windowID+`"]`)), candidates, request); !errors.Is(err, ErrVerificationEvidenceRangeMismatch) {
-		t.Fatalf("head evidence verified a base-side candidate: %v", err)
+	// Only removed_lines evidence covers a base-side location: a verdict that
+	// cites only head evidence also cites the candidate's removed lines, as a
+	// base binding.
+	headCited, err := ParseContextVerificationBatch(v7Response(t, verdict(`["`+windowID+`"]`)), candidates, request)
+	if err != nil || !slices.Contains(headCited.Results()[0].EvidenceIDs(), removedID) || !VerificationBatchMatchesContext(request, candidates, headCited) {
+		t.Fatalf("head-cited verdict on a base-side candidate: %v", err)
+	}
+	if encoded, err := EncodeVerificationBatch(headCited); err != nil || !bytes.Contains(encoded, []byte(`"side":"base"`)) {
+		t.Fatalf("the implied removed-lines citation is not a base binding: %s", encoded)
 	}
 	batch, err := ParseContextVerificationBatch(v7Response(t, verdict(`["`+removedID+`"]`)), candidates, request)
 	if err != nil || batch.Results()[0].Side() != LineSideBase || !VerificationBatchMatchesContext(request, candidates, batch) {
