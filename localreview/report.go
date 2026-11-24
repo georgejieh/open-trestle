@@ -173,6 +173,8 @@ type Report struct {
 	// ContextShortfall carries the counts of a route_context_insufficient
 	// failure; it is nil otherwise.
 	ContextShortfall *ReportContextShortfall
+	// ModelOutputProblem is the class of a model_output_invalid answer, or "".
+	ModelOutputProblem string
 
 	Findings []ReportFinding
 	// Ranked holds the distinct findings in rank order, each with the
@@ -220,6 +222,9 @@ func (r Result) Report() (Report, error) {
 	}
 	if class, task, detail, hint := r.failureSummary(); class != "" {
 		report.FailureTask, report.FailureDetail, report.FailureHint = task, detail, hint
+		if detail == FailureDetailModelOutputInvalid {
+			report.ModelOutputProblem = r.wire.ModelOutputProblem
+		}
 		if detail == FailureDetailRouteContextInsufficient && r.wire.ContextShortfall != nil {
 			s := *r.wire.ContextShortfall
 			report.ContextShortfall = &ReportContextShortfall{RequiredTokens: s.RequiredTokens, EstimatedInputTokens: s.EstimatedInputTokens, MaxOutputTokens: s.MaxOutputTokens, DeclaredContextTokens: s.DeclaredContextTokens}

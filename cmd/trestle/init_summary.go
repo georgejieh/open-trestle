@@ -13,10 +13,10 @@ import (
 )
 
 // Everything `trestle init` can work out for itself is filled in without a
-// question and shown in one settings panel before consent: the names from the
-// Git remote or folder, the owner from $USER, the key variable name, and the
-// limits and prices the provider or model list reported. Each value stays a
-// default: a flag overrides it, and answering no at the panel changes it.
+// question and shown in one settings panel with the consent: the names from
+// the Git remote or folder, the owner from $USER, the key variable name, and
+// the limits and prices the provider or model list reported. Each value stays
+// a default: a flag overrides it, and answering no at the panel changes it.
 
 // initRemoteIdentity reads origin's configured URL (read-only, no rewriting
 // from global configuration) and returns its host, namespace and name as
@@ -187,25 +187,36 @@ func (w *initWizard) summaryRows() [][2]string {
 	return rows
 }
 
-// stepSummary shows every setting in one panel and saves on one Enter.
-// Answering no offers what to change, then shows the panel again.
+// stepSummary shows every setting in one panel with the declarations under
+// it, and one answer confirms them all. Answering no offers what to change,
+// then shows both again.
 func (w *initWizard) stepSummary() error {
 	if w.prompt == nil && len(w.missing) != 0 {
 		// --no-input without every answer: the list of missing flags follows.
 		return nil
 	}
-	w.header(4, "Your settings")
 	for range initMaxTries {
 		w.say("%s", "")
 		for _, line := range w.style.framed(initPanel("Setup summary", w.summaryRows(), w.style.ascii)) {
 			w.sayVerbatim(line)
 		}
+		w.showDeclarations()
 		if w.prompt == nil {
+			for _, d := range w.pending {
+				if !w.bools[d.flag] {
+					w.missing = append(w.missing, "--"+d.flag)
+				}
+			}
+			w.confirmDeclarations()
 			return nil
 		}
-		keep, err := w.prompt.confirm("Use these settings?", true)
-		if err != nil || keep {
+		yes, err := w.prompt.confirm("Confirm all of the above and save this setup?", true)
+		if err != nil {
 			return err
+		}
+		if yes {
+			w.confirmDeclarations()
+			return nil
 		}
 		if err := w.changeSettings(); err != nil {
 			return err
@@ -214,20 +225,32 @@ func (w *initWizard) stepSummary() error {
 	return errInitTooManyTries
 }
 
+// confirmDeclarations records the confirmed declarations as their bootstrap
+// flags.
+func (w *initWizard) confirmDeclarations() {
+	for _, d := range w.pending {
+		w.a.declarations = append(w.a.declarations, "--"+d.flag)
+	}
+}
+
+func (w *initWizard) stopUnconfirmed() error {
+	return initStopf(initExitRefused, "stopped: you did not confirm the setup. Nothing was written. Open Trestle will not record facts you have not confirmed. Run `trestle init` again when you are ready.")
+}
+
 func (w *initWizard) changeSettings() error {
-	options := []string{"The commits to review", "The names", "Nothing; keep these settings"}
-	actions := []func() error{w.changeCommits, w.askNames, nil}
+	options := []string{"The commits to review", "The names", "Nothing; stop without saving"}
+	actions := []func() error{w.changeCommits, w.askNames, w.stopUnconfirmed}
 	if w.a.credentialEnv != "" {
 		options = append(options[:2:2], "The API key variable", options[2])
-		actions = append(actions[:2:2], w.changeCredential, nil)
+		actions = append(actions[:2:2], w.changeCredential, w.stopUnconfirmed)
 	}
 	if w.a.contextTokens != "" {
 		last := len(options) - 1
 		options = append(append(options[:last:last], "The limits and prices"), options[last])
-		actions = append(append(actions[:last:last], w.changeLimits), nil)
+		actions = append(append(actions[:last:last], w.changeLimits), w.stopUnconfirmed)
 	}
 	index, err := w.prompt.choose("What would you like to change?", options)
-	if err != nil || actions[index] == nil {
+	if err != nil {
 		return err
 	}
 	return actions[index]()

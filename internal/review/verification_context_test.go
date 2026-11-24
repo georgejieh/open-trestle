@@ -54,7 +54,7 @@ func TestNewVerificationContextPacketSeparatesCandidateClaims(t *testing.T) {
 		t.Fatalf("verification authority labels missing: %#v", wire)
 	}
 	candidateValues, ok := wire["candidates"].([]any)
-	if !ok || len(candidateValues) != 1 || candidateValues[0].(map[string]any)["candidate_id"] != candidates.Findings()[0].Identity() {
+	if !ok || len(candidateValues) != 1 || candidateValues[0].(map[string]any)["candidate_id"] != "c1" {
 		t.Fatalf("candidate claims missing: %#v", wire["candidates"])
 	}
 	if len(packet.EvidenceItems()) != len(generation.EvidenceItems()) {

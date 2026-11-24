@@ -196,9 +196,10 @@ func interactiveInput(in io.Reader) bool {
 	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
 
-// askChecksConsent asks the init question once per setup, after the other
-// questions; with --no-input, --checks answers yes and its absence no. When
-// no answer can be read, nothing is saved and a review asks.
+// askChecksConsent asks the init question once per setup, only when a review
+// is about to run; with --no-input, --checks answers yes and its absence no.
+// When it is not asked or no answer can be read, nothing is saved and a later
+// review asks.
 func (w *initWizard) askChecksConsent() {
 	repository := checksRepository(w.ctx, w.checkout)
 	if _, decided := readChecksConsent(w.a.directory, repository); decided {

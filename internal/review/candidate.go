@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strings"
 	"unicode"
@@ -597,12 +598,12 @@ func parseCandidateBatch(response provider.Response, snapshot ReviewSnapshot, ev
 	if err := response.Validate(); err != nil {
 		return CandidateBatch{}, err
 	}
-	parts := response.Parts()
 	if response.Capability() != provider.CapabilityReviewV1 {
 		return CandidateBatch{}, ErrInvalidCandidateResponseEnvelope
 	}
-	if response.FinishReason() != provider.ResponseFinishStop || len(parts) != 1 || parts[0].Kind() != provider.ResponsePartStructuredData {
-		return CandidateBatch{}, modelOutputFailure(ErrInvalidCandidateResponseEnvelope)
+	payload, err := answerDocument(response, ErrInvalidCandidateResponseEnvelope)
+	if err != nil {
+		return CandidateBatch{}, err
 	}
 	if err := snapshot.Validate(); err != nil {
 		return CandidateBatch{}, err
@@ -611,7 +612,7 @@ func parseCandidateBatch(response provider.Response, snapshot ReviewSnapshot, ev
 	if err != nil {
 		return CandidateBatch{}, err
 	}
-	batch, err := parseCandidateDocument(response, parts[0].Payload(), snapshot, allowedEvidence, version, rules)
+	batch, err := parseCandidateDocument(response, payload, snapshot, allowedEvidence, version, rules)
 	if err != nil {
 		return CandidateBatch{}, modelOutputFailure(err)
 	}
@@ -713,7 +714,17 @@ func newCandidateFinding(responseIdentity string, snapshot ReviewSnapshot, ordin
 		}
 	}
 	if !citedRange {
-		return CandidateFinding{}, ErrCandidateEvidenceRangeMismatch
+		// The proposal names the source that holds its lines, so that source
+		// is cited even when evidence_ids leaves it out.
+		_, baseLines := rules.baseLines[document.SourceRange.SourceID]
+		if baseLines != baseAnchor || slices.Contains(document.EvidenceIDs, document.SourceRange.SourceID) || len(bindings) >= maxCandidateEvidence {
+			return CandidateFinding{}, ErrCandidateEvidenceRangeMismatch
+		}
+		binding := candidateEvidenceBinding{identity: sourceItem.ID(), digest: sourceItem.Digest(), sourceRange: sourceItem.SourceRange()}
+		if baseLines && recordSides {
+			binding.side = LineSideBase
+		}
+		bindings = append(bindings, binding)
 	}
 	sort.Slice(bindings, func(left, right int) bool { return bindings[left].identity < bindings[right].identity })
 	finding := CandidateFinding{

@@ -93,15 +93,15 @@ Your source goes to the models only when you agree to run a review. See
 ## What the wizard asks
 
 The wizard asks only what you alone can answer: where the models run, which two
-models to use, the API key when none is set yet (with hidden input), whether to
-require zero data retention on OpenRouter, an optional spending limit for the
-API key, and your consent. Once the setup checks pass, it also asks once whether
-reviews may run the repository's tests in a sandbox (see
-[repository checks](#repository-checks)). It fills in everything else itself and
-shows it in a settings panel before you consent. Enter accepts each recommended
-default.
+models to use, the API key when none is set yet (with hidden input), a spending
+limit for the API key, and one confirmation of the settings and where your
+source goes. On OpenRouter that is six questions, then "Run the first review
+now?". When you answer yes, it also asks once whether reviews may run the
+repository's tests in a sandbox (see [repository checks](#repository-checks)).
+It fills in everything else itself and shows it in a settings panel above the
+confirmation. Enter accepts each recommended default.
 
-The wizard runs in six steps:
+The wizard runs in five steps:
 
 ```text
    |X|\            /|X|
@@ -113,8 +113,8 @@ The wizard runs in six steps:
   confirmed findings are reported. Setup sends no source.
   Enter accepts a value in [brackets]; Ctrl-D stops.
 
-●○○○○○  Step 1 of 6 · What will be reviewed
-───────────────────────────────────────────
+●○○○○  Step 1 of 5 · What will be reviewed
+──────────────────────────────────────────
   Repository: ~/src/project  (on branch feature)
   Base:       1a2b3c4d5e6f  (merge base with main)
   Head:       HEAD  (7f8e9d0c1b2a)
@@ -122,8 +122,8 @@ The wizard runs in six steps:
   Open Trestle compares exactly these two commits; it does
   not fetch.
 
-●●○○○○  Step 2 of 6 · Where the models run
-──────────────────────────────────────────
+●●○○○  Step 2 of 5 · Where the models run
+─────────────────────────────────────────
     1) OpenRouter (remote, needs an API key)
     2) Ollama Cloud (remote, needs an API key)
     3) OpenCode Go (remote, needs an API key)
@@ -143,7 +143,7 @@ newer merge base counts (see [which commits](#running-it-again)). The wizard
 runs only read-only Git queries, and the commit count and change summary come
 from those same two commits. It asks a question here only when it finds no
 default branch. To review other commits, pass `--base` and `--head`, or change
-them in step 4.
+them at the summary in step 4.
 
 ### Step 2: where the models run
 
@@ -160,8 +160,13 @@ one family (both Qwen models, for example), the wizard says so and asks whether
 to keep the checker; Enter keeps it, and `n` lets you pick again. The settings
 panel then marks the checker as being in the same family as the finder.
 
-If the list has more than 40 entries, the wizard first asks for part of a name. It flags models that look like 7B parameters or fewer as weak. What
-happens next depends on the provider.
+Each model is one question, `Number, model ID, or part of a name`. A number picks
+from the list shown, and a listed ID picks that model. Other text narrows the
+list to the IDs that contain it, and the same question is asked again under the
+shorter list. The list shows at most 40 entries. Text that matches no listed
+model is used exactly as typed only when you type it twice in a row. The wizard
+flags models that look like 7B parameters or fewer as weak. What happens next
+depends on the provider.
 
 - With OpenRouter, the wizard reads OpenRouter's public model and
   zero-data-retention lists (no key or code is sent), shows what the API
@@ -169,12 +174,13 @@ happens next depends on the provider.
   only the zero-data-retention endpoints that allow 16384 output tokens, says
   how many it left out, and lets each request write up to 16384 tokens. When no
   endpoint of a model allows that much, it keeps that model's endpoints, says
-  so, and uses the smallest output they allow. It then asks "Require zero data
-  retention on every request (recommended)?", where Enter means yes. If a model
-  has no zero-data-retention endpoint, the wizard warns you (an account or key
-  that enforces zero data retention will refuse that model) and lets you replace
-  the model. If you keep the model or answer no, the wizard asks you to confirm
-  once with `y` before it continues. See
+  so, and uses the smallest output they allow. Every request requires zero data
+  retention; this is not a question, and `--without-zdr` turns it off. If a
+  model has no zero-data-retention endpoint, the wizard says so (an account or
+  key that enforces zero data retention will refuse that model) and lists the
+  models that have one. One answer picks one of them, or Enter keeps your model
+  and continues without zero data retention. The summary and the confirmation
+  state which you chose. See
   [OpenRouter zero data retention](openrouter-zdr-profile.md).
 - With a local server, if exactly one server answers on its usual port (Ollama 11434, LM
   Studio 1234, llama.cpp 8080, vLLM 8000), the wizard uses it without asking.
@@ -197,27 +203,30 @@ happens next depends on the provider.
 
 If the provider's key variable has no key yet, in the environment or saved, and
 the wizard runs in a terminal, it asks for the key with hidden input. It checks
-an OpenRouter key with one free call and offers to save the key (Enter saves it, `n`
-skips). Without a terminal, or with `--no-input`, it never asks.
-See [API keys](keys.md).
+an OpenRouter key with one free call and saves it once the setup is saved,
+without asking. Then it prints the commands that change or remove it,
+`trestle keys set NAME` and `trestle keys remove NAME`. Without a terminal, or
+with `--no-input`, it never asks. See [API keys](keys.md).
 
 The wizard does not ask how much a single model request may cost. Setup uses the
 cost of a request that fills the whole context and writes the whole output
 allowance, rounded up to a cent. The settings panel shows that figure and what a
 review of two requests can cost. `--max-cost-micro-usd` sets a different bound.
 
-For a provider that charges per token, the wizard then asks one optional
-question, "Spending limit for this key, USD per month (optional) [none]", and, if
-you give a limit, "Alert at percent [80]". Enter means no limit. For OpenRouter,
+For a provider that charges per token, the wizard then asks one question,
+"Spending limit for this key, USD per month [20]". Enter accepts $20 a month,
+and `none` means no limit. The limit alerts at 80% and at the limit;
+`--spending-limit` with `--spending-alert` sets another percentage. For OpenRouter,
 the wizard first shows OpenRouter's own figures for the key when the key
 variable is set. Open Trestle checks the limit before each review and counts its
 own upper-bound estimate, not a bill. The check is best effort, so also set a
 limit with your provider. A key that already has a limit keeps it.
 See [spending limits](spending-limits.md).
 
-### Step 4: your settings
+### Step 4: your settings and consent
 
-One panel shows everything, whether you answered it or the wizard filled it in:
+One panel shows everything, whether you answered it or the wizard filled it in.
+Under it are the facts you confirm and the spending limit, then one question:
 
 ```text
 ┌─ Setup summary ──────────────────────────────────────────┐
@@ -233,7 +242,7 @@ One panel shows everything, whether you answered it or the wizard filled it in:
 │ Limits       context 128000 · output 16000 tokens        │
 │ Cost         $3.30 in · $16.50 out per million tokens ·  │
 │              up to $0.69 a request, $1.38 a review       │
-│ Spending     $10.00 a month for this key · alerts at 80% │
+│ Spending     $20.00 a month for this key · alerts at 80% │
 │              and 100%                                    │
 │ Key          OPEN_TRESTLE_PROVIDER_OPENROUTER (from the  │
 │              environment)                                │
@@ -242,38 +251,55 @@ One panel shows everything, whether you answered it or the wizard filled it in:
 │              owner you                                   │
 │ Folder       ~/.local/state/open-trestle/project-1a2b3c4d │
 └──────────────────────────────────────────────────────────┘
-  Use these settings? (Y/n):
+
+  Open Trestle records what you state below; it cannot check
+  it for you.
+
+  Declaration: sending your source to OpenRouter
+  By confirming, you state that:
+    • each review sends the selected source, after secret
+      scanning, to OpenRouter for vendor/finder-model and
+      other/checker-model
+    • every request requires zero data retention, so
+      OpenRouter uses only zero-data-retention endpoints
+    • you have not turned on prompt logging for this key in
+      your OpenRouter settings
+  Details: docs/remote-model-review.md#openrouter
+
+  Spending limit: $20.00 a month for this key · alerts at 80%
+  and 100%
+  Confirm all of the above and save this setup? (Y/n):
 ```
 
 The key variable has the provider's usual name. The `Key` row says where its key
 comes from: the environment, `~/.config/open-trestle/credentials`, a key to be
-saved with the setup, a key entered for this session only, or not set yet. The
-key itself is never written to the setup folder, and only its length and last
-four characters are ever shown, once, when you enter it.
+saved with the setup, or not set yet. The key itself is never written to the
+setup folder, and only its length and last four characters are ever shown,
+once, when you enter it.
 
 The names come from the URL of `origin` (its host, namespace and name; a
 credential in the URL is ignored) or from the folder name. The owner comes from
 `$USER`.
 
-If you answer `n`, the wizard offers to change the commits, the names, the key
-variable, or the limits and prices, and then shows the panel again. Every value
+Enter (or `y`) confirms every declaration shown and saves the setup. If you
+answer `n`, the wizard offers to change the commits, the names, the key
+variable, or the limits and prices, and then shows the panel and the
+declarations again; its last option stops with nothing written. Every value
 also has a flag (see [non-interactive use](#non-interactive-use)). The spending
 limit is saved after the setup, in the usage folder that every setup shares.
 `trestle usage` shows and changes it.
 
-### Step 5: your consent
-
-The wizard shows each fact the bootstrap needs in plain words, with a link, and
-you must type `yes`. Typing `no` stops with nothing written. What you are asked
-to confirm depends on the provider:
+What you confirm depends on the provider:
 
 - For OpenRouter, you confirm that each review sends the selected source, after
   secret scanning, to OpenRouter for the two models; whether zero data retention
   is required; and that you have not turned on prompt logging for the key.
 - For Ollama Cloud and OpenCode Go, you confirm the
-  [route declaration](remote-model-review.md#common-declarations) (capacity,
-  structured output, logging off, prices, availability).
-- OpenCode Go also asks for four evidence items, a review window and the
+  [route declaration](remote-model-review.md#common-declarations) (where the
+  source is sent, capacity, structured output, logging off, prices,
+  availability).
+- OpenCode Go also asks for four evidence items and a review window before the
+  summary, and the same answer confirms the
   [workspace declaration](remote-model-review.md#opencode-go). For a public page,
   the wizard offers to fetch it once and compute its SHA-256 on your machine.
   The fetch is an `https` GET (it follows at most two redirects) with no key, cookie, query or repository content,
@@ -287,12 +313,12 @@ to confirm depends on the provider:
 - For a local server, you confirm the
   [local capability declaration](local-first-bootstrap.md#choose-the-repository-and-model-pair).
 
-### Step 6: save and check
+### Step 5: save and check
 
 The wizard writes the configuration into a new private folder, by default
 `~/.local/state/open-trestle/<repository>-<8 hex characters>` (mode `0700`, files
-`0600`). It does not overwrite existing files. If you chose to save a key, it is
-saved now, after the setup.
+`0600`). It does not overwrite existing files. A key you typed is saved now,
+after the setup.
 
 If no key is found for the key variable, the check says so and shows two
 commands. `trestle keys set NAME` saves the key with hidden input, and
@@ -376,11 +402,12 @@ change.
 
 ### Repository checks
 
-After the setup checks pass, the wizard asks once: "Run this repository's tests
-inside a sandbox on this machine? It has no network and no access to your home
-folder or keys." The answer is saved in `checks.json` in the setup folder, and the
-default is no. With `--no-input`, `--checks` answers yes. `trestle checks on`,
-`off` and `status` change or show the answer later. A review that has no saved
+When you answer yes to "Run the first review now?", the wizard asks once: "Run
+this repository's tests inside a sandbox on this machine? It has no network and
+no access to your home folder or keys." The answer is saved in `checks.json` in
+the setup folder, and the default is no. If no review runs, it is not asked, and
+the first review asks instead. With `--no-input`, `--checks` answers yes.
+`trestle checks on`, `off` and `status` change or show the answer later. A review that has no saved
 answer asks in the terminal. See [repository checks](repository-checks.md).
 
 A new setup runs specialist reviews by default. The general review runs first,
@@ -490,7 +517,7 @@ trestle review
 ```
 
 The command finds the setup the same way `trestle init` does: in the folder from
-step 6, or in the one you name with `--directory PATH`. It picks the two commits
+step 5, or in the one you name with `--directory PATH`. It picks the two commits
 again, says what it compares and where the source goes, and runs the same review
 with the setup's routes, policy, names and egress. It does not reuse the commits
 saved at setup time, so a setup keeps working after those commits are rewritten
@@ -633,10 +660,10 @@ settings panel, without color.
 | Prices (remote) | `--input-micro-usd-per-million-tokens N`, `--output-micro-usd-per-million-tokens N` (OpenRouter: detected unless given) |
 | Per-request cost bound (optional, no question) | `--max-cost-micro-usd N` (1 USD = 1000000; default: the cost of a request that fills the whole context, rounded up to a cent) |
 | Specialist reviews (optional, no question) | `--specialists auto\|none` (default `auto`: the saved review runs the general review, then up to three specialist reviews picked from the change; `none` saves the general review only). `trestle setup bootstrap init` takes the same flag |
-| Spending limit for the key (optional) | `--spending-limit USD`, `--spending-alert PERCENT` (default 80; alerts also at the limit). Only for a remote provider that charges per token; without it there is no limit. See [spending limits](spending-limits.md) |
+| Spending limit for the key (optional) | `--spending-limit USD`, `--spending-alert PERCENT` (default 80; alerts also at the limit; not asked interactively). Only for a remote provider that charges per token; with `--no-input` and without it there is no limit. See [spending limits](spending-limits.md) |
 | Key variable (default: the provider's usual name) | `--credential-env OPEN_TRESTLE_PROVIDER_NAME` |
 | Names (default: from `origin`, the folder and `$USER`) | `--owner`, `--tenant`, `--repository`, `--repository-authority`, `--repository-namespace`, `--repository-name` |
-| OpenRouter | `--without-zdr` (continue without zero data retention), `--generation-provider-slug SLUG[,SLUG]` and `--verification-provider-slug SLUG[,SLUG]` (override the detected ZDR endpoints) |
+| OpenRouter | `--without-zdr` (do not require zero data retention; interactively too, since it is not asked), `--generation-provider-slug SLUG[,SLUG]` and `--verification-provider-slug SLUG[,SLUG]` (override the detected ZDR endpoints) |
 | OpenCode Go | `--generation-model-evidence`, `--verification-model-evidence` |
 | Evidence window | `--broker-evidence`, `--account-evidence`, `--evidence-retrieved-at`, `--reviewed-at`, `--valid-from`, `--valid-until` |
 | Declarations | `--declare-remote-route`, `--declare-opencode-go-account`, `--declare-ollama-cloud-signin`, `--declare-local-capabilities` |

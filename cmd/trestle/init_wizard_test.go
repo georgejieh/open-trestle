@@ -244,9 +244,8 @@ func TestInitLocalServerProbedModelsThroughFirstReview(t *testing.T) {
 				"1",               // the only listed model
 				"5", verification, // the second server
 				"1",
-				"",    // use the settings shown
-				"yes", // local capabilities
-				"n",   // no synthetic test requests
+				"",  // confirm the settings and the local capabilities
+				"n", // no synthetic test requests
 				"y",
 			)
 			if result.code != initExitDone {
@@ -298,7 +297,7 @@ func TestInitDevelopmentBuildExplainsScannerAndOffersLocal(t *testing.T) {
 	if result.code != initExitUsage || !initHas(result.stderr, "input ended") {
 		t.Fatalf("exit=%d\n%s\n%s", result.code, result.stdout, result.stderr)
 	}
-	provider := result.stdout[strings.Index(result.stdout, "Step 2 of 6"):]
+	provider := result.stdout[strings.Index(result.stdout, "Step 2 of 5"):]
 	wants := []string{"development build has no secret scanner", "secret-scanned before it", "python3 tools/package_secret_scanner.py --development DIR", "DIR/bin/trestle init", "This build cannot send source to OpenRouter", "This build cannot send source to your local model server", "Using: A model server on this machine"}
 	if runtime.GOOS == "linux" {
 		wants = append(wants, "python3 tools/package_secret_scanner.py --output .container", "sudo ./open-trestle-linux-amd64.pyz install", "/usr/local/bin/trestle init")
@@ -319,7 +318,7 @@ func TestInitDevelopmentBuildExplainsScannerAndOffersLocal(t *testing.T) {
 
 // Scripted answers are not echoed, so a prompt and the next output share a
 // captured line; the width check measures each part separately.
-var initPromptEnd = regexp.MustCompile(`: {2,}|\((?:y/N|Y/n|1-\d+)\): |Type yes or no: `)
+var initPromptEnd = regexp.MustCompile(`: {2,}|\((?:y/N|Y/n|1-\d+)\): `)
 
 func TestInitUnreadableObjectStorageStopsBeforeQuestions(t *testing.T) {
 	source := remoteBootstrapCheckout(t)
@@ -334,7 +333,7 @@ func TestInitUnreadableObjectStorageStopsBeforeQuestions(t *testing.T) {
 	}
 	dir := filepath.Join(t.TempDir(), "setup")
 	result := runInitScript(t, checkout, []string{"--directory", dir, "--base", "refs/heads/base", "--head", "refs/heads/review"})
-	if result.code != initExitRefused || !initHas(result.stderr, "cannot read the selected commits") || !initHas(result.stderr, "git clone --no-local --no-hardlinks") || initHas(result.stdout, "Step 2 of 6") {
+	if result.code != initExitRefused || !initHas(result.stderr, "cannot read the selected commits") || !initHas(result.stderr, "git clone --no-local --no-hardlinks") || initHas(result.stdout, "Step 2 of 5") {
 		t.Fatalf("exit=%d\n%s\n%s", result.code, result.stdout, result.stderr)
 	}
 	initAssertAbsent(t, dir)
@@ -401,7 +400,7 @@ func TestInitDecliningDeclarationWritesNothing(t *testing.T) {
 	checkout := remoteBootstrapCheckout(t)
 	dir := filepath.Join(t.TempDir(), "setup")
 	result := runInitScript(t, checkout, []string{"--directory", dir, "--base", "refs/heads/base", "--head", "refs/heads/review", "--credential-env", "OPEN_TRESTLE_PROVIDER_UNSET_FOR_TEST"},
-		"2", "1", "2", "128000", "8192", "n", "y", "no")
+		"2", "1", "2", "128000", "8192", "n", "n", "5") // decline the summary, then stop
 	if result.code != initExitRefused || !initHas(result.stderr, "did not confirm") || !initHas(result.stderr, "Nothing was written") {
 		t.Fatalf("declined declaration exit=%d stderr=%s", result.code, result.stderr)
 	}
@@ -417,7 +416,7 @@ func TestInitMissingCredentialThenRerunRechecks(t *testing.T) {
 	checkout := remoteBootstrapCheckout(t)
 	dir := filepath.Join(t.TempDir(), "setup")
 	args := []string{"--directory", dir, "--base", "refs/heads/base", "--head", "refs/heads/review", "--provider", "ollama-cloud", "--generation-model", "gemma4:31b", "--verification-model", "qwen3.5:397b", "--context-tokens", "128000", "--output-tokens", "8192", "--input-micro-usd-per-million-tokens", "0", "--output-micro-usd-per-million-tokens", "0", "--max-cost-micro-usd", "0", "--credential-env", "OPEN_TRESTLE_PROVIDER_OLLAMA_CLOUD"}
-	first := runInitScript(t, checkout, args, "", "yes")
+	first := runInitScript(t, checkout, args, "")
 	if first.code != initExitPending || !initHas(first.stdout, "read -rs OPEN_TRESTLE_PROVIDER_OLLAMA_CLOUD && export OPEN_TRESTLE_PROVIDER_OLLAMA_CLOUD") || !initHas(first.stdout, "Not ready for a review yet") {
 		t.Fatalf("missing key was not a pending setup: exit=%d\n%s\n%s", first.code, first.stdout, first.stderr)
 	}

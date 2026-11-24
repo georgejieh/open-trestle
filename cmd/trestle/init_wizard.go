@@ -141,6 +141,7 @@ type initWizard struct {
 	terminal echoTerminal
 	// enteredKeys names typed keys to save once the setup is saved.
 	enteredKeys []string
+	pending     []initDeclaration // confirmed together at the summary
 }
 
 func runInit(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -415,40 +416,44 @@ func (w *initWizard) confirm(question string, defaultYes, noInput bool) (bool, e
 	return w.prompt.confirm(question, defaultYes)
 }
 
-// declare shows one operator declaration and requires the typed word yes, or
-// the declaration's own existing bootstrap flag. There is no blanket bypass.
-func (w *initWizard) declare(flagName, title, doc string, facts []string) error {
+// initDeclaration is one operator declaration. Its facts are read when it is
+// shown, so they follow any setting changed at the summary.
+type initDeclaration struct {
+	flag, title, doc string
+	facts            func() []string
+}
+
+// declare adds a declaration to the summary, where one answer confirms every
+// declaration, or each is confirmed by its own existing bootstrap flag. There
+// is no blanket bypass.
+func (w *initWizard) declare(flagName, title, doc string, facts func() []string) {
 	if w.prompt == nil && len(w.missing) != 0 {
 		if !w.bools[flagName] {
 			w.missing = append(w.missing, "--"+flagName)
 		}
-		return nil
+		return
 	}
-	w.say("\n  Declaration: %s", title)
-	w.say("  Open Trestle records what you state here; it cannot check it for you.")
-	w.say("  By confirming, you state that:")
-	for _, fact := range facts {
-		w.say("    • %s", fact)
+	w.pending = append(w.pending, initDeclaration{flag: flagName, title: title, doc: doc, facts: facts})
+}
+
+// showDeclarations prints the pending declarations and the spending limit
+// under the summary panel.
+func (w *initWizard) showDeclarations() {
+	w.say("\n  Open Trestle records what you state below; it cannot check it for you.")
+	for _, d := range w.pending {
+		w.say("\n  Declaration: %s", d.title)
+		w.say("  By confirming, you state that:")
+		for _, fact := range d.facts() {
+			w.say("    • %s", fact)
+		}
+		w.say("  Details: %s", d.doc)
+		if w.bools[d.flag] {
+			w.say("  Confirmed with --%s.", d.flag)
+		}
 	}
-	w.say("  Details: %s", doc)
-	if w.bools[flagName] {
-		w.say("  Confirmed with --%s.", flagName)
-		w.a.declarations = append(w.a.declarations, "--"+flagName)
-		return nil
+	if row, ok := w.spendingRow(); ok {
+		w.say("\n  Spending limit: %s", row)
 	}
-	if w.prompt == nil {
-		w.missing = append(w.missing, "--"+flagName)
-		return nil
-	}
-	yes, err := w.prompt.typedYes("Do you confirm all of the above?")
-	if err != nil {
-		return err
-	}
-	if !yes {
-		return initStopf(initExitRefused, "stopped: you did not confirm %q. Nothing was written. Open Trestle will not record facts you have not confirmed. Check them (see %s), then run `trestle init` again.", title, doc)
-	}
-	w.a.declarations = append(w.a.declarations, "--"+flagName)
-	return nil
 }
 
 func (w *initWizard) run() (int, error) {
@@ -476,7 +481,7 @@ func (w *initWizard) run() (int, error) {
 		}
 		return w.resume()
 	}
-	steps := []func() error{w.stepSelection, w.stepProvider, w.stepModels, w.stepCredentials, w.autoNames, w.stepSummary, w.stepDeclarations}
+	steps := []func() error{w.stepSelection, w.stepProvider, w.stepModels, w.stepCredentials, w.autoNames, w.stepDeclarations, w.stepSummary}
 	for _, step := range steps {
 		if err := step(); err != nil {
 			return 0, err
@@ -802,7 +807,7 @@ func (w *initWizard) remoteModels() error {
 
 func (w *initWizard) pickPair(generation, verification []modelcatalog.Model) error {
 	var err error
-	if w.a.generationModel, err = w.pickModel("generation-model", "Finder model: looks for problems in your change", generation, ""); err != nil {
+	if w.a.generationModel, err = w.pickModel("generation-model", "Finder model: looks for problems in your change", generation, "", ""); err != nil {
 		return err
 	}
 	w.a.verificationModel, err = w.pickChecker(verification)
@@ -818,7 +823,7 @@ func (w *initWizard) pickChecker(models []modelcatalog.Model) (string, error) {
 	}
 	_, given := w.flags["verification-model"]
 	for {
-		checker, err := w.pickModel("verification-model", "Checker model: double-checks each finding", models, w.a.generationModel)
+		checker, err := w.pickModel("verification-model", "Checker model: double-checks each finding", models, w.a.generationModel, "")
 		if err != nil {
 			return "", err
 		}
@@ -889,45 +894,11 @@ func initValidSelector(value string) error {
 	return nil
 }
 
-func (w *initWizard) pickModel(flagName, question string, models []modelcatalog.Model, exclude string) (string, error) {
-	shown := models
-	filtered := false
-	_, given := w.flags[flagName]
-	if w.prompt != nil && len(models) > initModelListLimit && !given {
-		w.say("\n  %s", question)
-		var err error
-		if shown, err = w.filterModels(models); err != nil {
-			return "", err
-		}
-		filtered = len(shown) > 0
-		if len(shown) > 0 {
-			question = "Matching models"
-		} else {
-			question = "Exact model ID"
-		}
-	}
-	pool := len(shown)
-	if len(shown) > initModelListLimit {
-		shown = shown[:initModelListLimit]
-	}
-	if w.prompt != nil && len(shown) > 0 {
-		w.say("\n  %s", question)
-		for i, model := range shown {
-			w.say("    %2d) %s%s", i+1, model.Selector, initModelNote(model))
-		}
-		if filtered && pool > len(shown) {
-			w.say("    ... %d more match; type more of the name, or an exact ID.", pool-len(shown))
-		} else if !filtered && len(models) > len(shown) {
-			w.say("    ... %d more; type an exact ID to use one of them.", len(models)-len(shown))
-		}
-	}
+// pickModel picks one model: from its flag, as a typed ID when there is no
+// list, or from the list (chooseModel). keep, when set, is the current model,
+// which Enter keeps.
+func (w *initWizard) pickModel(flagName, question string, models []modelcatalog.Model, exclude, keep string) (string, error) {
 	validate := func(value string) (string, error) {
-		if n, err := strconv.Atoi(value); err == nil && len(shown) > 0 {
-			if n < 1 || n > len(shown) {
-				return "", fmt.Errorf("Please type a number from 1 to %d, or an exact model ID.", len(shown))
-			}
-			value = shown[n-1].Selector
-		}
 		if err := initValidSelector(value); err != nil {
 			return "", err
 		}
@@ -945,12 +916,14 @@ func (w *initWizard) pickModel(flagName, question string, models []modelcatalog.
 		}
 		return value, nil
 	}
-	label := question
-	if len(shown) > 0 {
-		label = "Number or exact model ID"
+	var choice string
+	var err error
+	if _, given := w.flags[flagName]; given || w.prompt == nil || len(models) == 0 {
+		choice, err = w.answer(initQuestion{flag: flagName, question: question, validate: validate})
+	} else {
+		choice, err = w.chooseModel(question, models, keep, validate)
 	}
-	choice, err := w.answer(initQuestion{flag: flagName, question: label, validate: validate})
-	if err != nil || choice == "" {
+	if err != nil || choice == "" || choice == keep {
 		return choice, err
 	}
 	index := slices.IndexFunc(models, func(m modelcatalog.Model) bool { return m.Selector == choice })
@@ -969,44 +942,91 @@ func (w *initWizard) pickModel(flagName, question string, models []modelcatalog.
 
 const initModelListLimit = 40
 
-// filterModels narrows a long list by a typed substring; Enter skips the list.
-func (w *initWizard) filterModels(models []modelcatalog.Model) ([]modelcatalog.Model, error) {
-	w.say("  %d models are listed. Type part of a name to narrow the list (for example qwen), or press Enter to type an exact model ID.", len(models))
-	for range initMaxTries {
-		text, err := w.prompt.askOptional("Filter")
-		if err != nil || text == "" {
-			return nil, err
-		}
-		matches := []modelcatalog.Model{}
-		for _, model := range models {
-			if strings.Contains(strings.ToLower(model.Selector), strings.ToLower(text)) {
-				matches = append(matches, model)
+// chooseModel shows the list and asks one question: a number picks from the
+// list shown, a listed ID picks that model, and other text narrows the list
+// to the IDs that contain it. Text that matches nothing, typed twice in a
+// row, is used exactly as typed.
+func (w *initWizard) chooseModel(question string, models []modelcatalog.Model, keep string, validate func(string) (string, error)) (string, error) {
+	shown, filter, unmatched, show := models, "", "", true
+	for tries := 0; tries < initMaxTries; {
+		listed := shown[:min(len(shown), initModelListLimit)]
+		if show {
+			if filter == "" {
+				w.say("\n  %s", question)
+			} else {
+				w.say("\n  Models whose ID contains %q:", filter)
 			}
-		}
-		if len(matches) != 0 {
-			// An exact ID first, then the same name under another vendor
-			// prefix, then names that start with the text; otherwise the
-			// catalog order is kept.
-			needle := strings.ToLower(text)
-			rank := func(model modelcatalog.Model) int {
-				selector := strings.ToLower(model.Selector)
-				_, name, _ := strings.Cut(selector, "/")
-				switch {
-				case selector == needle:
-					return 0
-				case name == needle:
-					return 1
-				case strings.HasPrefix(selector, needle) || strings.HasPrefix(name, needle):
-					return 2
-				}
-				return 3
+			for i, model := range listed {
+				w.say("    %2d) %s%s", i+1, model.Selector, initModelNote(model))
 			}
-			slices.SortStableFunc(matches, func(x, y modelcatalog.Model) int { return rank(x) - rank(y) })
-			return matches, nil
+			if more := len(shown) - len(listed); more > 0 && filter != "" {
+				w.say("    ... %d more match; type more of the name, or an exact ID.", more)
+			} else if more > 0 {
+				w.say("    ... %d more; type part of a name to narrow the list.", more)
+			}
+			show = false
 		}
-		w.say("    No listed model contains %q. Try a shorter part of the name.", text)
+		answer, err := w.prompt.ask("Number, model ID, or part of a name", keep, func(value string) (string, error) { return value, nil })
+		if err != nil || answer == keep {
+			return answer, err
+		}
+		if n, err := strconv.Atoi(answer); err == nil {
+			if n < 1 || n > len(listed) {
+				w.say("    Please type a number from 1 to %d, a model ID, or part of a name.", len(listed))
+				tries++
+				continue
+			}
+			answer = listed[n-1].Selector
+		} else if answer != unmatched && !slices.ContainsFunc(models, func(m modelcatalog.Model) bool { return m.Selector == answer }) {
+			if matches := initMatchModels(models, answer); len(matches) != 0 {
+				shown, filter, unmatched, show = matches, answer, "", true
+				continue
+			}
+			if _, err := validate(answer); err != nil {
+				w.say("    %s", err.Error())
+			} else {
+				w.say("    No listed model contains %q. Type a shorter part of the name, or type %s again to use it exactly as typed.", answer, answer)
+				unmatched = answer
+			}
+			tries++
+			continue
+		}
+		value, err := validate(answer)
+		if err == nil {
+			return value, nil
+		}
+		w.say("    %s", err.Error())
+		tries++
 	}
-	return nil, errInitTooManyTries
+	return "", errInitTooManyTries
+}
+
+// initMatchModels returns the models whose ID contains text: an exact ID
+// first, then the same name under another vendor prefix, then names that
+// start with the text; otherwise the catalog order is kept.
+func initMatchModels(models []modelcatalog.Model, text string) []modelcatalog.Model {
+	needle := strings.ToLower(text)
+	matches := []modelcatalog.Model{}
+	for _, model := range models {
+		if strings.Contains(strings.ToLower(model.Selector), needle) {
+			matches = append(matches, model)
+		}
+	}
+	rank := func(model modelcatalog.Model) int {
+		selector := strings.ToLower(model.Selector)
+		_, name, _ := strings.Cut(selector, "/")
+		switch {
+		case selector == needle:
+			return 0
+		case name == needle:
+			return 1
+		case strings.HasPrefix(selector, needle) || strings.HasPrefix(name, needle):
+			return 2
+		}
+		return 3
+	}
+	slices.SortStableFunc(matches, func(x, y modelcatalog.Model) int { return rank(x) - rank(y) })
+	return matches
 }
 
 func initMetadataNumber(metadata json.RawMessage, keys ...string) uint64 {
@@ -1155,7 +1175,7 @@ func (w *initWizard) localModels() error {
 		return err
 	}
 	w.modelEndpoint = w.a.generationEndpoint
-	if w.a.generationModel, err = w.pickModel("generation-model", "Finder model: looks for problems in your change", generation, ""); err != nil {
+	if w.a.generationModel, err = w.pickModel("generation-model", "Finder model: looks for problems in your change", generation, "", ""); err != nil {
 		return err
 	}
 	_, flagged := w.flags["verification-endpoint"]
@@ -1444,43 +1464,58 @@ func (w *initWizard) stepCredentials() error {
 	return w.spendingLimit()
 }
 
+// stepDeclarations collects the declarations the summary confirms, after any
+// evidence they need.
 func (w *initWizard) stepDeclarations() error {
-	w.header(5, "Your consent")
+	w.header(4, "Your settings and consent")
 	a := &w.a
 	if a.provider.key == "openrouter" {
-		return w.openRouterConsent()
+		w.openRouterConsent()
+		return nil
 	}
-	capacity := fmt.Sprintf("accept %s tokens of input and write up to %s tokens of output", a.contextTokens, a.outputTokens)
+	capacity := func() string {
+		return fmt.Sprintf("accept %s tokens of input and write up to %s tokens of output", a.contextTokens, a.outputTokens)
+	}
 	if a.provider.key == "local" {
-		return w.declare("declare-local-capabilities", "your local models", "docs/local-first-bootstrap.md#choose-the-repository-and-model-pair", []string{
-			"both models run entirely on this machine; the server is not relaying them to a cloud service",
-			"they " + capacity,
-			"they return structured JSON output",
-			"the server does not log your content and costs nothing per request",
-			"both models are loaded and available now",
+		w.declare("declare-local-capabilities", "your local models", "docs/local-first-bootstrap.md#choose-the-repository-and-model-pair", func() []string {
+			return []string{
+				"both models run entirely on this machine; the server is not relaying them to a cloud service",
+				"they " + capacity(),
+				"they return structured JSON output",
+				"the server does not log your content and costs nothing per request",
+				"both models are loaded and available now",
+			}
 		})
+		return nil
 	}
-	input, _ := strconv.ParseUint(a.inputPrice, 10, 64)
-	output, _ := strconv.ParseUint(a.outputPrice, 10, 64)
-	if err := w.declare("declare-remote-route", "the two model routes", "docs/remote-model-review.md#common-declarations", []string{
-		"both models " + capacity,
-		"they return structured JSON output",
-		"you use them with content logging turned off",
-		fmt.Sprintf("they cost no more than %s (input) and %s (output) per million tokens", initFormatUSD(input), initFormatUSD(output)),
-		"both models are available to your account now",
-	}); err != nil {
-		return err
-	}
+	w.declare("declare-remote-route", "the two model routes", "docs/remote-model-review.md#common-declarations", func() []string {
+		input, _ := strconv.ParseUint(a.inputPrice, 10, 64)
+		output, _ := strconv.ParseUint(a.outputPrice, 10, 64)
+		facts := []string{}
+		if a.provider.key != ollamaSigninProvider {
+			facts = append(facts, "each review sends the selected source, after secret scanning, to "+a.provider.short+" for "+a.generationModel+" and "+a.verificationModel)
+		}
+		return append(facts,
+			"both models "+capacity(),
+			"they return structured JSON output",
+			"you use them with content logging turned off",
+			fmt.Sprintf("they cost no more than %s (input) and %s (output) per million tokens", initFormatUSD(input), initFormatUSD(output)),
+			"both models are available to your account now",
+		)
+	})
 	switch a.provider.key {
 	case "opencode-go":
 		return w.openCodeGoDeclarations()
 	case ollamaSigninProvider:
-		return w.declare("declare-ollama-cloud-signin", "sending your source to Ollama Cloud through your signed-in Ollama", "docs/remote-model-review.md#ollama-signed-in-to-ollama-cloud", []string{
-			"Ollama at " + a.generationEndpoint + " is signed in (`ollama signin`) to an Ollama account you control",
-			"each review sends the selected source, after secret scanning, from that Ollama to Ollama Cloud (https://ollama.com) under that account, so it leaves this machine",
-			"both models are Ollama Cloud models; they do not run on this machine",
-			"their use counts against that account's Ollama Cloud plan; Open Trestle records no retention or zero-data promise for Ollama Cloud (read https://docs.ollama.com/cloud)",
+		w.declare("declare-ollama-cloud-signin", "sending your source to Ollama Cloud through your signed-in Ollama", "docs/remote-model-review.md#ollama-signed-in-to-ollama-cloud", func() []string {
+			return []string{
+				"Ollama at " + a.generationEndpoint + " is signed in (`ollama signin`) to an Ollama account you control",
+				"each review sends the selected source, after secret scanning, from that Ollama to Ollama Cloud (https://ollama.com) under that account, so it leaves this machine",
+				"both models are Ollama Cloud models; they do not run on this machine",
+				"their use counts against that account's Ollama Cloud plan; Open Trestle records no retention or zero-data promise for Ollama Cloud (read https://docs.ollama.com/cloud)",
+			}
 		})
+		return nil
 	default:
 		w.say("\n  Ollama Cloud: Open Trestle records no retention or zero-data promise for this provider. Read Ollama's current privacy terms and your plan before you send private source (https://docs.ollama.com/cloud).")
 		return nil
@@ -1725,12 +1760,15 @@ func (w *initWizard) openCodeGoDeclarations() error {
 	}
 	extra = append(extra, window...)
 	w.a.extra = extra
-	return w.declare("declare-opencode-go-account", "your OpenCode Go workspace privacy", "docs/remote-model-review.md#opencode-go and docs/opencode-go-profile.md", []string{
-		"the key belongs to a Go workspace with exactly one member",
-		"privacy training and extra usage are turned off in that workspace",
-		"both models' documentation states zero-day retention and no training",
-		windowFact,
+	w.declare("declare-opencode-go-account", "your OpenCode Go workspace privacy", "docs/remote-model-review.md#opencode-go and docs/opencode-go-profile.md", func() []string {
+		return []string{
+			"the key belongs to a Go workspace with exactly one member",
+			"privacy training and extra usage are turned off in that workspace",
+			"both models' documentation states zero-day retention and no training",
+			windowFact,
+		}
 	})
+	return nil
 }
 
 func initLabel(value, fallback string) string {

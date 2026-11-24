@@ -117,8 +117,9 @@ with each failure, and the fixes below say what else to check.
 | `provider_no_allowed_endpoint` | OpenRouter has no allowed endpoint for the model. With zero data retention required, choose a model that has zero-data-retention endpoints. |
 | `provider_request_rejected` | Check the model ID, the endpoint and that the model accepts structured output and the output allowance, then re-run setup. |
 | `provider_rate_limited` | Wait and run the review again. Open Trestle already retried twice. |
-| `provider_response_invalid`, `model_output_invalid` | Run the review again. If it repeats, choose another model or route. |
-| `model_output_exhausted` | The model spent its output allowance on reasoning. Choose a model that does not reason at length for that role, or raise the output allowance with `trestle init --max-output-tokens N`. |
+| `provider_response_invalid` | Run the review again. If it repeats, choose another model or route. |
+| `model_output_invalid` | The hint names the class of the problem, for example `unknown_candidate` when the checker named a candidate the request does not have. Run the review again. If the same class repeats, choose another model for that role. See [failure details](failure-details.md). |
+| `model_output_exhausted` | The model spent its output allowance on reasoning. OpenRouter requests already ask for low reasoning effort where every pinned endpoint accepts it; the wizard says when a reasoning model's endpoints do not. Choose a model that does not reason at length for that role, or set up again with a larger allowance: `trestle init --directory NEW_FOLDER --max-output-tokens N`. |
 | `route_context_insufficient` | The route's declared context is too small. Raise `max_context_tokens` on the route and the model server's context length to at least the number the hint prints. See [named local runtimes](named-local-runtimes.md#context-length). |
 | `spending_limit_reached` | Run `trestle usage`, then raise or clear the limit (`trestle usage set`, `trestle usage clear`) or wait for the next period. Nothing was sent. |
 

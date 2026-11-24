@@ -66,7 +66,7 @@ func TestVersionedVerifierClarificationFixedContract(t *testing.T) {
 			if baselineSchema == nil {
 				baselineSchema = append(json.RawMessage(nil), fields["output_schema"]...)
 			}
-			if !bytes.Equal(baselineSchema, fields["output_schema"]) || string(fields["output_schema_identity"]) != `"590b0c64c6ac4c766df127633d0af5b1f841c08194815db52100a1029ffd11c7"` {
+			if !bytes.Equal(baselineSchema, fields["output_schema"]) || string(fields["output_schema_identity"]) != `"687aed00eb76a52b24e8013f062806e23b5a0d875d4982460b93be6c81e1ade4"` {
 				t.Error("candidate count changed the published schema")
 			}
 			var generated contextPacketWire
@@ -91,7 +91,7 @@ func TestVersionedVerifierClarificationRejectsInventedEmptyVerdict(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	document := `{"schema_version":1,"verdicts":[{"candidate_id":"` + strings.Repeat("a", 64) + `","outcome":"rejected","severity":"none","rationale":"No issue.","evidence_ids":[]}]}`
+	document := `{"schema_version":1,"verdicts":[{"candidate_id":"c1","outcome":"rejected","severity":"none","rationale":"No issue.","evidence_ids":[]}]}`
 	part, err := provider.NewResponsePart(provider.ResponsePartStructuredData, "application/json", []byte(document))
 	if err != nil {
 		t.Fatal(err)

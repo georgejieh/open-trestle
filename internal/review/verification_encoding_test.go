@@ -9,7 +9,7 @@ import (
 
 func TestVerificationBatchEncodingRoundTripsCompleteVerdicts(t *testing.T) {
 	_, candidates, items := verificationFixture(t, `{"schema_version":1,"verdicts":[]}`)
-	response, candidates, items := verificationFixture(t, validVerificationDocument(candidates.Findings()[0].Identity()))
+	response, candidates, items := verificationFixture(t, validVerificationDocument("c1"))
 	batch, err := ParseVerificationBatch(response, candidates, items)
 	if err != nil {
 		t.Fatal(err)

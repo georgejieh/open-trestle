@@ -183,7 +183,7 @@ func TestRunLocalGitModelReviewCompletesIndependentFinding(t *testing.T) {
 	if result.GenerationRoute != f.generationRoute || result.VerificationRoute != f.verificationRoute || result.Independence != "distinct_provider" || result.GenerationRoute == result.VerificationRoute {
 		t.Fatal("terminal receipt lost route pin or independent provider evidence")
 	}
-	if len(verified[0].Packet.Candidates) != 1 || len(result.CandidateIDs) != 1 || result.CandidateIDs[0] != verified[0].Packet.Candidates[0].ID {
+	if len(verified[0].Packet.Candidates) != 1 || len(result.CandidateIDs) != 1 || verified[0].Packet.Candidates[0].ID != "c1" {
 		t.Fatal("terminal candidate ID was not produced by the actual generation parser")
 	}
 	if result.Diagnostics.Coverage.CandidateCount != 1 || result.Diagnostics.Coverage.VerifiedCount != 1 || len(result.Diagnostics.Findings) != 1 {

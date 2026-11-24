@@ -16,7 +16,7 @@ The setup-plan parsers replay the embedded checker catalog and the receipt chain
 
 The runtime-status schemas constrain years to 1970 through 9999 and allow only valid Gregorian leap days. The runtime-status parsers also enforce calendar-valid UTC millisecond timestamps, the repository projection, unique and sorted handler kinds and components, backend compatibility, and conditional review, route, worker and publication rules that the schemas cannot express completely.
 
-The executable review-context packet is generation context version 11, and the verification-context packet is version 10. Counted source omissions are part of their request identities and coverage equations. Both may carry the optional `check_runs` object, the bounded outcomes of the repository's own checks (see [repository checks](repository-checks.md)); the sanitized-egress receipt names its scanned fields with the role `check_run_text`.
+The executable review-context packet is generation context version 11, and the verification-context packet is version 10. The verification-context packet labels its candidates `c1`, `c2` and so on in `candidates[].candidate_id`, in candidate batch order, and a verdict names its candidate by that label; the host maps each label back to the candidate identity before the verdict checks. Counted source omissions are part of their request identities and coverage equations. Both may carry the optional `check_runs` object, the bounded outcomes of the repository's own checks (see [repository checks](repository-checks.md)); the sanitized-egress receipt names its scanned fields with the role `check_run_text`.
 
 Routing, policy, provider, and review schemas:
 

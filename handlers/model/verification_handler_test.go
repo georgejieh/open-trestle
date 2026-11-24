@@ -121,7 +121,8 @@ func completedGenerationFixtureWithDispatch(t *testing.T, dispatch gateway.Route
 
 func verificationProviderResult(t *testing.T, candidates review.CandidateBatch) gateway.RouteDispatchResult {
 	t.Helper()
-	candidateID := candidates.Findings()[0].Identity()
+	// The verdict names the request's first candidate by its label.
+	candidateID := "c1"
 	document := `{"schema_version":1,"verdicts":[{"candidate_id":"` + candidateID + `","outcome":"verified","severity":"high","rationale":"The cited source confirms the issue.","evidence_ids":["source-1"]}]}`
 	document = strings.ReplaceAll(document, `\"`, `"`)
 	part, _ := provider.NewResponsePart(provider.ResponsePartStructuredData, "application/json", []byte(document))

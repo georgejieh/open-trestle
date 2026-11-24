@@ -668,6 +668,9 @@ func (a *Adapter) newRequest(
 	if a.protocol == ProtocolChatCompletions {
 		path = "/chat/completions"
 		chat := chatRequestWire{Model: model, Messages: []chatRequestMessage{{Role: "system", Content: instructions}, {Role: "user", Content: string(payload)}}, MaxTokens: maxOutputTokens, Stream: false}
+		if effort := a.reasoningEffort(); effort != "" {
+			chat.Reasoning = &chatReasoning{Effort: effort}
+		}
 		if a.localStructuredOutput {
 			format, err := localStructuredResponseFormat(payload)
 			if err != nil {

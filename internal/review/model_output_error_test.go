@@ -37,17 +37,19 @@ func TestCandidateParseMarksFailuresTheAnswerCaused(t *testing.T) {
 		name     string
 		response provider.Response
 		specific error
+		problem  ModelOutputProblem
 	}{
-		{"chat-template tokens around the JSON", stoppedResponse(t, provider.ResponsePartAssistantText, wrapped), ErrInvalidCandidateResponseEnvelope},
-		{"a control character inside a JSON string", stoppedResponse(t, provider.ResponsePartAssistantText, strings.Replace(validCandidateDocument(), "discarded.", "discarded.\x01", 1)), ErrInvalidCandidateResponseEnvelope},
-		{"a refusal", stoppedResponse(t, provider.ResponsePartRefusal, "I cannot review this."), ErrInvalidCandidateResponseEnvelope},
-		{"the wrong shape", stoppedResponse(t, provider.ResponsePartStructuredData, `{"schema_version":1,"findings":[]}`), ErrInvalidCandidateDocumentShape},
-		{"a location outside the request", stoppedResponse(t, provider.ResponsePartStructuredData, strings.Replace(validCandidateDocument(), `"start_line":12,"end_line":13`, `"start_line":21,"end_line":21`, 1)), ErrCandidateRangeNotSupported},
+		{"chat-template tokens around the JSON", stoppedResponse(t, provider.ResponsePartAssistantText, wrapped), ErrInvalidCandidateResponseEnvelope, ModelOutputNotJSON},
+		{"a control character inside a JSON string", stoppedResponse(t, provider.ResponsePartAssistantText, strings.Replace(validCandidateDocument(), "discarded.", "discarded.\x01", 1)), ErrInvalidCandidateResponseEnvelope, ModelOutputNotJSON},
+		{"a refusal", stoppedResponse(t, provider.ResponsePartRefusal, "I cannot review this."), ErrInvalidCandidateResponseEnvelope, ModelOutputRefusal},
+		{"the wrong shape", stoppedResponse(t, provider.ResponsePartStructuredData, `{"schema_version":1,"findings":[]}`), ErrInvalidCandidateDocumentShape, ModelOutputWrongShape},
+		{"a location outside the request", stoppedResponse(t, provider.ResponsePartStructuredData, strings.Replace(validCandidateDocument(), `"start_line":12,"end_line":13`, `"start_line":21,"end_line":21`, 1)), ErrCandidateRangeNotSupported, ModelOutputEvidenceMismatch},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			_, err := ParseCandidateBatch(test.response, snapshot, items)
-			if !errors.Is(err, ErrModelOutputInvalid) || !errors.Is(err, test.specific) {
-				t.Fatalf("err=%v, want %v marked as a model output failure", err, test.specific)
+			problem, marked := ModelOutputProblemOf(err)
+			if !errors.Is(err, ErrModelOutputInvalid) || !errors.Is(err, test.specific) || !marked || problem != test.problem {
+				t.Fatalf("err=%v problem=%q, want %v marked as %q", err, problem, test.specific, test.problem)
 			}
 		})
 	}
@@ -67,20 +69,23 @@ func TestCandidateParseMarksFailuresTheAnswerCaused(t *testing.T) {
 
 func TestVerificationParseMarksFailuresTheAnswerCaused(t *testing.T) {
 	_, candidates, items := verificationFixture(t, `{"schema_version":1,"verdicts":[]}`)
-	document := validVerificationDocument(candidates.Findings()[0].Identity())
+	document := validVerificationDocument("c1")
 	for _, test := range []struct {
 		name     string
 		response provider.Response
 		specific error
+		problem  ModelOutputProblem
 	}{
-		{"chat-template tokens around the JSON", stoppedResponse(t, provider.ResponsePartAssistantText, "<|channel|>final<|message|>"+document+"<|return|>"), ErrInvalidVerificationResponseEnvelope},
-		{"the wrong shape", stoppedResponse(t, provider.ResponsePartStructuredData, `{"schema_version":1,"results":[]}`), ErrInvalidVerificationDocumentShape},
-		{"a missing verdict", stoppedResponse(t, provider.ResponsePartStructuredData, `{"schema_version":1,"verdicts":[]}`), ErrVerificationCandidateSetMismatch},
+		{"chat-template tokens around the JSON", stoppedResponse(t, provider.ResponsePartAssistantText, "<|channel|>final<|message|>"+document+"<|return|>"), ErrInvalidVerificationResponseEnvelope, ModelOutputNotJSON},
+		{"the wrong shape", stoppedResponse(t, provider.ResponsePartStructuredData, `{"schema_version":1,"results":[]}`), ErrInvalidVerificationDocumentShape, ModelOutputWrongShape},
+		{"a missing verdict", stoppedResponse(t, provider.ResponsePartStructuredData, `{"schema_version":1,"verdicts":[]}`), ErrVerificationCandidateSetMismatch, ModelOutputCandidateSetMismatch},
+		{"an unknown candidate label", stoppedResponse(t, provider.ResponsePartStructuredData, strings.Replace(document, `"c1"`, `"c2"`, 1)), ErrVerificationCandidateNotAllowed, ModelOutputUnknownCandidate},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			_, err := ParseVerificationBatch(test.response, candidates, items)
-			if !errors.Is(err, ErrModelOutputInvalid) || !errors.Is(err, test.specific) {
-				t.Fatalf("err=%v, want %v marked as a model output failure", err, test.specific)
+			problem, marked := ModelOutputProblemOf(err)
+			if !errors.Is(err, ErrModelOutputInvalid) || !errors.Is(err, test.specific) || !marked || problem != test.problem {
+				t.Fatalf("err=%v problem=%q, want %v marked as %q", err, problem, test.specific, test.problem)
 			}
 		})
 	}

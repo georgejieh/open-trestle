@@ -10,8 +10,8 @@ the key for that variable in this order:
 
 1. the environment variable, when it is set in the shell that runs the review;
 2. the key saved in the credential store by `trestle init` or `trestle keys set`;
-3. a key typed into the current `trestle init` run and kept for that session
-   only.
+3. a key typed into the current `trestle init` run, until it is saved with the
+   setup (or for that run only, if it cannot be saved).
 
 Model reviews, the setup checks, `trestle usage`, `trestle review` and the home
 screen all use this one order. The `trestled` daemon still reads keys from its
@@ -27,15 +27,26 @@ the wizard asks for the key right after you choose the models:
   this shell or in ~/.config/open-trestle/credentials. Paste
   the key from your OpenRouter account. It stays hidden while
   you type; afterwards only its length and last four
-  characters are shown. Open Trestle never logs it or puts it
-  in a model request. Press Enter on an empty line to skip.
+  characters are shown. It is saved there with the setup, and
+  Open Trestle never logs it or puts it in a model request.
+  Press Enter on an empty line to skip.
   API key for OpenRouter (hidden):
     Received ********9f2c (73 characters).
   ✓ OpenRouter accepted the key (one GET /api/v1/key, which
     costs nothing and sends no source).
-  Save this key for future reviews? (Y/n):
   It will be saved in ~/.config/open-trestle/credentials
   (owner-only, mode 0600) once the setup is saved.
+```
+
+Once the setup is saved, the wizard saves the key and prints how to change or
+remove it:
+
+```text
+  ✓ Saved the key for OPEN_TRESTLE_PROVIDER_OPENROUTER in
+  ~/.config/open-trestle/credentials (owner-only, mode 0600).
+  To change it or remove it:
+    trestle keys set OPEN_TRESTLE_PROVIDER_OPENROUTER
+    trestle keys remove OPEN_TRESTLE_PROVIDER_OPENROUTER
 ```
 
 The prompt behaves as follows.
@@ -58,11 +69,11 @@ The prompt behaves as follows.
   or another status), the wizard keeps the key as typed, and the first review
   shows whether it works. Ollama Cloud and OpenCode Go have no call that checks
   a key for free, so the wizard does not check their keys and says so.
-- Saving the key is your choice. Enter (yes) saves it, but only once the setup
-  itself is saved.
-  If you decline a declaration or stop early, nothing is written. Answering `n`
-  uses the key for this session only (the setup checks and the first review) and
-  prints `read -rs NAME && export NAME`, which exports it without showing it.
+- The key is saved without a question, but only once the setup itself is
+  saved. If you do not confirm the setup or stop early, nothing is written. To
+  keep a key out of the store, skip it here and export it in your shell
+  instead (`read -rs NAME && export NAME` does that without showing it), or
+  remove it later with `trestle keys remove NAME`.
 
 If you run `trestle init` again in a configured repository and the setup's key
 is missing, it asks in the same way and saves the key at once.
@@ -91,7 +102,8 @@ Hidden input shows nothing while you type or paste. After Enter it shows the
 key's length and last four characters, and asks again when the same text was
 pasted twice.
 
-`set` asks for the key with hidden input on a terminal, or reads one line from a
+`set` also changes a saved key: it replaces the saved key in one step.
+It asks for the key with hidden input on a terminal, or reads one line from a
 pipe (`pass show openrouter | trestle keys set OPEN_TRESTLE_PROVIDER_OPENROUTER`),
 so the key is never an argument. It checks an OpenRouter key as the wizard does,
 and it saves nothing when OpenRouter refuses the key (exit 4). A key is one line

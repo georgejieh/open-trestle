@@ -30,6 +30,17 @@ type VerificationHandler struct {
 	expected          review.ScannerBinaryDigests
 	// wait waits out a rate-limit retry delay; nil waits on a timer.
 	wait routeWait
+	// answerRejected, when set, is told the class of each answer recorded as
+	// model_output_invalid.
+	answerRejected AnswerRejectionObserver
+}
+
+// WithAnswerRejectionObserver returns a copy of h that tells observe the class
+// of each answer it records as model_output_invalid.
+func (h *VerificationHandler) WithAnswerRejectionObserver(observe AnswerRejectionObserver) *VerificationHandler {
+	copied := *h
+	copied.answerRejected = observe
+	return &copied
 }
 
 // NewVerificationHandler binds exact verifier routing, dispatch, audit, and storage authority.
@@ -227,7 +238,7 @@ func (h *VerificationHandler) Execute(ctx context.Context, task controlplane.Tas
 	}
 	verification, err := review.ParseContextVerificationBatch(dispatch.Response(), generation.Candidates(), verificationContext)
 	if err != nil {
-		return answerFailureCompletion(task, dispatch.Response(), err)
+		return answerFailureCompletion(task, dispatch.Response(), err, h.answerRejected)
 	}
 	output, err := gateway.NewSuccessfulRouteOutputReceipt(gateway.RouteOutputVerificationBatch, verificationContext.Identity(), verification.Identity(), dispatchRequest, authorization, outcome)
 	if err != nil {

@@ -37,7 +37,7 @@ func validVerificationDocument(candidateID string) string {
 
 func TestParseVerificationBatchBindsEveryCandidateAndEvidence(t *testing.T) {
 	_, candidates, _ := verificationFixture(t, `{"schema_version":1,"verdicts":[]}`)
-	response, candidates, items := verificationFixture(t, validVerificationDocument(candidates.Findings()[0].Identity()))
+	response, candidates, items := verificationFixture(t, validVerificationDocument("c1"))
 	batch, err := ParseVerificationBatch(response, candidates, items)
 	if err != nil {
 		t.Fatal(err)
@@ -99,7 +99,7 @@ func TestVerificationSyntaxMatchesPublishedFixtures(t *testing.T) {
 
 func TestParseVerificationBatchRejectsMissingDuplicateAndUnknownCandidates(t *testing.T) {
 	_, candidates, items := verificationFixture(t, `{"schema_version":1,"verdicts":[]}`)
-	candidateID := candidates.Findings()[0].Identity()
+	candidateID := "c1"
 	for _, test := range []struct {
 		name, document string
 		want           error
@@ -120,7 +120,7 @@ func TestParseVerificationBatchRejectsMissingDuplicateAndUnknownCandidates(t *te
 
 func TestParseVerificationBatchEnforcesVerifiedEvidence(t *testing.T) {
 	_, candidates, items := verificationFixture(t, `{"schema_version":1,"verdicts":[]}`)
-	candidateID := candidates.Findings()[0].Identity()
+	candidateID := "c1"
 	missing := strings.Replace(validVerificationDocument(candidateID), "evidence-1", "other-evidence", 1)
 	response, _, _ := verificationFixture(t, missing)
 	if batch, err := ParseVerificationBatch(response, candidates, items); !errors.Is(err, ErrVerificationEvidenceNotAllowed) || batch.Identity() != "" {
@@ -136,7 +136,7 @@ func TestParseVerificationBatchEnforcesVerifiedEvidence(t *testing.T) {
 
 func TestParseVerificationBatchRejectsUnsupportedEnvelopeAndForgery(t *testing.T) {
 	_, candidates, items := verificationFixture(t, `{"schema_version":1,"verdicts":[]}`)
-	document := validVerificationDocument(candidates.Findings()[0].Identity())
+	document := validVerificationDocument("c1")
 	response, _, _ := verificationFixture(t, document)
 	part := response.Parts()[0]
 	lengthResponse, _ := provider.NewResponse(provider.CapabilityReviewV1, provider.ResponseFinishLength, []provider.ResponsePart{part}, provider.NewUnknownRouteTokenUsage())

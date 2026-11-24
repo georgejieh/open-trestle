@@ -478,11 +478,9 @@ func TestInitOllamaSigninNotSignedInThenConsentedSigninRechecks(t *testing.T) {
 		"y",           // send the one test message
 		"y",           // run ollama signin
 		"", "8192",    // accept the listed context; output limit
-		"n",   // the plan does not charge per token
-		"",    // use the settings shown
-		"yes", // route declaration
-		"yes", // Ollama Cloud sign-in declaration
-		"y",   // run the first review
+		"n", // the plan does not charge per token
+		"",  // one confirmation of the settings and both declarations
+		"y", // run the first review
 	)
 	if result.code != initExitDone {
 		t.Fatalf("init exit=%d\nstdout:\n%s\nstderr:\n%s", result.code, result.stdout, result.stderr)

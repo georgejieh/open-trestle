@@ -53,6 +53,29 @@ const ModelOutputInvalid = "model_output_invalid"
 // the answer's form only and never quote it.
 var modelOutputInvalid = providerRefusal{ModelOutputInvalid, "Model answer not a review document", "the model's answer was not a valid review document (for example malformed JSON, the wrong shape or a refusal)", "run the review again; if it repeats, choose another model"}
 
+// modelOutputProblems are the fixed words of each class of invalid answer
+// (review.ModelOutputProblem). They describe the answer's form only.
+var modelOutputProblems = map[string]string{
+	"not_json":               "the answer was not one JSON document",
+	"refusal":                "the model refused to answer",
+	"wrong_shape":            "the JSON did not have the required fields and structure",
+	"invalid_value":          "a field had a value the output rules do not allow",
+	"unknown_candidate":      "a verdict named a candidate label that is not in the request",
+	"candidate_set_mismatch": "the verdicts did not answer every candidate exactly once",
+	"unknown_evidence":       "it cited a source ID that is not in the request",
+	"evidence_mismatch":      "the cited evidence does not cover the reported lines",
+}
+
+// ModelOutputInvalidHint is the hint of ModelOutputInvalid, naming the class
+// of invalid answer when problem is a known one.
+func ModelOutputInvalidHint(problem string) string {
+	words, ok := modelOutputProblems[problem]
+	if !ok {
+		return modelOutputInvalid.hint()
+	}
+	return "the model's answer was not a valid review document (" + problem + ": " + words + "): " + modelOutputInvalid.action
+}
+
 // ProviderRefusal returns the failure detail and one-line hint for a route
 // attempt the provider refused, or whose reply the adapter refused
 // (invalid_response), from its closed failure class alone. Any other class

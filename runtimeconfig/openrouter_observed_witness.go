@@ -3,6 +3,7 @@ package runtimeconfig
 import (
 	"bytes"
 	"encoding/json"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -58,6 +59,9 @@ type openRouterObservedEndpoint struct {
 	PromptMicroUSD      uint64 `json:"prompt_micro_usd_per_million_tokens"`
 	CompletionMicroUSD  uint64 `json:"completion_micro_usd_per_million_tokens"`
 	StructuredOutputs   bool   `json:"structured_outputs"`
+	// Reasoning is an endpoint that accepts the reasoning request parameter.
+	// A witness saved without the member records false.
+	Reasoning bool `json:"reasoning"`
 }
 
 // openRouterOutputExcludedEndpoint is a ZDR endpoint setup could otherwise
@@ -100,6 +104,7 @@ type openRouterObservedProjection struct {
 	record, evidence, credential, tenant, repository, slugs string
 	slugSource, observedAt, label                           string
 	outputExcluded                                          int
+	reasoning                                               bool
 	route                                                   provider.RouteReference
 }
 
@@ -212,6 +217,17 @@ func (o openRouterObservation) valid() bool {
 	return true
 }
 
+// reasoning reports whether every one of slugs, and at least one, is an
+// observed endpoint that accepts the reasoning request parameter.
+func (o openRouterObservation) reasoning(slugs []string) bool {
+	for _, slug := range slugs {
+		if !slices.ContainsFunc(o.ZDREndpoints, func(e openRouterObservedEndpoint) bool { return e.Tag == slug && e.Reasoning }) {
+			return false
+		}
+	}
+	return len(slugs) != 0
+}
+
 func (w openRouterObservedWitness) valid() bool {
 	if w.Contract != "open-trestle/openrouter-privacy-witness" || w.SchemaVersion != openRouterObservedWitnessVersion || w.Endpoint != "https://openrouter.ai/api/v1" || w.RequestProfile != OpenRouterZDRChatV2Profile || w.Protocol != "openai_chat_completions" || w.CredentialMode != "bearer" || !nonzeroDigest(w.CredentialReferenceIdentity) || w.ZeroDataRetention != "required_per_request" || w.ProviderSlugs == nil || !validOpenRouterSlugList(w.ProviderSlugs) {
 		return false
@@ -286,8 +302,9 @@ func extractOpenRouterObserved(member json.RawMessage, record provider.RouteRegi
 		if json.Unmarshal(parts["zdr_endpoints"], &endpoints) != nil {
 			return openRouterObservedProjection{}
 		}
+		keys := []string{"tag", "provider_name", "context_length", "max_prompt_tokens", "max_completion_tokens", "prompt_micro_usd_per_million_tokens", "completion_micro_usd_per_million_tokens", "structured_outputs"}
 		for _, endpoint := range endpoints {
-			if !requireExactKeys(endpoint, []string{"tag", "provider_name", "context_length", "max_prompt_tokens", "max_completion_tokens", "prompt_micro_usd_per_million_tokens", "completion_micro_usd_per_million_tokens", "structured_outputs"}) {
+			if !requireExactKeys(endpoint, keys) && !requireExactKeys(endpoint, append(keys, "reasoning")) {
 				return openRouterObservedProjection{}
 			}
 		}
@@ -309,6 +326,7 @@ func extractOpenRouterObserved(member json.RawMessage, record provider.RouteRegi
 	projection := openRouterObservedProjection{record: record.Identity(), evidence: record.EvidenceManifestDigest(), credential: witness.CredentialReferenceIdentity, tenant: witness.TenantID, repository: witness.RepositoryID, slugs: joinOpenRouterSlugs(witness.ProviderSlugs), slugSource: witness.ProviderSlugSource, route: route}
 	if witness.Observation != nil {
 		projection.observedAt, projection.label, projection.outputExcluded = witness.Observation.RetrievedAt, witness.Observation.AuthorityLabel, len(witness.Observation.OutputLimitExcluded)
+		projection.reasoning = witness.Observation.reasoning(witness.ProviderSlugs)
 	}
 	if !projection.matchesRecord(record) {
 		return openRouterObservedProjection{}
@@ -417,6 +435,9 @@ type OpenRouterObservedWitnessFields struct {
 	// OutputLimitExcluded counts the ZDR endpoints left out because they
 	// allow fewer output tokens than the review output allowance.
 	OutputLimitExcluded int
+	// Reasoning reports that every pinned endpoint accepts the reasoning
+	// request parameter, so requests ask for low reasoning effort.
+	Reasoning bool
 }
 
 // OpenRouterObservedWitness returns the version 3 witness facts of a record,
@@ -430,7 +451,7 @@ func (i RouteInventory) OpenRouterObservedWitness(recordIdentity string) (OpenRo
 		if candidate.ResolvedRecord().RouteRegistryRecord().Identity() != recordIdentity || projection == (openRouterObservedProjection{}) {
 			continue
 		}
-		fields := OpenRouterObservedWitnessFields{ProviderSlugs: splitOpenRouterSlugs(projection.slugs), ProviderSlugSource: projection.slugSource, AuthorityLabel: projection.label, OutputLimitExcluded: projection.outputExcluded}
+		fields := OpenRouterObservedWitnessFields{ProviderSlugs: splitOpenRouterSlugs(projection.slugs), ProviderSlugSource: projection.slugSource, AuthorityLabel: projection.label, OutputLimitExcluded: projection.outputExcluded, Reasoning: projection.reasoning}
 		if projection.observedAt != "" {
 			fields.Observed = true
 			fields.ObservedAt, _ = canonicalPrivacyTime(projection.observedAt)

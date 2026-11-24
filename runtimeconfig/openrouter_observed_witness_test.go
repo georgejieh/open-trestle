@@ -252,3 +252,34 @@ func TestReviewedBrokeredAuthorityKeepsItsIdentityPreimage(t *testing.T) {
 		t.Fatal("a reviewed authority accepted an observed member")
 	}
 }
+
+func TestObservedOpenRouterWitnessReportsReasoningOnlyWhenEveryPinnedEndpointAcceptsIt(t *testing.T) {
+	for _, form := range []struct {
+		name      string
+		reasoning []any // per endpoint; nil leaves the member out
+		want      bool
+	}{{"every endpoint", []any{true, true}, true}, {"one endpoint without", []any{true, false}, false}, {"saved without the member", []any{nil, nil}, false}} {
+		t.Run(form.name, func(t *testing.T) {
+			witness := observedWitnessFixture([]string{"fixture-a/fp8", "fixture-b"}, "openrouter_api", true)
+			for i, endpoint := range witness["observation"].(map[string]any)["zdr_endpoints"].([]any) {
+				if form.reasoning[i] != nil {
+					endpoint.(map[string]any)["reasoning"] = form.reasoning[i]
+				}
+			}
+			inventory, wire := observedPolicyDocument(t, witness)
+			if _, err := decodeObservedPolicy(t, inventory, wire); err != nil {
+				t.Fatalf("policy refused: %v", err)
+			}
+			for _, observed := range inventory.Candidates() {
+				record := observed.ResolvedRecord().RouteRegistryRecord()
+				if record.RouteCandidateDeclaration().RouteCapabilityDeclaration().RouteReference().AdapterID() != "adapter-a" {
+					continue
+				}
+				fields, ok := inventory.OpenRouterObservedWitness(record.Identity())
+				if !ok || fields.Reasoning != form.want {
+					t.Fatalf("reasoning = %v (ok %v), want %v", fields.Reasoning, ok, form.want)
+				}
+			}
+		})
+	}
+}

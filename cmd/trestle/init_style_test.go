@@ -51,11 +51,11 @@ func TestInitStyleColorsOnlyAnInteractiveTerminal(t *testing.T) {
 		terminal, noColor     bool
 		want, unwanted        []string
 	}{
-		{"256 colors", "xterm-256color", "", true, false, []string{"\x1b[1;38;5;25mOpen Trestle · setup\x1b[0m", "\x1b[38;5;59m===|X|", "\x1b[1;38;5;25m●\x1b[0m\x1b[2m○○○○○\x1b[0m", "\x1b[38;5;25m  Choose (1-5):\x1b[0m "}, []string{"38;2;"}},
+		{"256 colors", "xterm-256color", "", true, false, []string{"\x1b[1;38;5;25mOpen Trestle · setup\x1b[0m", "\x1b[38;5;59m===|X|", "\x1b[1;38;5;25m●\x1b[0m\x1b[2m○○○○\x1b[0m", "\x1b[38;5;25m  Choose (1-5):\x1b[0m "}, []string{"38;2;"}},
 		{"24-bit colors", "xterm-256color", "truecolor", true, false, []string{"\x1b[1;38;2;28;93;168mOpen Trestle · setup", "\x1b[38;2;73;96;105m", "\x1b[38;2;28;93;168m"}, []string{"38;5;"}},
-		{"NO_COLOR", "xterm-256color", "truecolor", true, true, []string{"Open Trestle · setup", "●○○○○○"}, []string{"\x1b["}},
-		{"TERM=dumb", "dumb", "truecolor", true, false, []string{"#.....  Step 1 of 6", "Open Trestle · setup"}, []string{"\x1b[", "●"}},
-		{"not a terminal", "xterm-256color", "truecolor", false, false, []string{"●○○○○○  Step 1 of 6"}, []string{"\x1b["}},
+		{"NO_COLOR", "xterm-256color", "truecolor", true, true, []string{"Open Trestle · setup", "●○○○○"}, []string{"\x1b["}},
+		{"TERM=dumb", "dumb", "truecolor", true, false, []string{"#....  Step 1 of 5", "Open Trestle · setup"}, []string{"\x1b[", "●"}},
+		{"not a terminal", "xterm-256color", "truecolor", false, false, []string{"●○○○○  Step 1 of 5"}, []string{"\x1b["}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			initColorEnv(t, test.term, test.colorterm)

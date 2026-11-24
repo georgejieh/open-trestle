@@ -266,7 +266,7 @@ func ValidateVerificationDocumentSyntax(payload []byte) error {
 		return ErrInvalidVerificationSchemaVersion
 	}
 	for _, verdict := range document.Verdicts {
-		if !validCandidateDigest(verdict.CandidateID) {
+		if !validVerificationCandidateLabel(verdict.CandidateID) {
 			return ErrVerificationCandidateNotAllowed
 		}
 		outcome, err := ParseVerificationOutcome(verdict.Outcome)
@@ -366,12 +366,12 @@ func parseVerificationBatch(response provider.Response, candidates CandidateBatc
 	if err := response.Validate(); err != nil {
 		return VerificationBatch{}, err
 	}
-	parts := response.Parts()
 	if response.Capability() != provider.CapabilityReviewV1 {
 		return VerificationBatch{}, ErrInvalidVerificationResponseEnvelope
 	}
-	if response.FinishReason() != provider.ResponseFinishStop || len(parts) != 1 || parts[0].Kind() != provider.ResponsePartStructuredData {
-		return VerificationBatch{}, modelOutputFailure(ErrInvalidVerificationResponseEnvelope)
+	payload, err := answerDocument(response, ErrInvalidVerificationResponseEnvelope)
+	if err != nil {
+		return VerificationBatch{}, err
 	}
 	if err := candidates.Validate(); err != nil {
 		return VerificationBatch{}, err
@@ -380,7 +380,7 @@ func parseVerificationBatch(response provider.Response, candidates CandidateBatc
 	if err != nil {
 		return VerificationBatch{}, err
 	}
-	batch, err := parseVerificationDocument(response, parts[0].Payload(), candidates, allowedEvidence, baseLines)
+	batch, err := parseVerificationDocument(response, payload, candidates, allowedEvidence, baseLines)
 	if err != nil {
 		return VerificationBatch{}, modelOutputFailure(err)
 	}
@@ -401,8 +401,10 @@ func parseVerificationDocument(response provider.Response, payload []byte, candi
 	candidateValues := candidates.Findings()
 	allowedCandidates := make(map[string]CandidateFinding, len(candidateValues))
 	candidateIdentities := make([]string, len(candidateValues))
+	// A verdict names its candidate by the request's label; the host maps the
+	// label back to the candidate identity.
 	for index, candidate := range candidateValues {
-		allowedCandidates[candidate.Identity()] = candidate
+		allowedCandidates[verificationCandidateLabel(index)] = candidate
 		candidateIdentities[index] = candidate.Identity()
 	}
 	byCandidate := make(map[string]VerificationResult, len(document.Verdicts))
@@ -411,14 +413,14 @@ func parseVerificationDocument(response provider.Response, payload []byte, candi
 		if !exists {
 			return VerificationBatch{}, ErrVerificationCandidateNotAllowed
 		}
-		if _, exists := byCandidate[verdict.CandidateID]; exists {
+		if _, exists := byCandidate[candidate.Identity()]; exists {
 			return VerificationBatch{}, ErrDuplicateVerificationCandidate
 		}
 		result, err := newVerificationResult(response.Identity(), candidates.SnapshotIdentity(), candidate, verdict, allowedEvidence, baseLines, candidates.recordsSides())
 		if err != nil {
 			return VerificationBatch{}, err
 		}
-		byCandidate[verdict.CandidateID] = result
+		byCandidate[candidate.Identity()] = result
 	}
 	if len(byCandidate) != len(candidateValues) {
 		return VerificationBatch{}, ErrVerificationCandidateSetMismatch

@@ -40,6 +40,9 @@ type OpenRouterRouteAuthority struct {
 	ValidFrom             time.Time
 	ValidUntil            time.Time
 	ProviderSlugs         []string
+	// Reasoning is a V2 route whose every pinned endpoint accepts the
+	// reasoning parameter; its requests ask for low reasoning effort.
+	Reasoning bool
 }
 
 func cloneOpenRouterAuthority(value *OpenRouterRouteAuthority) *OpenRouterRouteAuthority {
@@ -87,10 +90,10 @@ func (a *Adapter) validRequestProfile() bool {
 		return false
 	}
 	if a.requestProfile == RequestProfileOpenRouterZDRChatV2 {
-		if authority.AccountPolicyIdentity != "" || authority.ProviderSlug != "" || !authority.ValidFrom.IsZero() || !authority.ValidUntil.IsZero() || authority.ProviderSlugs == nil || !validOpenRouterSlugList(authority.ProviderSlugs) {
+		if authority.AccountPolicyIdentity != "" || authority.ProviderSlug != "" || !authority.ValidFrom.IsZero() || !authority.ValidUntil.IsZero() || authority.ProviderSlugs == nil || !validOpenRouterSlugList(authority.ProviderSlugs) || authority.Reasoning && len(authority.ProviderSlugs) == 0 {
 			return false
 		}
-	} else if !validConfigurationIdentity(authority.AccountPolicyIdentity) || !validOpenRouterSlug(authority.ProviderSlug) || authority.ProviderSlugs != nil ||
+	} else if !validConfigurationIdentity(authority.AccountPolicyIdentity) || !validOpenRouterSlug(authority.ProviderSlug) || authority.ProviderSlugs != nil || authority.Reasoning ||
 		authority.ValidFrom.IsZero() || authority.ValidUntil.IsZero() || authority.ValidFrom.Year() < 1 || authority.ValidUntil.Year() > 9999 || !authority.ValidUntil.After(authority.ValidFrom) {
 		return false
 	}
@@ -153,9 +156,10 @@ func (a *Adapter) profileIdentityPreimage(configuration []byte) []byte {
 			PinnedOrder       bool            `json:"pinned_order"`
 			AllowFallbacks    bool            `json:"allow_fallbacks"`
 			RequireParameters bool            `json:"require_parameters"`
+			ReasoningEffort   string          `json:"reasoning_effort,omitempty"`
 		}{"open-trestle/openrouter-zdr-chat-adapter", 5, configuration, a.requestProfile, a.protocol, a.credentialMode,
 			[]string{authority.Route.Zone().String(), authority.Route.ProviderID(), authority.Route.AdapterID(), authority.Route.ConnectionID(), authority.Route.ModelID(), authority.Route.ModelVersion()}, authority.RouteRecordIdentity, authority.EvidenceIdentity,
-			authority.TenantID, authority.RepositoryID, append([]string{}, authority.ProviderSlugs...), true, false, true, true})
+			authority.TenantID, authority.RepositoryID, append([]string{}, authority.ProviderSlugs...), true, false, true, true, a.reasoningEffort()})
 		return encoded
 	}
 	encoded, _ := json.Marshal(struct {
@@ -219,4 +223,25 @@ const openRouterEndpoint = "https://openrouter.ai/api/v1"
 type openRouterChatRequestWire struct {
 	chatRequestWire
 	Provider openRouterProviderPreferences `json:"provider"`
+}
+
+// openRouterReasoningEffort is the reasoning effort OpenRouter requests ask
+// for. Reasoning counts against max_tokens, and low leaves most of the output
+// allowance for the answer.
+const openRouterReasoningEffort = "low"
+
+type chatReasoning struct {
+	Effort string `json:"effort"`
+}
+
+// reasoningEffort is the effort a request asks for, or "" for none. A V2
+// request sets require_parameters, so it asks only when every pinned endpoint
+// accepts the reasoning parameter. A generic OpenRouter connection sets no
+// provider controls, and an endpoint without the parameter ignores it.
+func (a *Adapter) reasoningEffort() string {
+	if a.requestProfile == RequestProfileOpenRouterZDRChatV2 && a.openRouterAuthority != nil && a.openRouterAuthority.Reasoning ||
+		a.requestProfile == "" && a.protocol == ProtocolChatCompletions && a.endpoint != nil && a.endpoint.String() == openRouterEndpoint {
+		return openRouterReasoningEffort
+	}
+	return ""
 }

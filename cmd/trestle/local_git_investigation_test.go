@@ -495,7 +495,7 @@ func TestLocalGitInvestigationReadsUnselectedSnapshotAndVerifies(t *testing.T) {
 			}
 		}
 	}
-	if receipt.GenerationRequest != captures[3].request || receipt.VerificationRequest == captures[4].request || receipt.Context != captures[4].packet.GenerationContext || receipt.CandidateBatch != captures[4].packet.CandidateBatch || len(receipt.CandidateIDs) != 1 || receipt.CandidateIDs[0] != captures[4].packet.Candidates[0].ID {
+	if receipt.GenerationRequest != captures[3].request || receipt.VerificationRequest == captures[4].request || receipt.Context != captures[4].packet.GenerationContext || receipt.CandidateBatch != captures[4].packet.CandidateBatch || len(receipt.CandidateIDs) != 1 || captures[4].packet.Candidates[0].ID != "c1" {
 		t.Fatal("final output is disconnected from actual generation and independent verification")
 	}
 	if receipt.Diagnostics.Coverage.VerifiedCount != 1 || len(receipt.Diagnostics.Findings) != 1 || receipt.Independence != "distinct_provider" || receipt.ComprehensiveClearance {

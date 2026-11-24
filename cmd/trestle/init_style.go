@@ -32,7 +32,7 @@ var bridgeCompactMark = [3]string{
 	"===|X|=|==|==|==|===|X|===",
 }
 
-const initSteps = 6
+const initSteps = 5
 
 type initPalette int
 
@@ -176,7 +176,7 @@ func (s initStyle) banner(noInput bool) []string {
 }
 
 // stepHeader is the step indicator, title and rule, for example
-// "●●●○○○  Step 3 of 6 · The two models".
+// "●●●○○  Step 3 of 5 · The two models".
 func (s initStyle) stepHeader(step int, title string) []string {
 	done, todo := "●", "○"
 	if s.ascii {

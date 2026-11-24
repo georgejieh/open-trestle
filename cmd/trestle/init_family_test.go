@@ -47,7 +47,7 @@ func TestInitRecommendsACheckerFromAnotherFamily(t *testing.T) {
 
 	// Enter keeps a same-family checker: the choice is recommended, not enforced.
 	kept := runInitScript(t, checkout, append([]string{"--directory", filepath.Join(t.TempDir(), "setup")}, args...),
-		"2", "1", "2", "", "128000", "8192", "n", "y", "no")
+		"2", "1", "2", "", "128000", "8192", "n", "n", "5")
 	keptText := initUnboxed(kept.stdout)
 	if kept.code != initExitRefused || !initHas(keptText, "A model from a different family is recommended") ||
 		!initHas(keptText, "both Qwen models") || !strings.Contains(kept.stdout, "Keep this checker?") ||
@@ -57,7 +57,7 @@ func TestInitRecommendsACheckerFromAnotherFamily(t *testing.T) {
 
 	// n picks again; a checker from another family gets no remark.
 	changed := runInitScript(t, checkout, append([]string{"--directory", filepath.Join(t.TempDir(), "setup")}, args...),
-		"2", "1", "2", "n", "3", "128000", "8192", "n", "y", "no")
+		"2", "1", "2", "n", "3", "128000", "8192", "n", "n", "5")
 	changedText := initUnboxed(changed.stdout)
 	if changed.code != initExitRefused || strings.Count(changed.stdout, "both Qwen models") != 1 ||
 		initHas(changedText, "same Qwen family as the finder") || !initHas(changedText, "Checker gemma4:31b") {

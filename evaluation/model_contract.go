@@ -192,8 +192,8 @@ func EvaluateModelContractCandidate() ([]byte, error) {
 		}
 		if err == nil {
 			document := fixture.Verdict
-			if findings := candidates.Findings(); len(findings) > 0 {
-				document = strings.ReplaceAll(document, "CANDIDATE_ID", findings[0].Identity())
+			if len(candidates.Findings()) > 0 {
+				document = strings.ReplaceAll(document, "CANDIDATE_ID", "c1")
 			}
 			response, err = modelContractResponse(document)
 			if err != nil {
