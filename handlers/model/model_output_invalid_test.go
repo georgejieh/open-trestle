@@ -11,6 +11,7 @@ import (
 	"github.com/georgejieh/open-trestle/controlplane"
 	"github.com/georgejieh/open-trestle/internal/gateway"
 	"github.com/georgejieh/open-trestle/internal/provider"
+	"github.com/georgejieh/open-trestle/internal/review"
 	"github.com/georgejieh/open-trestle/internal/testsupport"
 )
 
@@ -48,6 +49,8 @@ type invalidAnswer struct {
 	name   string
 	result func(*testing.T) gateway.RouteDispatchResult
 	reason controlplane.TaskFailureReason
+	// problem is the class the observer is told, or "" when none.
+	problem review.ModelOutputProblem
 }
 
 func invalidGenerationAnswers() []invalidAnswer {
@@ -55,24 +58,24 @@ func invalidGenerationAnswers() []invalidAnswer {
 	return []invalidAnswer{
 		{"chat-template tokens", func(t *testing.T) gateway.RouteDispatchResult {
 			return providerAnswerResult(t, provider.ResponsePartAssistantText, provider.ResponseFinishStop, "<|start|>assistant<|channel|>final <|constrain|>json<|message|>"+document+"<|return|>")
-		}, controlplane.TaskFailureReasonModelOutputInvalid},
+		}, controlplane.TaskFailureReasonModelOutputInvalid, review.ModelOutputNotJSON},
 		{"control character in a string", func(t *testing.T) gateway.RouteDispatchResult {
 			return providerAnswerResult(t, provider.ResponsePartAssistantText, provider.ResponseFinishStop, strings.Replace(document, "Issue", "Iss\x01ue", 1))
-		}, controlplane.TaskFailureReasonModelOutputInvalid},
+		}, controlplane.TaskFailureReasonModelOutputInvalid, review.ModelOutputNotJSON},
 		{"wrong shape", func(t *testing.T) gateway.RouteDispatchResult {
 			return providerAnswerResult(t, provider.ResponsePartStructuredData, provider.ResponseFinishStop, `{"schema_version":1,"findings":["`+invalidAnswerLeak+`"]}`)
-		}, controlplane.TaskFailureReasonModelOutputInvalid},
+		}, controlplane.TaskFailureReasonModelOutputInvalid, review.ModelOutputWrongShape},
 		{"refusal", func(t *testing.T) gateway.RouteDispatchResult {
 			return providerAnswerResult(t, provider.ResponsePartRefusal, provider.ResponseFinishStop, invalidAnswerLeak)
-		}, controlplane.TaskFailureReasonModelOutputInvalid},
+		}, controlplane.TaskFailureReasonModelOutputInvalid, review.ModelOutputRefusal},
 		// A complete document that stopped at the length limit, or one a
 		// content filter stopped, is not reported as the model's invalid answer.
 		{"complete document at a length stop", func(t *testing.T) gateway.RouteDispatchResult {
 			return providerAnswerResult(t, provider.ResponsePartStructuredData, provider.ResponseFinishLength, document)
-		}, 0},
+		}, 0, ""},
 		{"content filter", func(t *testing.T) gateway.RouteDispatchResult {
 			return providerAnswerResult(t, provider.ResponsePartRefusal, provider.ResponseFinishContentFilter, invalidAnswerLeak)
-		}, 0},
+		}, 0, ""},
 	}
 }
 
@@ -88,12 +91,21 @@ func TestGenerationHandlerRecordsAnInvalidModelAnswer(t *testing.T) {
 			store, _ := artifact.NewMemoryStore(artifact.ProtectionProcessPrivate, 20)
 			_, _ = store.Put(context.Background(), contextArtifact, time.UnixMilli(60))
 			handler, _ := newLegacyGenerationHandler(store, catalog, ledger, fixedClock{at: time.UnixMilli(200)})
+			var observed []review.ModelOutputProblem
+			observedHandler := handler.WithAnswerRejectionObserver(func(problem review.ModelOutputProblem) { observed = append(observed, problem) })
+			if observedHandler.HandlerIdentity() != handler.HandlerIdentity() {
+				t.Fatal("the observer changed the handler identity")
+			}
+			handler = observedHandler
 			input, _ := NewGenerationInput(contextArtifact, packet, snapshot, authorization)
 			inputArtifact, _ := NewGenerationInputArtifact(input, contextArtifact, []string{strings.Repeat("4", 64)}, time.UnixMilli(70))
 			_, _ = store.Put(context.Background(), inputArtifact, time.UnixMilli(70))
 			completion := handler.Execute(context.Background(), generationTaskRequest(t, scope, inputArtifact.Identity(), handler.HandlerIdentity(), 1))
 			if completion.Status() != controlplane.TaskCompletionFailed || completion.Validate() != nil || completion.Failure() != controlplane.RunFailureInternal || completion.FailureReason() != test.reason || completion.OutputIdentity() != "" || dispatcher.calls != 1 {
 				t.Fatalf("completion failure=%s reason=%q calls=%d", completion.Failure(), completion.FailureReason(), dispatcher.calls)
+			}
+			if !observedOnce(observed, test.problem) {
+				t.Fatalf("observed %q, want %q", observed, test.problem)
 			}
 			encoded, err := controlplane.EncodeTaskCompletion(completion)
 			if err != nil || strings.Contains(string(encoded), invalidAnswerLeak) || strings.Contains(string(encoded), "<|") {
@@ -123,13 +135,13 @@ func TestVerificationHandlerRecordsAnInvalidModelAnswer(t *testing.T) {
 	for _, test := range []invalidAnswer{
 		{"chat-template tokens", func(t *testing.T) gateway.RouteDispatchResult {
 			return providerAnswerResult(t, provider.ResponsePartAssistantText, provider.ResponseFinishStop, `<|channel|>final<|message|>{"schema_version":1,"verdicts":[]}<|return|>`)
-		}, controlplane.TaskFailureReasonModelOutputInvalid},
+		}, controlplane.TaskFailureReasonModelOutputInvalid, review.ModelOutputNotJSON},
 		{"a missing verdict", func(t *testing.T) gateway.RouteDispatchResult {
 			return providerAnswerResult(t, provider.ResponsePartStructuredData, provider.ResponseFinishStop, `{"schema_version":1,"verdicts":[]}`)
-		}, controlplane.TaskFailureReasonModelOutputInvalid},
+		}, controlplane.TaskFailureReasonModelOutputInvalid, review.ModelOutputCandidateSetMismatch},
 		{"complete document at a length stop", func(t *testing.T) gateway.RouteDispatchResult {
 			return providerAnswerResult(t, provider.ResponsePartStructuredData, provider.ResponseFinishLength, `{"schema_version":1,"verdicts":[]}`)
-		}, 0},
+		}, 0, ""},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			scope, store, ledger, contextArtifact, inputArtifact, generationArtifact, generation := completedGenerationFixture(t)
@@ -158,10 +170,24 @@ func TestVerificationHandlerRecordsAnInvalidModelAnswer(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			var observed []review.ModelOutputProblem
+			handler = handler.WithAnswerRejectionObserver(func(problem review.ModelOutputProblem) { observed = append(observed, problem) })
 			completion := handler.Execute(context.Background(), verificationTaskRequest(t, scope, generationArtifact.Identity(), handler.HandlerIdentity()))
 			if completion.Status() != controlplane.TaskCompletionFailed || completion.Validate() != nil || completion.Failure() != controlplane.RunFailureInternal || completion.FailureReason() != test.reason || dispatcher.calls != 1 {
 				t.Fatalf("completion failure=%s reason=%q calls=%d", completion.Failure(), completion.FailureReason(), dispatcher.calls)
 			}
+			if !observedOnce(observed, test.problem) {
+				t.Fatalf("observed %q, want %q", observed, test.problem)
+			}
 		})
 	}
+}
+
+// observedOnce reports whether observed is exactly problem, or empty when
+// problem is "".
+func observedOnce(observed []review.ModelOutputProblem, problem review.ModelOutputProblem) bool {
+	if problem == "" {
+		return len(observed) == 0
+	}
+	return len(observed) == 1 && observed[0] == problem
 }

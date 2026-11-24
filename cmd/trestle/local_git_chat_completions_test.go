@@ -22,7 +22,7 @@ func TestChatCompletionsCLIUsesCheckoutAndPackedSourceThroughNineTasks(t *testin
 			if result.GenerationRoute != f.generationRoute || result.VerificationRoute != f.verificationRoute || result.Independence != "distinct_provider" || result.Inventory != f.inventoryID || result.Policy != f.policyID {
 				t.Fatal("Chat CLI lost pinned configuration or independent routes")
 			}
-			if result.Context != generated[0].ContextID || result.VerificationContext != verified[0].ContextID || verified[0].Packet.GenerationContext != generated[0].ContextID || result.CandidateBatch != verified[0].Packet.CandidateBatch || len(result.CandidateIDs) != 1 || len(verified[0].Packet.Candidates) != 1 || result.CandidateIDs[0] != verified[0].Packet.Candidates[0].ID {
+			if result.Context != generated[0].ContextID || result.VerificationContext != verified[0].ContextID || verified[0].Packet.GenerationContext != generated[0].ContextID || result.CandidateBatch != verified[0].Packet.CandidateBatch || len(result.CandidateIDs) != 1 || len(verified[0].Packet.Candidates) != 1 || verified[0].Packet.Candidates[0].ID != "c1" {
 				t.Fatal("Chat CLI receipt disconnected from actual model packets")
 			}
 			if len(result.Diagnostics.Findings) != 1 || result.Diagnostics.Coverage.CandidateCount != 1 || result.Diagnostics.Coverage.VerifiedCount != 1 || result.Diagnostics.SourceCoverage.Selected == 0 {

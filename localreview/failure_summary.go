@@ -39,7 +39,9 @@ const FailureDetailProviderResponseInvalid = "provider_response_invalid"
 // with a raw control character in a string), the wrong shape, a refusal, or
 // a document the review rules refuse. The run failure stays internal; the
 // detail tells the operator that the model's answer, not an internal check,
-// ended the run. It never carries the answer or names any of its fields.
+// ended the run. It never carries the answer or names any of its fields; the
+// result's model_output_problem names the answer's class (for example
+// unknown_candidate), and the hint explains it.
 const FailureDetailModelOutputInvalid = routehint.ModelOutputInvalid
 
 // FailureDetailProviderNoAllowedEndpoint records that OpenRouter answered the
@@ -119,6 +121,9 @@ func (r Result) failureSummary() (class, task, detail, hint string) {
 	}
 	if detail == FailureDetailRouteContextInsufficient && r.wire.ContextShortfall != nil {
 		hint = contextShortfallHint(*r.wire.ContextShortfall)
+	}
+	if detail == FailureDetailModelOutputInvalid {
+		hint = routehint.ModelOutputInvalidHint(r.wire.ModelOutputProblem)
 	}
 	return class, task, detail, hint
 }

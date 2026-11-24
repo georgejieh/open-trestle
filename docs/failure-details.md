@@ -35,10 +35,27 @@ field is absent when none applies. For the process exit status, see
 | `provider_request_rejected` | `policy`, `4` | HTTP 400, 405, 415 or 422: the provider rejected the request itself, for example an unknown model ID or a parameter the endpoint does not accept. | the provider rejected the request as invalid, for example an unknown model ID or a parameter the model or endpoint does not accept: check the model ID, the endpoint and its transport, and that the model and endpoint accept structured output and the requested output allowance; then re-run setup |
 | `provider_rate_limited` | `transient`, `1` | HTTP 429, or 503 with a `Retry-After` in seconds, on the last of up to two retries. | the provider rate-limited the request on its last attempt: wait and run the review again, or choose another route |
 | `provider_response_invalid` | `internal`, `1` | The provider answered, but the reply was malformed, truncated, empty, oversized, had an unrecognised field, or came with an unclassified HTTP status. | the provider answered, but its reply did not match what Open Trestle accepts, for example malformed or truncated output, an unrecognized field or an unexpected HTTP status: run the review again; if it repeats, choose another model or route and report it |
-| `model_output_invalid` | `internal`, `1` | The reply stopped normally but the model's answer was not a valid review document: malformed JSON, the wrong shape, or a refusal. | the model's answer was not a valid review document (for example malformed JSON, the wrong shape or a refusal): run the review again; if it repeats, choose another model |
+| `model_output_invalid` | `internal`, `1` | The reply stopped normally but the model's answer was not a valid review document. The JSON result adds `model_output_problem` with the class (see below). | the model's answer was not a valid review document (CLASS: WORDS): run the review again; if it repeats, choose another model |
 | `model_output_exhausted` | `internal`, `1` | The model used its whole output allowance, usually on reasoning, before finishing. | the model used its whole output allowance, usually on reasoning, before finishing its answer; choose a non-reasoning model for this role, or set up again with a larger output allowance (trestle init --directory NEW_FOLDER --max-output-tokens N) |
 | `route_context_insufficient` | `policy`, `4` | No configured route declares a context large enough for the request. The JSON result adds `context_shortfall` with the counts. | the review needs up to N tokens (a byte-based upper bound: I input plus O output) but the route declares max_context_tokens D; raise max_context_tokens on the route and the model server's context length to at least N (docs/named-local-runtimes.md#context-length) |
 | `spending_limit_reached` | `policy`, `4` | The recorded spend for a key the review uses is at or over its limit, so nothing was sent. The run status is `not_opened`. | the spend recorded for an API key this review uses has reached its spending limit for the current period, so the review was not started and nothing was sent: run trestle usage to see it, then raise or clear the limit (trestle usage set, trestle usage clear) or wait for the next period; the figures are Open Trestle's upper-bound estimate at the highest pinned price, not a bill, and the limit is best effort, so your provider's own limit is the guarantee |
+
+`model_output_problem` names what was wrong with the answer. It never
+quotes the answer.
+
+| `model_output_problem` | Words in the hint |
+| --- | --- |
+| `not_json` | the answer was not one JSON document |
+| `refusal` | the model refused to answer |
+| `wrong_shape` | the JSON did not have the required fields and structure |
+| `invalid_value` | a field had a value the output rules do not allow |
+| `unknown_candidate` | a verdict named a candidate label that is not in the request |
+| `candidate_set_mismatch` | the verdicts did not answer every candidate exactly once |
+| `unknown_evidence` | it cited a source ID that is not in the request |
+| `evidence_mismatch` | the cited evidence does not cover the reported lines |
+
+`trestle review` and `trestle local-git model-review` record the class. A
+daemon run records only `model_output_invalid`.
 
 A class with no detail still has a one-line hint:
 

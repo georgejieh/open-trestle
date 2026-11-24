@@ -367,6 +367,7 @@ func newSession(o SessionOptions, investigationPolicy *review.InvestigationPolic
 		if err != nil {
 			return nil, ErrInvalidSession
 		}
+		generation = generation.WithAnswerRejectionObserver(routeFailures.recordAnswerProblem)
 		verificationSanitizer := o.VerificationSanitizer
 		if verificationSanitizer == nil {
 			verificationSanitizer = review.NewFixedVerificationRequestSanitizer(o.Scanner)
@@ -375,6 +376,7 @@ func newSession(o SessionOptions, investigationPolicy *review.InvestigationPolic
 		if err != nil {
 			return nil, ErrInvalidSession
 		}
+		verification = verification.WithAnswerRejectionObserver(routeFailures.recordAnswerProblem)
 		readiness, err := publicationhandler.NewReadinessHandler(store, diagnosticStore, o.Clock, o.Policy.ReviewPolicyIdentity(), o.Policy.Publication(), publicationScanner)
 		if err != nil {
 			return nil, ErrInvalidSession

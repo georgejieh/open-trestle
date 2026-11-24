@@ -52,8 +52,9 @@ func NewVerificationRequestContext(
 	// The verifier checks candidate claims against evidence only. The
 	// generation context is bound through generation_context_identity, but its
 	// specialist guidance is not forwarded, and candidate categories and fix
-	// guidance are bound only through candidate_batch_identity and candidate_id:
-	// the verifier never receives them. The contract travels only in the
+	// guidance are bound only through candidate_batch_identity, whose candidate
+	// order the short candidate_id labels follow: the verifier never receives
+	// them. The contract travels only in the
 	// trusted system channel. The verifier receives every generation source,
 	// so removed_lines sources and the index stages reach it unchanged, as do
 	// a stated_intent and the check_runs; pattern_hygiene, context_manifest
@@ -179,7 +180,7 @@ func verificationCandidateWireValues(candidates CandidateBatch) []verificationCa
 	for index, candidate := range values {
 		rangeValue := candidate.SourceRange()
 		result[index] = verificationCandidateWire{
-			CandidateID: candidate.Identity(), Title: candidate.Title(), Claim: candidate.Claim(),
+			CandidateID: verificationCandidateLabel(index), Title: candidate.Title(), Claim: candidate.Claim(),
 			SeverityHint: string(candidate.SeverityHint()), SourceReference: candidate.SourceReferenceID(),
 			Path: rangeValue.Path(), StartLine: rangeValue.StartLine(), EndLine: rangeValue.EndLine(),
 			EvidenceIDs: candidate.EvidenceIDs(),

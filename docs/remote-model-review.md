@@ -480,10 +480,14 @@ fails as `transient` with `provider_rate_limited`.
 A reply that the adapter accepted but the review then refuses records
 `model_output_invalid` with the `internal` failure. This covers an answer that is
 not one JSON document, a refusal, a document of the wrong shape and a document
-that breaks the review rules. Nothing is repaired. The one exception is on an
-OpenRouter or Ollama Cloud sign-in route: a single outer Markdown code fence
-(with no language or with `json`) around the whole answer is removed before the
-same strict checks. A reply that stops at the output limit records
+that breaks the review rules. The result's `model_output_problem` and the hint
+name which ([failure details](failure-details.md)). Two forms are accepted
+before the same strict checks. An answer that is one complete JSON object
+followed only by text that is not JSON (for example a stray template token)
+is read as that object, and the tail is ignored; text before the object, a
+second document or an incomplete one is still refused. On an OpenRouter or
+Ollama Cloud sign-in route, a single outer Markdown code fence (with no
+language or with `json`) around the whole answer is removed. A reply that stops at the output limit records
 `model_output_exhausted` (see
 [Output allowance and request deadline](#output-allowance-and-request-deadline)).
 

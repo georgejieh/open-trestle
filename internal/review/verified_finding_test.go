@@ -84,7 +84,7 @@ func independentVerificationFixtureFrom(t *testing.T, outcome string, level gate
 	generationOutcome, _ := gateway.NewSuccessfulRouteAttemptOutcome(generationAuthorization, candidates.ResponseIdentity(), provider.NewUnknownRouteTokenUsage(), 1)
 	candidateOutput, _ := gateway.NewSuccessfulRouteOutputReceipt(gateway.RouteOutputCandidateBatch, generationContext.Identity(), candidates.Identity(), generationRequest, generationAuthorization, generationOutcome)
 	verificationContext, _ := NewVerificationContextPacket(generationContext, candidates)
-	candidateID := candidates.Findings()[0].Identity()
+	candidateID := "c1"
 	severity, evidenceIDs := "none", `[]`
 	if outcome == "verified" {
 		severity, evidenceIDs = "high", `["source-1"]`

@@ -110,7 +110,7 @@ func TestBaseSideFindingCarriesItsHeadLine(t *testing.T) {
 		t.Fatal(err)
 	}
 	verdict := func(cited string) string {
-		return `{"schema_version":1,"verdicts":[{"candidate_id":"` + candidate.Identity() + `","outcome":"verified","severity":"high","rationale":"The removed lines returned early when b was zero.","evidence_ids":` + cited + `}]}`
+		return `{"schema_version":1,"verdicts":[{"candidate_id":"c1","outcome":"verified","severity":"high","rationale":"The removed lines returned early when b was zero.","evidence_ids":` + cited + `}]}`
 	}
 	// Only removed_lines evidence covers a base-side location.
 	if _, err := ParseContextVerificationBatch(v7Response(t, verdict(`["`+windowID+`"]`)), candidates, request); !errors.Is(err, ErrVerificationEvidenceRangeMismatch) {

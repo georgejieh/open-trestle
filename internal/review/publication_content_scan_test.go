@@ -248,7 +248,7 @@ func instructionRiskPublicationFixture(t *testing.T) (IndependentVerificationRec
 	generationOutcome, _ := gateway.NewSuccessfulRouteAttemptOutcome(generationAuthorization, candidates.ResponseIdentity(), provider.NewUnknownRouteTokenUsage(), 1)
 	candidateOutput, _ := gateway.NewSuccessfulRouteOutputReceipt(gateway.RouteOutputCandidateBatch, generationContext.Identity(), candidates.Identity(), generationRequest, generationAuthorization, generationOutcome)
 	verificationContext, _ := NewVerificationContextPacket(generationContext, candidates)
-	candidateID := candidates.Findings()[0].Identity()
+	candidateID := "c1"
 	verdict := `{"schema_version":1,"verdicts":[{"candidate_id":"` + candidateID + `","outcome":"verified","severity":"high","rationale":"Independent review completed.","evidence_ids":["source-1"]}]}`
 	part, _ = provider.NewResponsePart(provider.ResponsePartStructuredData, "application/json", []byte(verdict))
 	response, _ = provider.NewResponse(provider.CapabilityReviewV1, provider.ResponseFinishStop, []provider.ResponsePart{part}, provider.NewUnknownRouteTokenUsage())

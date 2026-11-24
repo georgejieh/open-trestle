@@ -37,7 +37,7 @@ func TestVerificationHandlerEmptyCandidatesStillDispatchesIndependentVerifier(t 
 		success, reuse bool
 	}{
 		{"empty verdicts", `{"schema_version":1,"verdicts":[]}`, true, false},
-		{"invented verdict", `{"schema_version":1,"verdicts":[{"candidate_id":"` + strings.Repeat("a", 64) + `","outcome":"rejected","severity":"none","rationale":"No issue.","evidence_ids":[]}]}`, false, false},
+		{"invented verdict", `{"schema_version":1,"verdicts":[{"candidate_id":"c1","outcome":"rejected","severity":"none","rationale":"No issue.","evidence_ids":[]}]}`, false, false},
 		{"generation receipt reuse", `{"schema_version":1,"verdicts":[]}`, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

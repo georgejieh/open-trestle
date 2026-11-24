@@ -31,6 +31,22 @@ type GenerationHandler struct {
 	requiresSanitized bool
 	// wait waits out a rate-limit retry delay; nil waits on a timer.
 	wait routeWait
+	// answerRejected, when set, is told the class of each answer recorded as
+	// model_output_invalid.
+	answerRejected AnswerRejectionObserver
+}
+
+// AnswerRejectionObserver is told the content-free class of an answer that a
+// model handler recorded as model_output_invalid. It is not part of a
+// handler's identity and cannot change the task's completion.
+type AnswerRejectionObserver func(review.ModelOutputProblem)
+
+// WithAnswerRejectionObserver returns a copy of h that tells observe the class
+// of each answer it records as model_output_invalid.
+func (h *GenerationHandler) WithAnswerRejectionObserver(observe AnswerRejectionObserver) *GenerationHandler {
+	copied := *h
+	copied.answerRejected = observe
+	return &copied
 }
 
 // NewGenerationHandler binds exact dispatchers, audit ledger, and protected storage.
@@ -244,7 +260,7 @@ func (h *GenerationHandler) Execute(ctx context.Context, task controlplane.TaskE
 			// Failure to persist the witness remains an unproven internal failure.
 			_ = h.recordDocumentShapeRejection(ctx, task, inputArtifact, contextArtifact, input, authorization, outcome, reconciliation)
 		}
-		return answerFailureCompletion(task, dispatchResult.Response(), err)
+		return answerFailureCompletion(task, dispatchResult.Response(), err, h.answerRejected)
 	}
 	outputReceipt, err := gateway.NewSuccessfulRouteOutputReceipt(
 		gateway.RouteOutputCandidateBatch, input.ContextIdentity(), candidates.Identity(),
@@ -373,14 +389,19 @@ func routeFailureCompletion(task controlplane.TaskExecutionRequest, result gatew
 // parser refused. A reply that stopped normally and whose answer caused the
 // refusal records model_output_invalid; a host input check, or a reply that
 // stopped at the output limit or a content filter, records only the internal
-// failure. The answer itself is never recorded.
-func answerFailureCompletion(task controlplane.TaskExecutionRequest, response provider.Response, err error) controlplane.TaskCompletion {
-	if !errors.Is(err, review.ErrModelOutputInvalid) || response.FinishReason() != provider.ResponseFinishStop {
+// failure. The answer itself is never recorded; observe, when set, is told
+// the answer's content-free class.
+func answerFailureCompletion(task controlplane.TaskExecutionRequest, response provider.Response, err error, observe AnswerRejectionObserver) controlplane.TaskCompletion {
+	problem, marked := review.ModelOutputProblemOf(err)
+	if !marked || response.FinishReason() != provider.ResponseFinishStop {
 		return generationFailure(controlplane.RunFailureInternal)
 	}
 	completion, err := controlplane.NewModelTaskFailureWithReason(controlplane.RunFailureInternal, controlplane.TaskFailureReasonModelOutputInvalid, task.Plan(), task.Task())
 	if err != nil {
 		return generationFailure(controlplane.RunFailureInternal)
+	}
+	if observe != nil {
+		observe(problem)
 	}
 	return completion
 }

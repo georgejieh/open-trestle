@@ -17,7 +17,7 @@
         "schema_version": 1,
         "verdicts": [
           {
-            "candidate_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "candidate_id": "c1",
             "outcome": "verified",
             "severity": "high",
             "rationale": "The cited control flow confirms the unchecked error.",
@@ -35,7 +35,7 @@
         "schema_version": 1,
         "verdicts": [
           {
-            "candidate_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "candidate_id": "c1",
             "outcome": "rejected",
             "severity": "none",
             "rationale": "The error is returned on the next line.",
@@ -78,7 +78,7 @@
         "schema_version": 1,
         "verdicts": [
           {
-            "candidate_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "candidate_id": "c1",
             "outcome": "maybe",
             "severity": "high",
             "rationale": "The cited control flow confirms the unchecked error.",
@@ -96,7 +96,7 @@
         "schema_version": 1,
         "verdicts": [
           {
-            "candidate_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "candidate_id": "c1",
             "outcome": "verified",
             "severity": "none",
             "rationale": "The cited control flow confirms the unchecked error.",
@@ -114,7 +114,7 @@
         "schema_version": 1,
         "verdicts": [
           {
-            "candidate_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "candidate_id": "c1",
             "outcome": "verified",
             "severity": "high",
             "rationale": "The cited control flow confirms the unchecked error.",
@@ -130,7 +130,7 @@
         "schema_version": 1,
         "verdicts": [
           {
-            "candidate_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "candidate_id": "c1",
             "outcome": "rejected",
             "severity": "low",
             "rationale": "The cited control flow confirms the unchecked error.",
@@ -148,7 +148,7 @@
         "schema_version": 1,
         "verdicts": [
           {
-            "candidate_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "candidate_id": "c1",
             "outcome": "verified",
             "severity": "high",
             "rationale": "The cited control flow confirms the unchecked error.",
