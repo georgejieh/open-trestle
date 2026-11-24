@@ -111,7 +111,7 @@ The wizard runs in five steps:
   Two AI models review your change: one lists possible
   problems, a different one double-checks each, and only
   confirmed findings are reported. Setup sends no source.
-  Enter accepts a value in [brackets]; Ctrl-D stops.
+  Enter accepts the highlighted answer; Esc goes back.
 
 ●○○○○  Step 1 of 5 · What will be reviewed
 ──────────────────────────────────────────
@@ -124,15 +124,38 @@ The wizard runs in five steps:
 
 ●●○○○  Step 2 of 5 · Where the models run
 ─────────────────────────────────────────
-    1) OpenRouter (remote, needs an API key)
+  Choose
+  ↑↓ move · Enter select · Esc back · q quit
+  › 1) OpenRouter (remote, needs an API key)
     2) Ollama Cloud (remote, needs an API key)
     3) OpenCode Go (remote, needs an API key)
     4) A model server on this machine (Ollama, llama.cpp,
        vLLM, LM Studio)
     5) Ollama on this machine, signed in to Ollama Cloud
        (remote)
-  Choose (1-5):
 ```
+
+### Answering
+
+When standard input and output are both terminals, `TERM` is not `dumb` and
+`--no-input` is not given, each choice is a menu. Up and Down (or `j` and `k`)
+move the pointer, Enter picks the highlighted item, and a number picks that
+item at once. The pointer starts on the recommended or current answer. A yes or
+no question is a menu of Yes and No, and `y` or `n` answers it. Esc or Left goes
+back to the previous question with your earlier answer selected, and `q` or
+Ctrl-C stops with nothing written. The menu redraws in place and leaves one line
+with your answer. The terminal is restored after every menu, also when you stop.
+On Windows it uses the console's own key and escape-sequence modes; only Linux
+terminals have been tested (see [platforms](platforms.md)).
+
+Without such a terminal, each choice is a numbered list with a default, for
+example `Choose (1-5) [1]:`; Enter takes the default. Typing `b` or `back` at
+any prompt goes back, unless it is a valid answer there. Input that ends
+(Ctrl-D or a closed pipe) stops with nothing written.
+
+Going back from a step's first question returns to the previous step that asked
+something; going back from a later question asks that step again from its start,
+with each earlier answer selected.
 
 ### Step 1: what will be reviewed
 
@@ -160,7 +183,14 @@ one family (both Qwen models, for example), the wizard says so and asks whether
 to keep the checker; Enter keeps it, and `n` lets you pick again. The settings
 panel then marks the checker as being in the same family as the finder.
 
-Each model is one question, `Number, model ID, or part of a name`. A number picks
+In a menu, each model is a list of the provider's models, ten at a time, that
+scrolls as the pointer moves. Typing narrows it to the IDs that contain what you
+typed (`Filter: claude_  2 of 312`), Backspace and Esc widen it again, and Enter
+picks the highlighted model. When nothing matches, Enter uses the text exactly as
+typed. Digits are part of the filter here, since model IDs contain them.
+
+Without a menu, each model is one question, `Number, model ID, or part of a
+name`. A number picks
 from the list shown, and a listed ID picks that model. Other text narrows the
 list to the IDs that contain it, and the same question is asked again under the
 shorter list. The list shows at most 40 entries. Text that matches no listed

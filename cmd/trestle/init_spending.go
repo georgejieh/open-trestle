@@ -121,8 +121,12 @@ func (w *initWizard) spendingLimit() error {
 			w.say("  %s", strings.TrimSpace(line))
 		}
 	}
-	value, err := w.prompt.ask("Spending limit for this key, USD per month", initSpendingDefault, initSpendingAmount)
-	if err != nil || value == "" {
+	proposed := initSpendingDefault
+	if a.spendingLimit != 0 {
+		proposed = strings.TrimPrefix(spending.FormatUSD(a.spendingLimit), "$")
+	}
+	value, err := w.prompt.ask("Spending limit for this key, USD per month", proposed, initSpendingAmount)
+	if err != nil {
 		return err
 	}
 	a.spendingLimit, _ = strconv.ParseUint(value, 10, 64)

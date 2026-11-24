@@ -249,7 +249,7 @@ func (w *initWizard) changeSettings() error {
 		options = append(append(options[:last:last], "The limits and prices"), options[last])
 		actions = append(append(actions[:last:last], w.changeLimits), w.stopUnconfirmed)
 	}
-	index, err := w.prompt.choose("What would you like to change?", options)
+	index, err := w.prompt.choose("What would you like to change?", options, 0)
 	if err != nil {
 		return err
 	}

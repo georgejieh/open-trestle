@@ -21,7 +21,9 @@ func (w *initWizard) openRouterModels() error {
 	if raw, ok := w.flags["provider"]; ok && raw == "openrouter-zdr" && w.bools["without-zdr"] {
 		return initStopf(initExitUsage, "--provider openrouter-zdr requires zero data retention; --without-zdr cannot be combined with it. Use --provider openrouter --without-zdr instead.")
 	}
-	w.openRouter = w.readOpenRouter()
+	if w.openRouter == nil || w.openRouter.err != nil {
+		w.openRouter = w.readOpenRouter()
+	}
 	if err := w.pickPair(w.openRouter.catalog, w.openRouter.catalog); err != nil {
 		return err
 	}

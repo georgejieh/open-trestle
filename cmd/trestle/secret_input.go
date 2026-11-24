@@ -27,6 +27,14 @@ type echoTerminal interface {
 	hideInput() (restore func() error, err error)
 }
 
+// keyTerminal is a terminal that can also be read one key at a time.
+type keyTerminal interface {
+	echoTerminal
+	// rawInput turns off echo, line editing and signal keys, keeping output
+	// processing, and returns the function that restores the terminal.
+	rawInput() (restore func() error, err error)
+}
+
 // openEchoTerminal returns standard input's terminal when it is an
 // interactive terminal whose echo can be turned off. Tests replace it.
 var openEchoTerminal = func(in io.Reader) (echoTerminal, bool) {
@@ -40,12 +48,17 @@ var openEchoTerminal = func(in io.Reader) (echoTerminal, bool) {
 	return platformEchoTerminal(file)
 }
 
+// initEnableTerminalOutput prepares standard output for cursor movement and
+// returns what undoes it. Tests replace it.
+var initEnableTerminalOutput = enableTerminalOutput
+
 // askSecret reads one answer with echo off and returns it without
 // surrounding spaces; "" means Enter on an empty line. The prompt is shown
 // only once echo is off, only the answer's receipt is printed, and echo is
 // restored before askSecret returns, including when input ends or is
 // interrupted. An answer that is one text pasted twice is asked for again.
 func (p *initPrompter) askSecret(question string, terminal echoTerminal) (string, error) {
+	p.questions++
 	for range initMaxTries {
 		restore, err := terminal.hideInput()
 		if err != nil {

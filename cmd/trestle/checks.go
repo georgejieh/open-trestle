@@ -174,7 +174,7 @@ func reviewChecksAllowed(ctx context.Context, w *initWizard, dir string, options
 	prompter := newInitPrompter(ctx, in, w.out, w.style, func(line string) { w.say("%s", line) })
 	defer prompter.close()
 	w.say("  %s", checksQuestion)
-	choice, err := prompter.choose("Run the checks for this review?", []string{"Allow this time", "Deny (run trestle checks off to stop this question)", "Always allow for this repository"})
+	choice, err := prompter.choose("Run the checks for this review?", []string{"Allow this time", "Deny (run trestle checks off to stop this question)", "Always allow for this repository"}, 1)
 	if err != nil {
 		return false
 	}
@@ -199,16 +199,26 @@ func interactiveInput(in io.Reader) bool {
 // askChecksConsent asks the init question once per setup, only when a review
 // is about to run; with --no-input, --checks answers yes and its absence no.
 // When it is not asked or no answer can be read, nothing is saved and a later
-// review asks.
-func (w *initWizard) askChecksConsent() {
+// review asks; quitting at it stops setup.
+func (w *initWizard) askChecksConsent() error {
 	repository := checksRepository(w.ctx, w.checkout)
 	if _, decided := readChecksConsent(w.a.directory, repository); decided {
-		return
+		return nil
 	}
 	allowed, err := w.confirm(checksQuestion, false, w.bools["checks"])
-	if err != nil {
-		return
+	if errors.Is(err, errInitCanceled) {
+		return err
 	}
+	if err != nil {
+		return nil
+	}
+	w.saveChecksAnswer(repository, allowed)
+	return nil
+}
+
+// saveChecksAnswer saves the repository checks answer in the setup folder
+// and says how to change it.
+func (w *initWizard) saveChecksAnswer(repository string, allowed bool) {
 	if err := writeChecksConsent(w.ctx, w.a.directory, repository, allowed); err != nil {
 		w.say("  %s Your answer could not be saved; a review will ask again.", w.wait)
 		return

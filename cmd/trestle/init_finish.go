@@ -186,7 +186,7 @@ func (w *initWizard) resume() (int, error) {
 	// again: every review picks the latest change.
 	latest := w.prompt == nil && w.bools["run-review"]
 	if w.prompt != nil {
-		choice, err := w.prompt.choose("What would you like to do?", []string{"Review the latest change (sends it to " + setup.provider.short + ")", "Re-run the setup checks", "Quit without changes"})
+		choice, err := w.prompt.choose("What would you like to do?", []string{"Review the latest change (sends it to " + setup.provider.short + ")", "Re-run the setup checks", "Quit without changes"}, 0)
 		if err != nil {
 			return 0, err
 		}
@@ -212,7 +212,9 @@ func (w *initWizard) resume() (int, error) {
 		return w.notReady(setup, outcome), nil
 	}
 	if w.prompt == nil || latest {
-		w.askChecksConsent()
+		if err := w.askChecksConsent(); err != nil {
+			return 0, err
+		}
 	}
 	if !latest {
 		w.say("\n  Setup checks: %s. Review the latest change any time with:", outcome.summary)
@@ -356,7 +358,7 @@ func (w *initWizard) stepWrite() (int, error) {
 	}
 	var out, errOut bytes.Buffer
 	ctx := w.ctx
-	if w.openRouter != nil {
+	if w.openRouter != nil && w.a.provider.key == "openrouter" {
 		ctx = withOpenRouterObservation(ctx, w.openRouter)
 	}
 	code := runSetupBootstrapWithContext(ctx, w.bootstrapArgs(), &out, &errOut, w.clock)
@@ -740,7 +742,9 @@ func (w *initWizard) finish(setup initSetup, outcome initOutcome) (int, error) {
 		}
 	}
 	if w.prompt == nil || run {
-		w.askChecksConsent()
+		if err := w.askChecksConsent(); err != nil {
+			return 0, err
+		}
 	}
 	if !run {
 		w.say("  No review was run. Run the command above when you are ready.")

@@ -318,7 +318,7 @@ func TestInitDevelopmentBuildExplainsScannerAndOffersLocal(t *testing.T) {
 
 // Scripted answers are not echoed, so a prompt and the next output share a
 // captured line; the width check measures each part separately.
-var initPromptEnd = regexp.MustCompile(`: {2,}|\((?:y/N|Y/n|1-\d+)\): `)
+var initPromptEnd = regexp.MustCompile(`:(?:\x1b\[0m)? {2,}|\((?:y/N|Y/n|1-\d+)\)(?: \[\d+\])?:(?:\x1b\[0m)? `)
 
 func TestInitUnreadableObjectStorageStopsBeforeQuestions(t *testing.T) {
 	source := remoteBootstrapCheckout(t)
