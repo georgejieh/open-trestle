@@ -318,7 +318,7 @@ func TestInitDevelopmentBuildExplainsScannerAndOffersLocal(t *testing.T) {
 
 // Scripted answers are not echoed, so a prompt and the next output share a
 // captured line; the width check measures each part separately.
-var initPromptEnd = regexp.MustCompile(`: {2,}|\((?:y/N|Y/n|1-\d+)\): `)
+var initPromptEnd = regexp.MustCompile(`:(?:\x1b\[0m)? {2,}|\((?:y/N|Y/n|1-\d+)\)(?: \[\d+\])?:(?:\x1b\[0m)? `)
 
 func TestInitUnreadableObjectStorageStopsBeforeQuestions(t *testing.T) {
 	source := remoteBootstrapCheckout(t)
@@ -429,7 +429,7 @@ func TestInitMissingCredentialThenRerunRechecks(t *testing.T) {
 	if again.code != initExitDone || !initHas(again.stdout, "already has an Open Trestle setup") || !initHas(again.stdout, "1) Review the latest change (sends it to Ollama Cloud)") || !initHas(again.stdout, "✓ API key variable OPEN_TRESTLE_PROVIDER_OLLAMA_CLOUD is set (from the environment)") || !initHas(again.stdout, "Review the latest change any time with: trestle review --directory") || initHas(again.stdout, "--egress policy-approved") {
 		t.Fatalf("rerun did not re-check the existing setup: exit=%d\n%s\n%s", again.code, again.stdout, again.stderr)
 	}
-	quit := runInitScript(t, checkout, []string{"--directory", dir}, "3")
+	quit := runInitScript(t, checkout, []string{"--directory", dir}, "4")
 	if quit.code != initExitDone || !initHas(quit.stdout, "Nothing was changed") {
 		t.Fatalf("quit on rerun: exit=%d %s", quit.code, quit.stderr)
 	}

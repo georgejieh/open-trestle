@@ -139,6 +139,8 @@ type initWizard struct {
 	// terminal is standard input's terminal when its echo can be turned off
 	// for typing an API key; nil otherwise, and then no key is asked for.
 	terminal echoTerminal
+	// onTerminal is set when both standard input and output are terminals.
+	onTerminal bool
 	// enteredKeys names typed keys to save once the setup is saved.
 	enteredKeys []string
 	pending     []initDeclaration // confirmed together at the summary
@@ -160,6 +162,13 @@ func runInitWithClock(ctx context.Context, args []string, stdin io.Reader, stdou
 		defer w.prompt.close()
 		if terminal, ok := openEchoTerminal(stdin); ok {
 			w.terminal = terminal
+			w.onTerminal = initTerminal(stdout)
+			if keys, ok := terminal.(keyTerminal); ok && w.onTerminal && os.Getenv("TERM") != "dumb" {
+				if restore, ok := initEnableTerminalOutput(stdout); ok {
+					defer restore()
+					w.prompt.keys = keys
+				}
+			}
 		}
 	}
 	code, err := w.run()
@@ -178,6 +187,9 @@ func (w *initWizard) stop(err error) int {
 		return stop.code
 	case errors.Is(err, errInitInputEnded):
 		w.complain("stopped because input ended (Ctrl-D, Ctrl-C or a closed pipe). " + w.writtenNote())
+		return initExitUsage
+	case errors.Is(err, errInitCanceled):
+		w.complain("stopped: you quit setup. " + w.writtenNote())
 		return initExitUsage
 	case errors.Is(err, errInitTooManyTries):
 		w.complain("stopped after three answers that could not be used. " + w.writtenNote() + " `trestle init --help` lists the answer flags.")
@@ -463,7 +475,7 @@ func (w *initWizard) run() (int, error) {
 	}
 	w.checkout = filepath.Clean(top)
 	w.repoName = initLabel(filepath.Base(w.checkout), "repository")
-	for _, line := range w.style.banner(w.prompt == nil) {
+	for _, line := range w.style.banner(w.prompt == nil, w.prompt != nil && w.prompt.keys != nil) {
 		w.say("%s", line)
 	}
 
@@ -481,14 +493,49 @@ func (w *initWizard) run() (int, error) {
 		}
 		return w.resume()
 	}
-	steps := []func() error{w.stepSelection, w.stepProvider, w.stepModels, w.stepCredentials, w.autoNames, w.stepDeclarations, w.stepSummary}
-	for _, step := range steps {
-		if err := step(); err != nil {
+	return w.firstRun([]func() error{w.stepSelection, w.stepProvider, w.stepModels, w.stepCredentials, w.autoNames, w.stepDeclarations, w.stepSummary}, false)
+}
+
+// firstRun asks the steps in order and saves the setup. Back at a step's
+// first question returns to the latest earlier step that asked something;
+// back at a later question asks the step again from its start. Each step
+// proposes its earlier answers. With leave, back at the first question
+// returns errInitBack to the caller.
+func (w *initWizard) firstRun(steps []func() error, leave bool) (int, error) {
+	asked := make([]bool, len(steps))
+	for i := 0; i < len(steps); {
+		start := 0
+		if w.prompt != nil {
+			start = w.prompt.questions
+			w.prompt.canBack = true
+		}
+		err := steps[i]()
+		if w.prompt != nil {
+			w.prompt.canBack = false
+			asked[i] = asked[i] || w.prompt.questions > start
+		}
+		if errors.Is(err, errInitBack) {
+			if w.prompt.questions-start <= 1 {
+				previous := i - 1
+				for previous >= 0 && !asked[previous] {
+					previous--
+				}
+				if previous < 0 && leave {
+					return 0, errInitBack
+				}
+				if previous >= 0 {
+					i = previous
+				}
+			}
+			continue
+		}
+		if err != nil {
 			return 0, err
 		}
 		if w.prompt == nil && slices.Contains(w.missing, "--provider") {
 			break
 		}
+		i++
 	}
 	if len(w.missing) != 0 {
 		var list strings.Builder
@@ -736,7 +783,7 @@ func (w *initWizard) stepProvider() error {
 	} else {
 		chosen := false
 		for range initMaxTries {
-			index, err := w.prompt.choose("Choose", labels)
+			index, err := w.prompt.choose("Choose", labels, max(0, slices.Index(keys, w.a.provider.key)))
 			if err != nil {
 				return err
 			}
@@ -792,7 +839,9 @@ func (w *initWizard) remoteModels() error {
 	var models []modelcatalog.Model
 	_, generationGiven := w.flags["generation-model"]
 	_, verificationGiven := w.flags["verification-model"]
-	if catalog := w.a.provider.catalog; catalog != nil && w.prompt != nil && !(generationGiven && verificationGiven) {
+	if catalog := w.a.provider.catalog; catalog != nil && w.prompt != nil && len(w.listed[catalog.URL]) != 0 {
+		models = w.listed[catalog.URL]
+	} else if catalog != nil && w.prompt != nil && !(generationGiven && verificationGiven) {
 		host, _ := url.Parse(catalog.URL)
 		w.say("  Fetching the public model list from %s (no code or key is sent)...", host.Host)
 		listed, err := initListModels(w.ctx, *catalog, true, nil)
@@ -800,6 +849,10 @@ func (w *initWizard) remoteModels() error {
 			w.say("  %s Could not read the model list. Type each model ID exactly instead (format: %s).", w.wait, w.a.provider.example)
 		} else {
 			models = listed
+			if w.listed == nil {
+				w.listed = map[string][]modelcatalog.Model{}
+			}
+			w.listed[catalog.URL] = listed
 		}
 	}
 	return w.pickPair(models, models)
@@ -921,7 +974,16 @@ func (w *initWizard) pickModel(flagName, question string, models []modelcatalog.
 	if _, given := w.flags[flagName]; given || w.prompt == nil || len(models) == 0 {
 		choice, err = w.answer(initQuestion{flag: flagName, question: question, validate: validate})
 	} else {
-		choice, err = w.chooseModel(question, models, keep, validate)
+		// Asked again after back, the earlier answer is proposed.
+		proposal := keep
+		if current := w.roleModel(strings.TrimSuffix(flagName, "-model")); proposal == "" && current != exclude {
+			proposal = current
+		}
+		if w.prompt.keys != nil {
+			choice, err = w.menuModel(question, models, keep, proposal, validate)
+		} else {
+			choice, err = w.chooseModel(question, models, proposal, validate)
+		}
 	}
 	if err != nil || choice == "" || choice == keep {
 		return choice, err
@@ -948,7 +1010,10 @@ const initModelListLimit = 40
 // row, is used exactly as typed.
 func (w *initWizard) chooseModel(question string, models []modelcatalog.Model, keep string, validate func(string) (string, error)) (string, error) {
 	shown, filter, unmatched, show := models, "", "", true
+	// The list and every answer that narrows it count as one question.
+	questions := w.prompt.questions
 	for tries := 0; tries < initMaxTries; {
+		w.prompt.questions = questions
 		listed := shown[:min(len(shown), initModelListLimit)]
 		if show {
 			if filter == "" {
@@ -969,6 +1034,9 @@ func (w *initWizard) chooseModel(question string, models []modelcatalog.Model, k
 		answer, err := w.prompt.ask("Number, model ID, or part of a name", keep, func(value string) (string, error) { return value, nil })
 		if err != nil || answer == keep {
 			return answer, err
+		}
+		if w.prompt.isBack(answer) {
+			return "", errInitBack
 		}
 		if n, err := strconv.Atoi(answer); err == nil {
 			if n < 1 || n > len(listed) {
@@ -999,6 +1067,48 @@ func (w *initWizard) chooseModel(question string, models []modelcatalog.Model, k
 		tries++
 	}
 	return "", errInitTooManyTries
+}
+
+// initModelWindow is how many models a menu shows at once.
+const initModelWindow = 10
+
+// menuModel is chooseModel as a menu: typing narrows the list with the same
+// matching, Enter on text that matches nothing uses it exactly as typed, and
+// keep, when it is not listed, is offered first.
+func (w *initWizard) menuModel(question string, models []modelcatalog.Model, keep, proposal string, validate func(string) (string, error)) (string, error) {
+	items, positions := []menuItem{}, map[string]int{}
+	if keep != "" && !slices.ContainsFunc(models, func(m modelcatalog.Model) bool { return m.Selector == keep }) {
+		items = append(items, menuItem{label: "Keep " + keep, value: keep})
+	}
+	for _, model := range models {
+		positions[model.Selector] = len(items)
+		items = append(items, menuItem{label: model.Selector + initModelNote(model), value: model.Selector})
+	}
+	selected := 0
+	if position, ok := positions[proposal]; ok {
+		selected = position
+	}
+	menu := &initMenu{title: question, items: items, selected: selected, window: initModelWindow, free: true}
+	menu.match = func(text string) []int {
+		shown := []int{}
+		for _, model := range initMatchModels(models, text) {
+			shown = append(shown, positions[model.Selector])
+		}
+		return shown
+	}
+	menu.accept = func(index int, text string) (string, error) {
+		if text == keep {
+			return keep, nil
+		}
+		return validate(text)
+	}
+	w.prompt.questions++
+	_, choice, err := w.prompt.menu(menu)
+	if errors.Is(err, errInitRawUnavailable) {
+		w.prompt.questions--
+		return w.chooseModel(question, models, proposal, validate)
+	}
+	return choice, err
 }
 
 // initMatchModels returns the models whose ID contains text: an exact ID
@@ -1078,7 +1188,11 @@ func (w *initWizard) localEndpoint(flagName, question, proposed string) (string,
 	}
 	options = append(options, "Another address on this machine")
 	w.say("  %s", question)
-	index, err := w.prompt.choose("Which server are you running?", options)
+	current := w.a.generationEndpoint
+	if flagName == "verification-endpoint" {
+		current = w.a.verificationEndpoint
+	}
+	index, err := w.prompt.choose("Which server are you running?", options, max(0, slices.IndexFunc(servers, func(s initLocalServer) bool { return s.endpoint == current })))
 	if err != nil {
 		return "", err
 	}
@@ -1468,6 +1582,7 @@ func (w *initWizard) stepCredentials() error {
 // evidence they need.
 func (w *initWizard) stepDeclarations() error {
 	w.header(4, "Your settings and consent")
+	w.pending = nil
 	a := &w.a
 	if a.provider.key == "openrouter" {
 		w.openRouterConsent()

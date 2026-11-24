@@ -19,6 +19,7 @@ import (
 	"github.com/georgejieh/open-trestle/localreview"
 	"github.com/georgejieh/open-trestle/runtimeconfig"
 	setupcore "github.com/georgejieh/open-trestle/setup"
+	"github.com/georgejieh/open-trestle/spending"
 )
 
 // initSetup describes a saved bootstrap directory in the terms the wizard shows.
@@ -168,7 +169,8 @@ func (s initSetup) destination() string {
 	return "your local model server (" + strings.Join(s.endpoints, ", ") + ")"
 }
 
-// resume never re-initializes: it offers the existing check and review only.
+// resume never re-initializes: it offers the existing check and review, and
+// changing one setting.
 func (w *initWizard) resume() (int, error) {
 	setup, err := w.loadSetup()
 	if err != nil {
@@ -185,16 +187,24 @@ func (w *initWizard) resume() (int, error) {
 	// with --run-review. The commits saved at setup time are never reviewed
 	// again: every review picks the latest change.
 	latest := w.prompt == nil && w.bools["run-review"]
-	if w.prompt != nil {
-		choice, err := w.prompt.choose("What would you like to do?", []string{"Review the latest change (sends it to " + setup.provider.short + ")", "Re-run the setup checks", "Quit without changes"})
+	for w.prompt != nil {
+		choice, err := w.prompt.choose("What would you like to do?", []string{"Review the latest change (sends it to " + setup.provider.short + ")", "Re-run the setup checks", "Change a setting", "Quit without changes"}, 0)
 		if err != nil {
 			return 0, err
 		}
-		if choice == 2 {
+		if choice == 3 {
 			w.say("  Nothing was changed.")
 			return initExitDone, nil
 		}
+		if choice == 2 {
+			code, err := w.changeSetting(setup)
+			if errors.Is(err, errInitBack) {
+				continue
+			}
+			return code, err
+		}
 		latest = choice == 0
+		break
 	}
 	if setup.remote {
 		for _, name := range setup.credentials {
@@ -212,7 +222,9 @@ func (w *initWizard) resume() (int, error) {
 		return w.notReady(setup, outcome), nil
 	}
 	if w.prompt == nil || latest {
-		w.askChecksConsent()
+		if err := w.askChecksConsent(); err != nil {
+			return 0, err
+		}
 	}
 	if !latest {
 		w.say("\n  Setup checks: %s. Review the latest change any time with:", outcome.summary)
@@ -220,6 +232,162 @@ func (w *initWizard) resume() (int, error) {
 		return initExitDone, nil
 	}
 	return w.reviewLatest(setup)
+}
+
+// changeSetting re-asks one part of a saved setup. A setup folder is written
+// once and never changed, so another provider or other models make a new
+// setup in a new folder, through every step and consent of a first run; the
+// newest setup is the one reviews use. The key, the spending limit and the
+// checks answer are kept outside the setup or replaced whole, so they change
+// in place. Back at the list returns errInitBack.
+func (w *initWizard) changeSetting(setup initSetup) (int, error) {
+	labels := []string{"Provider and models (a new setup folder)"}
+	changes := []func() error{nil}
+	keyed := setup.remote && initSpendingProvider(setup.provider.key) != "" && len(setup.credentials) != 0
+	if keyed {
+		name := setup.credentials[0]
+		labels = append(labels, "API key ("+name+", "+providerKeyStatus(name).where()+")", "Spending limit ("+w.currentSpending(setup)+")")
+		changes = append(changes, func() error { return w.replaceProviderKey(name, setup.provider.key, setup.provider.short) }, func() error { return w.changeSpendingLimit(setup) })
+	}
+	repository := checksRepository(w.ctx, w.checkout)
+	allowed, decided := readChecksConsent(w.a.directory, repository)
+	checks := "not asked yet"
+	if decided && allowed {
+		checks = "on"
+	} else if decided {
+		checks = "off"
+	}
+	labels = append(labels, "Repository checks ("+checks+")")
+	changes = append(changes, func() error {
+		yes, err := w.prompt.confirm(checksQuestion, allowed)
+		if err == nil {
+			w.saveChecksAnswer(repository, yes)
+		}
+		return err
+	})
+	for {
+		w.prompt.canBack = true
+		index, err := w.prompt.choose("Which setting?", labels, 0)
+		if err == nil && index == 0 {
+			w.prompt.canBack = false
+			return w.changeRoute(setup)
+		}
+		if err == nil {
+			err = changes[index]()
+		}
+		w.prompt.canBack = false
+		if errors.Is(err, errInitBack) && index != 0 {
+			continue
+		}
+		if err != nil {
+			return 0, err
+		}
+		w.sayNextCommands(keyed)
+		return initExitDone, nil
+	}
+}
+
+// changeRoute runs a first setup into a new folder next to the saved one,
+// proposing the saved provider and models. Back at its first question
+// returns errInitBack with the saved setup still in use.
+func (w *initWizard) changeRoute(setup initSetup) (int, error) {
+	saved := w.a
+	w.a = initAnswers{directory: w.newSetupDirectory(), provider: setup.provider, generationModel: setup.generationModel, verificationModel: setup.verificationModel}
+	w.saved = false
+	w.say("\n  The saved setup stays as it is. The new one is saved in %s, and reviews of this repository use it from then on.", initDisplayPath(w.a.directory))
+	code, err := w.firstRun([]func() error{w.stepSelection, w.stepProvider, w.stepModels, w.stepCredentials, w.autoNames, w.stepDeclarations, w.stepSummary}, true)
+	if errors.Is(err, errInitBack) {
+		w.a, w.saved = saved, true
+	}
+	return code, err
+}
+
+// newSetupDirectory is the first free folder next to the proposed one:
+// NAME-2, NAME-3 and so on.
+func (w *initWizard) newSetupDirectory() string {
+	base := defaultSetupDirectory(w.checkout)
+	for n := 2; ; n++ {
+		dir := base + "-" + strconv.Itoa(n)
+		if _, err := os.Lstat(dir); os.IsNotExist(err) || n >= 1000 {
+			return dir
+		}
+	}
+}
+
+// currentSpending describes the saved setup's spending limit.
+func (w *initWizard) currentSpending(setup initSetup) string {
+	scope, err := spending.NewScope(initSpendingProvider(setup.provider.key), setup.credentials[0])
+	store, storeErr := usageStore()
+	if err != nil || storeErr != nil {
+		return "not available"
+	}
+	if limit, found, err := store.Limit(scope); err == nil && found {
+		return limit.Describe()
+	}
+	return "none"
+}
+
+// changeSpendingLimit asks the limit again, proposing the current one, and
+// saves it at once; none removes it. The period and alerts are kept.
+func (w *initWizard) changeSpendingLimit(setup initSetup) error {
+	scope, err := spending.NewScope(initSpendingProvider(setup.provider.key), setup.credentials[0])
+	store, storeErr := usageStore()
+	if err != nil || storeErr != nil {
+		w.say("  Spending limits are not available: the usage folder cannot be found (set HOME or XDG_STATE_HOME).")
+		return nil
+	}
+	period, alerts, proposed := spending.PeriodMonth, initSpendingAlerts(80), initSpendingDefault
+	current, found, _ := store.Limit(scope)
+	if found {
+		period, alerts, proposed = current.Period, current.AlertPercents, strings.TrimPrefix(spending.FormatUSD(current.AmountMicroUSD), "$")
+	}
+	value, err := w.prompt.ask("Spending limit for this key, USD per "+string(period), proposed, initSpendingAmount)
+	if err != nil {
+		return err
+	}
+	if value == "" {
+		if _, err := store.ClearLimit(w.ctx, scope); err != nil {
+			w.say("  %s The limit could not be removed (%v). Remove it with trestle usage.", w.bad, err)
+			return nil
+		}
+		w.say("  %s No spending limit for %s.", w.ok, scope.CredentialEnvironment)
+		return nil
+	}
+	micro, _ := strconv.ParseUint(value, 10, 64)
+	limit, err := spending.NewLimit(scope, period, micro, alerts, spendingNow())
+	if err == nil {
+		err = store.SetLimit(w.ctx, limit)
+	}
+	if err != nil {
+		w.say("  %s The spending limit could not be saved (%v). Set it with trestle usage set.", w.bad, err)
+		return nil
+	}
+	w.say("  %s Saved a %s for %s, alerts at %s.", w.ok, limit.Describe(), scope.CredentialEnvironment, spending.AlertList(limit.AlertPercents))
+	return nil
+}
+
+// sayNextCommands is the closing block on a terminal: the commands for
+// everyday use, aligned.
+func (w *initWizard) sayNextCommands(keyed bool) {
+	if !w.onTerminal {
+		return
+	}
+	rows := [][2]string{{w.latestCommand(), "review your latest change"}, {"trestle", "status and next actions"}}
+	if keyed {
+		rows = append(rows, [2]string{"trestle keys set NAME", "replace the API key"}, [2]string{"trestle usage", "spending and limits"})
+	}
+	rows = append(rows, [2]string{w.rerunCommand("trestle"), "change a setting"})
+	// A command with a long --directory is not padded to.
+	width := 0
+	for _, row := range rows {
+		if len(row[0]) <= 24 {
+			width = max(width, len(row[0]))
+		}
+	}
+	w.say("\n%s", w.style.paint(initToneHeading, "Next commands"))
+	for _, row := range rows {
+		w.sayVerbatim("    " + row[0] + strings.Repeat(" ", max(0, width-len(row[0]))) + "   " + w.style.paint(initToneDim, row[1]))
+	}
 }
 
 // latestCommand is the one command that reviews the latest change with this
@@ -356,7 +524,7 @@ func (w *initWizard) stepWrite() (int, error) {
 	}
 	var out, errOut bytes.Buffer
 	ctx := w.ctx
-	if w.openRouter != nil {
+	if w.openRouter != nil && w.a.provider.key == "openrouter" {
 		ctx = withOpenRouterObservation(ctx, w.openRouter)
 	}
 	code := runSetupBootstrapWithContext(ctx, w.bootstrapArgs(), &out, &errOut, w.clock)
@@ -740,17 +908,23 @@ func (w *initWizard) finish(setup initSetup, outcome initOutcome) (int, error) {
 		}
 	}
 	if w.prompt == nil || run {
-		w.askChecksConsent()
+		if err := w.askChecksConsent(); err != nil {
+			return 0, err
+		}
 	}
+	keyed := setup.remote && len(setup.credentials) != 0
 	if !run {
 		w.say("  No review was run. Run the command above when you are ready.")
+		w.sayNextCommands(keyed)
 		return initExitDone, nil
 	}
 	command := outcome.reviewCommand
 	if allowed, _ := readChecksConsent(w.a.directory, checksRepository(w.ctx, w.checkout)); allowed {
 		command = append(append([]string{}, command...), "--repository-checks")
 	}
-	return w.review(command), nil
+	code := w.review(command)
+	w.sayNextCommands(keyed)
+	return code, nil
 }
 
 // initHangingWrap wraps one "label: value" result line to width, indenting

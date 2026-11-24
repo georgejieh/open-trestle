@@ -106,9 +106,10 @@ func (s initStyle) paint(tone initTone, text string) string {
 	return "\x1b[" + code + "m" + text + "\x1b[0m"
 }
 
-var initANSI = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+var initANSI = regexp.MustCompile(`\x1b\[[0-9;?]*[A-Za-z]`)
 
-// initVisible is the number of columns text takes, ignoring color codes.
+// initVisible is the number of columns text takes, ignoring color and
+// cursor codes.
 func initVisible(text string) int {
 	return utf8.RuneCountInString(initANSI.ReplaceAllString(text, ""))
 }
@@ -161,7 +162,7 @@ func initFit(line string, width int) []string {
 
 // banner is the opening: the compact bridge mark with the product name beside
 // it, what a review does in three lines, then how to answer.
-func (s initStyle) banner(noInput bool) []string {
+func (s initStyle) banner(noInput, menus bool) []string {
 	mark := bridgeCompactMark
 	title := s.paint(initToneHeading, "Open Trestle · setup")
 	lines := []string{s.paint(initToneRule, strings.TrimRight(mark[0], " ")), s.paint(initToneRule, mark[1]) + "  " + title, s.paint(initToneRule, strings.TrimRight(mark[2], " ")), ""}
@@ -171,6 +172,9 @@ func (s initStyle) banner(noInput bool) []string {
 		"  confirmed findings are reported. Setup sends no source.")
 	if noInput {
 		return append(lines, "  --no-input: every answer comes from a flag.")
+	}
+	if menus {
+		return append(lines, s.paint(initToneDim, "  Enter accepts the highlighted answer; Esc goes back."))
 	}
 	return append(lines, s.paint(initToneDim, "  Enter accepts a value in [brackets]; Ctrl-D stops."))
 }
