@@ -29,8 +29,8 @@ type CompletedResultMetadata struct {
 // differs only by finding_guidance, a v5 result that adds style advice (and
 // may carry finding_guidance), or a v6 result that adds token_usage to any of
 // them and may carry the recorded judgement (rank, checked against its own
-// diagnostics, and an advisory pre_existing list) and a walkthrough, not
-// candidate or diagnostic JSON.
+// diagnostics, and an advisory pre_existing list), a walkthrough and check
+// regressions, not candidate or diagnostic JSON.
 // Structural consistency and a capture hash do not authenticate its producer.
 //
 // It is the strict reader: the CI disposition must be the one the recorded
@@ -107,7 +107,16 @@ func parseCompletedResult(encoded []byte, observe bool) (Result, error) {
 	// (inconclusive although a medium, high or critical finding is recorded)
 	// is refused. Only an observing read accepts that relaxation
 	// (recordedRelaxation).
-	if wire.Status != status || wire.CI != expectedImportedCI(wire.Version, set.Findings(), ci) && !(observe && recordedRelaxation(wire, set.Findings(), ci)) || !wire.UsageKnown && wire.ActualCostMicroUSD != 0 {
+	// Check regressions only ever block, so a version 6 result that lists
+	// them must be blocked.
+	expected := expectedImportedCI(wire.Version, set.Findings(), ci)
+	if wire.CheckRegressions != nil {
+		if wire.Version != tokenUsageResultVersion || !wire.CheckRegressions.valid() {
+			return Result{}, ErrInvalidResult
+		}
+		expected = "blocked"
+	}
+	if wire.Status != status || wire.CI != expected && !(observe && wire.CheckRegressions == nil && recordedRelaxation(wire, set.Findings(), ci)) || !wire.UsageKnown && wire.ActualCostMicroUSD != 0 {
 		return Result{}, ErrInvalidResult
 	}
 	if wire.TokenUsage != nil && !validCompletedTokenUsage(*wire.TokenUsage, wire.UsageKnown) {

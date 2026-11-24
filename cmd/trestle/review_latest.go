@@ -483,6 +483,9 @@ func reviewLatestChange(ctx context.Context, w *initWizard, repo repositorySetup
 	code = runLocalGitModelReviewObserved(ctx, command[3:], stdout, stderr, func(result modelReviewOutcome) { outcome = result })
 	if outcome.status != "" {
 		recordLastReview(ctx, repo.directory, lastReview{Status: outcome.status, Findings: outcome.findings, Base: source.base, Head: source.head})
+		if outcome.regressions > 0 {
+			w.say("  %s The repository's own tests show %d regression%s: tests that passed on base fail on head. The result lists them under check regressions.", w.bad, outcome.regressions, initPlural(outcome.regressions))
+		}
 		w.say("%s", latestOutcomeLine(w, outcome))
 	}
 	return code, true
@@ -499,6 +502,9 @@ func latestOutcomeLine(w *initWizard, outcome modelReviewOutcome) string {
 		}
 		return fmt.Sprintf("  %s Review finished: %d confirmed finding%s. Each was proposed by the finder and confirmed by the checker; the review is not a complete audit (comprehensive clearance: false).%s", w.ok, outcome.findings, initPlural(outcome.findings), note)
 	case "no_candidates":
+		if outcome.regressions > 0 {
+			return fmt.Sprintf("  %s Review finished: the models confirmed no problem beyond the regressions above. It is not a complete audit.", w.wait)
+		}
 		return fmt.Sprintf("  %s Review finished: no problems were found and confirmed for this change. That is not proof the change is correct; it is not a complete audit.", w.ok)
 	case "incomplete":
 		return fmt.Sprintf("  %s The review could not cover everything; see coverage and omissions in the result.", w.wait)
