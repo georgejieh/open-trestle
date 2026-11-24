@@ -59,6 +59,34 @@ func (w *initWizard) askProviderKey(name, provider, label string, saveNow bool) 
 		w.say("  %s %s: %s.", w.wait, name, state.where())
 	}
 	w.say("\n  API key: %s has no key in this shell or in %s. Paste the key from your %s account. %s It is saved there with the setup, and Open Trestle never logs it or puts it in a model request. Press Enter on an empty line to skip.", name, providerCredentialDisplayDirectory(), label, w.keyEntryNote())
+	return w.enterProviderKey(name, provider, label, saveNow, "Skipped; no key was entered. The setup check says how to add one later.")
+}
+
+// keyEntryNote says how a typed key shows on screen.
+func (w *initWizard) keyEntryNote() string {
+	if w.prompt.keys != nil {
+		return "Each character shows as *; afterwards only its length and last four characters are shown."
+	}
+	return "It stays hidden while you type; afterwards only its length and last four characters are shown."
+}
+
+// replaceProviderKey asks for a new key for a saved setup's variable and
+// saves it at once; Enter on an empty line keeps the current key.
+func (w *initWizard) replaceProviderKey(name, provider, label string) error {
+	if w.terminal == nil {
+		w.say("  Typing a key needs a terminal. Save it with `trestle keys set %s`.", name)
+		return nil
+	}
+	if providerKeyStatus(name).source == providerKeyFromEnvironment {
+		w.say("  Note: %s is set in this shell's environment, and that value is used before a saved key.", name)
+	}
+	w.say("\n  API key: paste the new key for %s from your %s account. %s It replaces the key saved in %s. Press Enter on an empty line to keep the current key.", name, label, w.keyEntryNote(), providerCredentialDisplayDirectory())
+	return w.enterProviderKey(name, provider, label, true, "Kept the current key.")
+}
+
+// enterProviderKey reads, checks and keeps one key; skipped is said when
+// Enter is pressed on an empty line.
+func (w *initWizard) enterProviderKey(name, provider, label string, saveNow bool, skipped string) error {
 	for attempt := 0; attempt < initMaxTries; attempt++ {
 		key, err := w.prompt.askSecret("API key for "+label, w.terminal)
 		if errors.Is(err, errInitSecretUnavailable) {
@@ -69,7 +97,7 @@ func (w *initWizard) askProviderKey(name, provider, label string, saveNow bool) 
 			return err
 		}
 		if key == "" {
-			w.say("  Skipped; no key was entered. The setup check says how to add one later.")
+			w.say("  %s", skipped)
 			return nil
 		}
 		if credentialstore.ValidKey(key) != nil {
@@ -127,12 +155,4 @@ func (w *initWizard) saveEnteredKey() {
 		}
 	}
 	w.enteredKeys = nil
-}
-
-// keyEntryNote says how a typed key shows on screen.
-func (w *initWizard) keyEntryNote() string {
-	if w.prompt.keys != nil {
-		return "Each character shows as *; afterwards only its length and last four characters are shown."
-	}
-	return "It stays hidden while you type; afterwards only its length and last four characters are shown."
 }

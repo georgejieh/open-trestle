@@ -245,7 +245,7 @@ func TestInitRerunOffersAndReviewsTheLatestChange(t *testing.T) {
 	if again.code != initExitDone || len(transport.requests) != 2 {
 		t.Fatalf("rerun: exit=%d requests=%v\n%s\n%s", again.code, transport.requests, again.stdout, again.stderr)
 	}
-	initAssertOutput(t, again, "1) Review the latest change (sends it to Ollama Cloud)", "2) Re-run the setup checks", "3) Quit without changes", "Review the latest change", "Head: HEAD ("+initShort(head)+")", "Review finished")
+	initAssertOutput(t, again, "1) Review the latest change (sends it to Ollama Cloud)", "2) Re-run the setup checks", "3) Change a setting", "4) Quit without changes", "Review the latest change", "Head: HEAD ("+initShort(head)+")", "Review finished")
 	if review, ok := readLastReview(dir); !ok || review.Head != head {
 		t.Fatalf("init reviewed %+v, want head %s", review, head)
 	}

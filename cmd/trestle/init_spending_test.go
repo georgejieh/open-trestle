@@ -65,7 +65,7 @@ func TestInitAsksTheSpendingLimitWithADefaultAndSavesItAfterTheSetup(t *testing.
 	}
 	// Running init again shows the key's state as trestle usage does, and
 	// changes nothing.
-	again := runInitScript(t, checkout, []string{"--directory", dir}, "3")
+	again := runInitScript(t, checkout, []string{"--directory", dir}, "4")
 	initAssertOutput(t, again,
 		"Spending: $0.00 of your $20.00 monthly limit for OPEN_TRESTLE_PROVIDER_OPENROUTER this month (0%), alerts at 80% and 100%.",
 		"OpenRouter reports $0.08 used this month of this key's $50.00 monthly limit.",

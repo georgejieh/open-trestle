@@ -632,9 +632,9 @@ network request, the release list GET, made at most once a day (see
 [updating](#updating)).
 
 Run `trestle init` again in the same repository to re-check the setup. `trestle
-init`, `trestle review` and the home screen find the setup in the folder that
-setup proposes or, failing that, in the most recently saved setup for this
-repository in another folder of `~/.local/state/open-trestle`. A setup made with
+init`, `trestle review` and the home screen use the most recently saved setup
+for this repository in `~/.local/state/open-trestle`, the folder that setup
+proposes or another one beside it. A setup made with
 `--directory` in that location therefore needs no flag later. A setup saved
 anywhere else needs the same `--directory` again. Running `trestle init` again
 offers:
@@ -642,14 +642,48 @@ offers:
 ```text
     1) Review the latest change (sends it to OpenRouter)
     2) Re-run the setup checks
-    3) Quit without changes
+    3) Change a setting
+    4) Quit without changes
 ```
 
 The first choice re-runs the checks and then reviews the latest change exactly as
 `trestle review` does. With `--no-input`, `--run-review` does the same. If the
 setup's key is missing, the wizard asks for it first (see [API keys](keys.md)).
-It does not re-initialize the setup or change the saved files. To set up
-something different, use a new folder: `trestle init --directory NEW_FOLDER`.
+It does not re-initialize the setup or change the saved files.
+
+"Change a setting" lists the settings with their current values and asks again
+only the one you pick, proposing its current value:
+
+- **Provider and models.** A setup folder is written once and never changed, so
+  the wizard makes a new setup in the next free folder beside it
+  (`<repository>-<8 hex characters>-2`, then `-3`), through steps 1 to 5 and the
+  same consent as a first setup, proposing the current provider and models. The
+  earlier folder stays as it was. `trestle review`, the home screen and
+  `trestle init` then use the newest setup for this repository.
+- **API key.** It asks for the new key (one `*` per character), checks it as a
+  first setup does and saves it at once in the credential store. Enter on an
+  empty line keeps the current key. A key exported in the shell is still used
+  before a saved one, and the wizard says so.
+- **Spending limit.** It asks the limit again and saves it at once in the usage
+  folder; `none` removes it. The period and alerts stay as they were.
+- **Repository checks.** It asks the checks question again, with the current
+  answer selected, and saves it in `checks.json`.
+
+Esc (or `b`) at the list returns to the first menu. To keep a setup and make
+another one beside it, you can still pass a new folder:
+`trestle init --directory NEW_FOLDER`.
+
+On a terminal, a finished setup, or a changed setting, ends with the commands
+for everyday use:
+
+```text
+Next commands
+    trestle review          review your latest change
+    trestle                 status and next actions
+    trestle keys set NAME   replace the API key
+    trestle usage           spending and limits
+    trestle init            change a setting
+```
 
 ## Updating
 

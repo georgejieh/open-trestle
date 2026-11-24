@@ -7,12 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/georgejieh/open-trestle/modelcatalog"
+	"github.com/georgejieh/open-trestle/spending"
 )
 
 // fakeKeyTerminal is a terminal that can also be read one key at a time. It
@@ -289,7 +291,8 @@ func TestTypeSecretShowsOneStarPerCharacter(t *testing.T) {
 }
 
 // A first run with menus: back from the finder returns to the provider with
-// the earlier choice selected, and back from the checker asks the finder again.
+// the earlier choice selected, back from the checker asks the finder again,
+// and the closing block lists the next commands.
 func TestInitMenusGoBackToEarlierAnswers(t *testing.T) {
 	remoteScannerInstalled(t)
 	keyStoreForTest(t)
@@ -321,8 +324,77 @@ func TestInitMenusGoBackToEarlierAnswers(t *testing.T) {
 	if n := strings.Count(result.stdout, "› 1) OpenRouter"); n != 1 {
 		t.Fatalf("after back the provider menu did not start on the earlier choice (%d frames on OpenRouter)", n)
 	}
-	initAssertOutput(t, result, "Enter accepts the highlighted answer; Esc goes back.", "Choose: Ollama Cloud (remote, needs an API key)")
+	initAssertOutput(t, result, "Enter accepts the highlighted answer; Esc goes back.", "Choose: Ollama Cloud (remote, needs an API key)", "Next commands", "trestle review --directory", "status and next actions", "trestle keys set NAME   replace the API key", "trestle init --directory")
 	if strings.Contains(result.stdout, "(1-5)") {
 		t.Fatal("numbered line prompts were shown beside the menus")
+	}
+}
+
+func TestInitRerunChangesTheSpendingLimitAndTheChecksAnswer(t *testing.T) {
+	checkout := latestChangeCheckout(t)
+	dir := latestChangeSetup(t, checkout)
+	useFakeTerminal(t)
+	initAsTerminal(t)
+	resolved, err := filepath.EvalSymlinks(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := runInitScript(t, checkout, nil, "3", "3", "15")
+	initAssertOutput(t, changed, "3) Change a setting", "4) Quit without changes", "1) Provider and models (a new setup folder)", "3) Spending limit (none)", "Spending limit for this key, USD per month [20]", "Saved a $15.00 monthly limit", "Next commands", "trestle usage")
+	store, err := usageStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope, err := spending.NewScope("ollama-cloud", "OPEN_TRESTLE_PROVIDER_REMOTE_TEST")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if limit, found, err := store.Limit(scope); err != nil || !found || limit.AmountMicroUSD != 15_000_000 {
+		t.Fatalf("limit %+v %v %v", limit, found, err)
+	}
+	again := runInitScript(t, checkout, nil, "3", "3", "none")
+	if _, found, _ := store.Limit(scope); found || !initHas(again.stdout, "[15.00]") {
+		t.Fatalf("none kept the limit:\n%s", again.stdout)
+	}
+	checks := runInitScript(t, checkout, nil, "3", "4", "y")
+	if allowed, decided := readChecksConsent(dir, checksRepository(context.Background(), resolved)); !allowed || !decided || checks.code != initExitDone {
+		t.Fatalf("checks answer: allowed=%v decided=%v\n%s\n%s", allowed, decided, checks.stdout, checks.stderr)
+	}
+	// Back at the list of settings returns to the first menu.
+	back := runInitScript(t, checkout, nil, "3", "b", "4")
+	if back.code != initExitDone || !initHas(back.stdout, "Nothing was changed.") {
+		t.Fatalf("back: exit=%d\n%s\n%s", back.code, back.stdout, back.stderr)
+	}
+}
+
+// Changing the models never touches the saved setup: a new setup is made in
+// the next free folder, with the first run's consent, and reviews use it.
+func TestInitRerunChangesTheModelsInANewSetupFolder(t *testing.T) {
+	checkout := latestChangeCheckout(t)
+	dir := latestChangeSetup(t, checkout)
+	before := stringMustRead(t, filepath.Join(dir, "bootstrap.json"))
+	resolved, err := filepath.EvalSymlinks(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"--generation-model", "qwen3.5:397b", "--verification-model", "gemma4:31b", "--context-tokens", "128000", "--output-tokens", "8192", "--input-micro-usd-per-million-tokens", "0", "--output-micro-usd-per-million-tokens", "0", "--max-cost-micro-usd", "0", "--credential-env", "OPEN_TRESTLE_PROVIDER_REMOTE_TEST"}
+	initFakeModelList(t, "gemma4:31b", "qwen3.5:397b")
+	result := runInitScript(t, checkout, args, "3", "1", "2", "y", "n")
+	next := dir + "-2"
+	if result.code != initExitDone || !initHas(result.stdout, "The saved setup stays as it is.") || !initHas(result.stdout, "Declaration: the two model routes") {
+		t.Fatalf("exit=%d\n%s\n%s", result.code, result.stdout, result.stderr)
+	}
+	setup, err := loadInitSetup(context.Background(), next)
+	if err != nil || setup.generationModel != "qwen3.5:397b" {
+		t.Fatalf("new setup %+v %v", setup, err)
+	}
+	if stringMustRead(t, filepath.Join(dir, "bootstrap.json")) != before {
+		t.Fatal("the saved setup was changed")
+	}
+	if got := discoverSetupDirectory(context.Background(), resolved); got != next {
+		t.Fatalf("reviews use %s, want the new setup %s", got, next)
+	}
+	if _, err := os.Lstat(dir); err != nil {
+		t.Fatal(err)
 	}
 }

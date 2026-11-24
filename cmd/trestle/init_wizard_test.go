@@ -429,7 +429,7 @@ func TestInitMissingCredentialThenRerunRechecks(t *testing.T) {
 	if again.code != initExitDone || !initHas(again.stdout, "already has an Open Trestle setup") || !initHas(again.stdout, "1) Review the latest change (sends it to Ollama Cloud)") || !initHas(again.stdout, "✓ API key variable OPEN_TRESTLE_PROVIDER_OLLAMA_CLOUD is set (from the environment)") || !initHas(again.stdout, "Review the latest change any time with: trestle review --directory") || initHas(again.stdout, "--egress policy-approved") {
 		t.Fatalf("rerun did not re-check the existing setup: exit=%d\n%s\n%s", again.code, again.stdout, again.stderr)
 	}
-	quit := runInitScript(t, checkout, []string{"--directory", dir}, "3")
+	quit := runInitScript(t, checkout, []string{"--directory", dir}, "4")
 	if quit.code != initExitDone || !initHas(quit.stdout, "Nothing was changed") {
 		t.Fatalf("quit on rerun: exit=%d %s", quit.code, quit.stderr)
 	}

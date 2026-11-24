@@ -48,15 +48,16 @@ func defaultSetupDirectory(checkout string) string {
 	return filepath.Join(home, ".local", "state", "open-trestle", initLabel(filepath.Base(checkout), "repository")+"-"+hex.EncodeToString(sum[:])[:8])
 }
 
-// discoverSetupDirectory is the setup folder for a checkout: the folder
-// `trestle init` proposes when it holds a setup, else the most recently saved
-// readable setup in the same parent folder (~/.local/state/open-trestle) whose
-// saved review command names this checkout, so a setup made with
-// --directory NAME there is found without the flag. A setup only counts when
-// it loads as a protected setup. With none, it is the proposed folder.
+// discoverSetupDirectory is the setup folder for a checkout: the most
+// recently saved readable setup in the folder `trestle init` proposes or
+// beside it (~/.local/state/open-trestle) whose saved review command names
+// this checkout. So a setup made with --directory NAME there is found without
+// the flag, and a setup `trestle init` makes to change the models replaces
+// the earlier one. A setup only counts when it loads as a protected setup.
+// With none, it is the proposed folder.
 func discoverSetupDirectory(ctx context.Context, checkout string) string {
 	proposed := defaultSetupDirectory(checkout)
-	if proposed == "" || setupExists(proposed) {
+	if proposed == "" {
 		return proposed
 	}
 	parent := filepath.Dir(proposed)
