@@ -144,6 +144,13 @@ func (w *initWizard) openRouterSummary() {
 		if limits != "" {
 			w.say("             %s", strings.TrimPrefix(limits, ", "))
 		}
+		if facts.listed && facts.listedFacts.reasoning {
+			if facts.reasoning(facts.hasZDR()) {
+				w.say("             reasoning model; reviews ask it for low reasoning effort")
+			} else {
+				w.say("             reasoning model; its endpoints take no reasoning setting, so it may spend the output allowance reasoning")
+			}
+		}
 	}
 	for _, role := range []string{"generation", "verification"} {
 		if len(observation.facts(w.roleModel(role)).safetyExcluded) != 0 {

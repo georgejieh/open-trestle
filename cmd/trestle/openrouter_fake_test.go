@@ -21,6 +21,7 @@ type fakeORModel struct {
 	params             []string
 	zdr                []fakeOREndpoint
 	unlisted           bool // only in the ZDR list
+	reasoning          bool // listed with reasoning controls
 }
 
 type fakeOREndpoint struct {
@@ -29,6 +30,7 @@ type fakeOREndpoint struct {
 	prompt, completion string
 	safety             bool
 	noMaxTokens        bool
+	reasoning          bool // accepts the reasoning parameter
 }
 
 type fakeOpenRouterAPI struct {
@@ -73,11 +75,17 @@ func fakeOpenRouterBodies(models ...fakeORModel) (string, string) {
 				"pricing":      map[string]any{"prompt": model.prompt, "completion": model.completion, "web_search": "0.01"},
 				"top_provider": map[string]any{"context_length": model.context, "max_completion_tokens": model.output, "is_moderated": false}, "per_request_limits": nil, "supported_parameters": params, "default_parameters": map[string]any{},
 				"links": map[string]any{"details": "/api/v1/models/" + model.id + "/endpoints"}, "endpoints": []string{"/api/v1/chat/completions"}})
+			if model.reasoning {
+				listed[len(listed)-1].(map[string]any)["reasoning"] = map[string]any{"supported_efforts": []string{"high", "medium", "low"}, "default_effort": "medium", "default_enabled": true}
+			}
 		}
 		for _, endpoint := range model.zdr {
 			endpointParams := []string{"max_tokens", "temperature", "response_format", "structured_outputs"}
 			if endpoint.noMaxTokens {
 				endpointParams = []string{"temperature"}
+			}
+			if endpoint.reasoning {
+				endpointParams = append(endpointParams, "reasoning")
 			}
 			endpoints = append(endpoints, map[string]any{"name": endpoint.provider + " | " + model.id, "model_id": model.id, "model_name": "Fixture: " + model.id, "context_length": endpoint.context,
 				"pricing":       map[string]any{"prompt": endpoint.prompt, "completion": endpoint.completion, "discount": 0},
@@ -102,12 +110,13 @@ func fakeOpenRouter(t *testing.T, models ...fakeORModel) *fakeOpenRouterAPI {
 	return fake
 }
 
-// The standard pair: a finder with two usable ZDR endpoints (plus one that
-// keeps prompts for Safety Retention) and a checker with one.
+// The standard pair: a reasoning finder with two usable ZDR endpoints that
+// accept the reasoning parameter (plus one that keeps prompts for Safety
+// Retention) and a checker with one that does not.
 var (
-	fakeORFinder = fakeORModel{id: "vendor/generator", context: 200000, output: 64000, prompt: "0.000003", completion: "0.000015", zdr: []fakeOREndpoint{
-		{tag: "fixture-cloud/us", provider: "Fixture Cloud", context: 200000, output: 64000, prompt: "0.0000033", completion: "0.0000165"},
-		{tag: "fixture-cloud", provider: "Fixture Cloud", context: 200000, output: 64000, prompt: "0.000003", completion: "0.000015"},
+	fakeORFinder = fakeORModel{id: "vendor/generator", context: 200000, output: 64000, prompt: "0.000003", completion: "0.000015", reasoning: true, zdr: []fakeOREndpoint{
+		{tag: "fixture-cloud/us", provider: "Fixture Cloud", context: 200000, output: 64000, prompt: "0.0000033", completion: "0.0000165", reasoning: true},
+		{tag: "fixture-cloud", provider: "Fixture Cloud", context: 200000, output: 64000, prompt: "0.000003", completion: "0.000015", reasoning: true},
 		{tag: "fixture-safety/global", provider: "Fixture Safety", context: 200000, output: 64000, prompt: "0.000001", completion: "0.000002", safety: true},
 	}}
 	fakeORChecker = fakeORModel{id: "other/verifier", context: 128000, output: 16000, prompt: "0.0000005", completion: "0.0000015", zdr: []fakeOREndpoint{

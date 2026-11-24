@@ -16,6 +16,7 @@ type chatRequestWire struct {
 	Messages       []chatRequestMessage `json:"messages"`
 	MaxTokens      uint32               `json:"max_tokens"`
 	Stream         bool                 `json:"stream"`
+	Reasoning      *chatReasoning       `json:"reasoning,omitempty"`
 }
 
 type chatResponseFormat struct {

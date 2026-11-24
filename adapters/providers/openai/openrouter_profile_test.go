@@ -68,7 +68,7 @@ func TestOpenRouterV2ProfileRequiresZDRAndPinsObservedSlugs(t *testing.T) {
 }
 
 func TestOpenRouterV2ProfileRefusesReviewedFields(t *testing.T) {
-	for _, name := range []string{"account", "single slug", "window", "nil slugs", "duplicate slug", "bad slug", "v1 with slugs"} {
+	for _, name := range []string{"account", "single slug", "window", "nil slugs", "duplicate slug", "bad slug", "v1 with slugs", "v1 with reasoning"} {
 		config := openRouterV2Config(t, []string{"fixture-a"})
 		authority := config.OpenRouterAuthority
 		switch name {
@@ -87,6 +87,10 @@ func TestOpenRouterV2ProfileRefusesReviewedFields(t *testing.T) {
 		case "v1 with slugs":
 			config.RequestProfile = RequestProfileOpenRouterZDRChatV1
 			authority.AccountPolicyIdentity, authority.ProviderSlug = strings.Repeat("e", 64), "fixture-a"
+			authority.ValidFrom, authority.ValidUntil = time.Unix(1, 0), time.Unix(2_000_000_000, 0)
+		case "v1 with reasoning":
+			config.RequestProfile = RequestProfileOpenRouterZDRChatV1
+			authority.AccountPolicyIdentity, authority.ProviderSlug, authority.ProviderSlugs, authority.Reasoning = strings.Repeat("e", 64), "fixture-a", nil, true
 			authority.ValidFrom, authority.ValidUntil = time.Unix(1, 0), time.Unix(2_000_000_000, 0)
 		}
 		if adapter, err := New(config); err == nil && adapter.Validate() == nil {
@@ -108,5 +112,53 @@ func TestGenericOpenRouterConnectionReadsOpenRouterUsage(t *testing.T) {
 	other, _ := provider.ParseServiceEndpoint("https://provider.example/v1")
 	if _, err := (&Adapter{protocol: ProtocolChatCompletions, endpoint: other}).normalizeProviderResponse(openRouterDocumentedChatResponse("model"), testRoute(t, "model", "")); err == nil {
 		t.Fatal("another provider accepted the OpenRouter usage extension")
+	}
+}
+
+func requestReasoning(t *testing.T, adapter *Adapter) string {
+	t.Helper()
+	request, err := adapter.newRequest(context.Background(), APIKey{value: "synthetic"}, "vendor/model", 4096, "fixed host instructions", []byte(`{"task":"fixture"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(request.Body)
+	var wire struct {
+		Reasoning json.RawMessage `json:"reasoning"`
+	}
+	if json.Unmarshal(body, &wire) != nil {
+		t.Fatalf("request body: %s", body)
+	}
+	return string(wire.Reasoning)
+}
+
+func TestOpenRouterRequestsAskForLowReasoningOnlyWhereAccepted(t *testing.T) {
+	plain, _ := New(openRouterV2Config(t, []string{"fixture-a"}))
+	if got := requestReasoning(t, plain); got != "" {
+		t.Fatalf("a route whose endpoints may not accept reasoning sent %s", got)
+	}
+	config := openRouterV2Config(t, []string{"fixture-a"})
+	config.OpenRouterAuthority.Reasoning = true
+	reasoning, err := New(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := requestReasoning(t, reasoning); got != `{"effort":"low"}` {
+		t.Fatalf("reasoning route sent %q", got)
+	}
+	if reasoning.ConfigurationIdentity() == plain.ConfigurationIdentity() {
+		t.Fatal("the reasoning effort is not part of the configuration identity")
+	}
+	unpinned := openRouterV2Config(t, []string{})
+	unpinned.OpenRouterAuthority.Reasoning = true
+	if adapter, err := New(unpinned); err == nil && adapter.Validate() == nil {
+		t.Fatal("reasoning admitted without pinned endpoints")
+	}
+	openRouter, _ := provider.ParseServiceEndpoint("https://openrouter.ai/api/v1")
+	if got := requestReasoning(t, &Adapter{protocol: ProtocolChatCompletions, endpoint: openRouter}); got != `{"effort":"low"}` {
+		t.Fatalf("generic OpenRouter connection sent %q", got)
+	}
+	other, _ := provider.ParseServiceEndpoint("https://provider.example/v1")
+	if got := requestReasoning(t, &Adapter{protocol: ProtocolChatCompletions, endpoint: other}); got != "" {
+		t.Fatalf("another provider was sent %s", got)
 	}
 }

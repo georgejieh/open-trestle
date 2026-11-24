@@ -248,7 +248,10 @@ unless the pinned endpoints allow less (see
 [OpenRouter zero data retention](openrouter-zdr-profile.md#the-output-allowance)).
 It is separate from the declared output capacity of each route. A reasoning model
 that spends the whole allowance on its reasoning fails with
-`model_output_exhausted`.
+`model_output_exhausted`. OpenRouter requests ask for low reasoning effort where the
+endpoints accept it, which leaves most of the allowance for the answer (see
+[OpenRouter zero data retention](openrouter-zdr-profile.md#the-two-routes)).
+The wizard names a model that OpenRouter lists as a reasoning model.
 
 The built-in HTTP client gives each request a deadline of two minutes for every
 4096 tokens of its output allowance, with a minimum of two minutes and a maximum
