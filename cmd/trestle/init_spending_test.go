@@ -51,6 +51,8 @@ func TestInitAsksTheSpendingLimitWithADefaultAndSavesItAfterTheSetup(t *testing.
 	}
 	initAssertOutput(t, result,
 		"Type an amount in US dollars with at most two decimals, such as 10 or 25.50, or none.",
+		"Using the default limit of $20.00 a month. To change it later:",
+		"trestle usage set --credential-env OPEN_TRESTLE_PROVIDER_OPENROUTER --limit USD",
 		"Spending limit: $20.00 a month for this key · alerts at 80% and 100%",
 		"Spending $20.00 a month for this key · alerts at 80%",
 		"Saved a $20.00 monthly limit for OPEN_TRESTLE_PROVIDER_OPENROUTER, alerts at 80% and 100%.",
