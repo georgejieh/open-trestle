@@ -305,7 +305,7 @@ func (m *localModelEndpoint) serve(t *testing.T, w http.ResponseWriter, r *http.
 	}
 
 	if m.removedOnly {
-		m.respond(t, w, packet, removedOnlyModelResult(t, m.model, packet))
+		m.respond(t, w, packet, call, removedOnlyModelResult(t, m.model, packet))
 		return
 	}
 	var changed, caller, removed localModelSource
@@ -417,7 +417,7 @@ func (m *localModelEndpoint) serve(t *testing.T, w http.ResponseWriter, r *http.
 		}
 		result = map[string]any{"schema_version": 1, "verdicts": verdicts}
 	}
-	m.respond(t, w, packet, result)
+	m.respond(t, w, packet, call, result)
 
 }
 
@@ -446,7 +446,7 @@ var localModelRefusals = map[string]struct {
 }
 
 // respond writes one structured model response in the endpoint's wire format.
-func (m *localModelEndpoint) respond(t *testing.T, w http.ResponseWriter, packet localModelPacket, result any) {
+func (m *localModelEndpoint) respond(t *testing.T, w http.ResponseWriter, packet localModelPacket, call int, result any) {
 	text, err := json.Marshal(result)
 	if err != nil {
 		t.Error(err)
@@ -454,7 +454,8 @@ func (m *localModelEndpoint) respond(t *testing.T, w http.ResponseWriter, packet
 	}
 	// malformed_specialist breaks only generation requests that carry a
 	// specialist block, so a general review completes and a specialist fails.
-	if m.mode == "malformed" || m.mode == "malformed_specialist" && len(packet.Specialist) > 0 && string(packet.Specialist) != "null" {
+	// malformed_first breaks only the first answer, so its retry succeeds.
+	if m.mode == "malformed" || m.mode == "malformed_first" && call == 1 || m.mode == "malformed_specialist" && len(packet.Specialist) > 0 && string(packet.Specialist) != "null" {
 		text = []byte(`{"schema_version":2,"candidates":[`)
 	}
 	// template_tokens wraps a valid answer in raw chat-template tokens, and
@@ -479,8 +480,9 @@ func (m *localModelEndpoint) respond(t *testing.T, w http.ResponseWriter, packet
 		finish := "stop"
 		// exhausted mirrors a reasoning model that spent the whole output
 		// allowance before answering: a length stop with empty content.
-		// exhausted_unreported is the same reply without usage.
-		if m.mode == "exhausted" || m.mode == "exhausted_unreported" {
+		// exhausted_unreported is the same reply without usage, and
+		// exhausted_first exhausts only the first answer.
+		if m.mode == "exhausted" || m.mode == "exhausted_unreported" || m.mode == "exhausted_first" && call == 1 {
 			finish, message["content"] = "length", ""
 		}
 		// exhausted_partial stopped at the limit part way through its answer.

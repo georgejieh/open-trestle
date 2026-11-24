@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 
 	"github.com/georgejieh/open-trestle/internal/evidence"
@@ -447,7 +448,9 @@ func parseVerificationDocument(response provider.Response, payload []byte, candi
 // newVerificationResult binds one verdict. baseLines names the removed_lines
 // sources of the request; a verdict on a categorized candidate (recordSides)
 // records each such citation as a base binding. Only a citation on the
-// candidate's own side can cover its location.
+// candidate's own side can cover its location; a verified verdict that cites
+// none also cites the candidate's located source when that source is on the
+// candidate's side, in the request and there is room for it.
 func newVerificationResult(responseIdentity, snapshotIdentity string, candidate CandidateFinding, verdict verificationVerdictDocument, allowed map[string]evidence.EvidenceItem, baseLines map[string]struct{}, recordSides bool) (VerificationResult, error) {
 	outcome, _ := ParseVerificationOutcome(verdict.Outcome)
 	bindings := make([]candidateEvidenceBinding, 0, len(verdict.EvidenceIDs))
@@ -484,7 +487,21 @@ func newVerificationResult(responseIdentity, snapshotIdentity string, candidate 
 			}
 		}
 		if !cited {
-			return VerificationResult{}, ErrVerificationEvidenceRangeMismatch
+			// The verdict is about the candidate, so it cites the source that
+			// holds the candidate's lines even when evidence_ids leaves it out.
+			item, found := allowed[candidate.SourceReferenceID()]
+			_, base := baseLines[candidate.SourceReferenceID()]
+			if !found || base != (candidate.side == LineSideBase) || slices.Contains(verdict.EvidenceIDs, item.ID()) || len(bindings) >= maxCandidateEvidence || !rangeContains(item.SourceRange(), candidate.SourceRange()) {
+				return VerificationResult{}, ErrVerificationEvidenceRangeMismatch
+			}
+			binding := candidateEvidenceBinding{identity: item.ID(), digest: item.Digest(), sourceRange: item.SourceRange()}
+			if base && recordSides {
+				binding.side = LineSideBase
+			}
+			result.evidenceBindings = append(bindings, binding)
+			sort.Slice(result.evidenceBindings, func(left, right int) bool {
+				return result.evidenceBindings[left].identity < result.evidenceBindings[right].identity
+			})
 		}
 	}
 	result.identity = deriveVerificationResultIdentity(result)

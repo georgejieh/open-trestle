@@ -121,10 +121,12 @@ func TestLocalModelReviewReportsExhaustedVerifierOutput(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &wire); err != nil || wire.Status != "failed" || wire.Failure != "internal" || wire.FailureDetail != localreview.FailureDetailModelOutputExhausted {
 		t.Fatalf("result=%+v err=%v", wire, err)
 	}
-	// The exhausted verifier reply reported its usage, so the failed attempt
-	// keeps it and settles from it: the run's tokens and cost are known.
+	// The exhausted verifier reply reported its usage, so each failed attempt,
+	// the first and its one retry, keeps it and settles from it: the run's
+	// tokens and cost are known.
 	const stage = `{"known":true,"route_attempts":1,"input_tokens":100,"output_tokens":100,"cached_input_tokens":0}`
-	const tokens = `"token_usage":{"known":true,"route_attempts":2,"input_tokens":200,"output_tokens":200,"cached_input_tokens":0,"generation":` + stage + `,"verification":` + stage + `}`
+	const retried = `{"known":true,"route_attempts":2,"input_tokens":200,"output_tokens":200,"cached_input_tokens":0}`
+	const tokens = `"token_usage":{"known":true,"route_attempts":3,"input_tokens":300,"output_tokens":300,"cached_input_tokens":0,"generation":` + stage + `,"verification":` + retried + `}`
 	if !strings.Contains(stdout.String(), `"usage_known":true,"actual_cost_micro_usd":0,`+tokens+`,`) || strings.Contains(stdout.String(), "unknown_final_usage") {
 		t.Fatalf("failed verifier attempt usage and cost: %s", stdout.String())
 	}
@@ -132,7 +134,7 @@ func TestLocalModelReviewReportsExhaustedVerifierOutput(t *testing.T) {
 	// and cost, unknown.
 	unreported := newLocalModelFixture(t, localModelFixtureOptions{chatCompletions: true, verificationMode: "exhausted_unreported"})
 	stdout.Reset()
-	const unknown = `"usage_known":false,"actual_cost_micro_usd":0,"token_usage":{"known":false,"route_attempts":2,"generation":` + stage + `,"verification":{"known":false,"route_attempts":1}}`
+	const unknown = `"usage_known":false,"actual_cost_micro_usd":0,"token_usage":{"known":false,"route_attempts":3,"generation":` + stage + `,"verification":{"known":false,"route_attempts":2}}`
 	if code := run(unreported.args, &stdout, &stderr); code != 1 || !strings.Contains(stdout.String(), `"failure_detail":"model_output_exhausted"`) || !strings.Contains(stdout.String(), unknown) || !strings.Contains(stdout.String(), "unknown_final_usage") {
 		t.Fatalf("unreported exhausted reply: %s", stdout.String())
 	}
@@ -140,7 +142,7 @@ func TestLocalModelReviewReportsExhaustedVerifierOutput(t *testing.T) {
 	if !strings.Contains(text, "failure: internal (task verification): model_output_exhausted\nhint: the model used its whole output allowance, usually on reasoning, before finishing its answer") || !strings.Contains(text, "--max-output-tokens") {
 		t.Fatalf("exhausted output not reported: %q", text)
 	}
-	if !strings.Contains(text, "\ntokens: input=200 output=200 cached_input=0 over 2 route attempts\n") {
+	if !strings.Contains(text, "\ntokens: input=300 output=300 cached_input=0 over 3 route attempts\n") || !strings.Contains(text, "\n"+localreview.ModelAnswerRetriedText) {
 		t.Fatalf("exhausted text lacks the token line: %q", text)
 	}
 	// An answer that stopped normally is never reported as an exhausted allowance.
@@ -159,7 +161,7 @@ func TestLocalModelReviewReportsAPartialAnswerAtTheOutputLimit(t *testing.T) {
 	if code := run(f.args, &stdout, &stderr); code != 1 {
 		t.Fatalf("exit=%d stderr=%q", code, stderr.String())
 	}
-	const stage = `{"known":true,"route_attempts":1,"input_tokens":100,"output_tokens":100,"cached_input_tokens":0}`
+	const stage = `{"known":true,"route_attempts":2,"input_tokens":200,"output_tokens":200,"cached_input_tokens":0}`
 	if !strings.Contains(stdout.String(), `"failure":"internal","failure_detail":"model_output_exhausted"`) || !strings.Contains(stdout.String(), `"verification":`+stage) {
 		t.Fatalf("partial answer at the limit: %s", stdout.String())
 	}
@@ -343,6 +345,46 @@ func TestLocalModelReviewRetriesARateLimitedRequest(t *testing.T) {
 	}
 	if calls, _ := f.generation.snapshot(); calls != 1+2 {
 		t.Fatalf("rate-limited route was sent %d requests, want 3", calls)
+	}
+}
+
+// An answer that is not usable, a cut-short finder document or an exhausted
+// verifier allowance, is sent once more on the same route; the second answer
+// completes the review, both requests count in its tokens, and the result
+// says so without the rejected answer.
+func TestLocalModelReviewRetriesAnAnswerThatIsNotUsable(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		options localModelFixtureOptions
+		stage   string
+		calls   [2]int
+	}{
+		{"finder", localModelFixtureOptions{generationMode: "malformed_first"}, "generation", [2]int{2, 1}},
+		{"checker", localModelFixtureOptions{chatCompletions: true, verificationMode: "exhausted_first"}, "verification", [2]int{1, 2}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := newLocalModelFixture(t, test.options)
+			result, stdout := localModelExecute(t, f, f.args, 4)
+			gc, _ := f.generation.snapshot()
+			vc, _ := f.verification.snapshot()
+			if result.RunStatus != "succeeded" || len(result.Diagnostics.Findings) != 1 || gc != test.calls[0] || vc != test.calls[1] {
+				t.Fatalf("run=%s findings=%d calls=%d/%d", result.RunStatus, len(result.Diagnostics.Findings), gc, vc)
+			}
+			retried := `"` + test.stage + `":{"known":true,"route_attempts":2,"input_tokens":200,"output_tokens":200,"cached_input_tokens":0}`
+			if !strings.Contains(stdout, `"token_usage":{"known":true,"route_attempts":3,`) || !strings.Contains(stdout, retried) || !strings.Contains(stdout, `"`+localreview.LimitationModelAnswerRetried+`"`) || strings.Contains(stdout, "model_output") {
+				t.Fatalf("result=%s", stdout)
+			}
+			text := runLocalModelText(t, newLocalModelFixture(t, test.options), 4)
+			if !strings.Contains(text, "\n"+localreview.ModelAnswerRetriedText) || strings.Contains(text, "failure:") {
+				t.Fatalf("text=%q", text)
+			}
+		})
+	}
+	// A review set says so once.
+	f := newLocalModelFixture(t, localModelFixtureOptions{generationMode: "malformed_first"})
+	_, text := runLocalModelSet(t, f, []string{"--specialists", "auto", "--format", "text"}, 4)
+	if strings.Count(text, localreview.ModelAnswerRetriedText) != 1 {
+		t.Fatalf("set text=%q", text)
 	}
 }
 

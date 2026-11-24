@@ -467,8 +467,9 @@ func TestRemovedLinesNeverCoverHeadRanges(t *testing.T) {
 	}
 
 	// Verification: a verified verdict must cite evidence that covers the head
-	// lines; the removed_lines source alone does not, though the plain
-	// coordinate-blind parser would accept it.
+	// lines; the removed_lines source does not, though the plain
+	// coordinate-blind parser would accept it, so the candidate's located head
+	// source is cited in its place.
 	verification, err := NewVerificationRequestContext(payload, packet.Identity(), packet.ReviewScopeIdentity(), packet.MemoryScopeIdentity(), packet.MemoryIdentity(), snapshot, packet.EvidenceItems(), candidates)
 	if err != nil {
 		t.Fatal(err)
@@ -479,8 +480,8 @@ func TestRemovedLinesNeverCoverHeadRanges(t *testing.T) {
 	if _, err := ParseVerificationBatch(verdict(`["`+removedID+`"]`), candidates, verification.EvidenceItems()); err != nil {
 		t.Fatalf("fixture no longer has overlapping base and head lines: %v", err)
 	}
-	if _, err := ParseContextVerificationBatch(verdict(`["`+removedID+`"]`), candidates, verification); !errors.Is(err, ErrVerificationEvidenceRangeMismatch) {
-		t.Fatalf("verification: removed_lines citation covered head lines: %v", err)
+	if batch, err := ParseContextVerificationBatch(verdict(`["`+removedID+`"]`), candidates, verification); err != nil || !slices.Equal(batch.Results()[0].EvidenceIDs(), candidates.Findings()[0].EvidenceIDs()) {
+		t.Fatalf("verification: located head source was not cited: %v", err)
 	}
 	if batch, err := ParseContextVerificationBatch(verdict(`["`+removedID+`","`+windowID+`"]`), candidates, verification); err != nil || len(batch.Results()) != 1 {
 		t.Fatalf("verification: head-cited verdict refused: %v", err)

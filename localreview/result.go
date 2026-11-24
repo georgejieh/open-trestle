@@ -455,8 +455,13 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 	if s.investigation != nil {
 		result = withStyleAdvice(result, style)
 	}
-	if state.Status() == controlplane.ReviewRunFailed && s.routeFailures != nil && s.routeFailures.saw(gateway.RouteFailureOutputExhausted) {
+	// A direct run names an exhausted allowance only when its last request
+	// ended that way, not one an answer retry outlived.
+	if state.Status() == controlplane.ReviewRunFailed && s.routeFailures != nil && (s.investigation != nil && s.routeFailures.saw(gateway.RouteFailureOutputExhausted) || s.investigation == nil && s.routeFailures.lastFailed(gateway.RouteFailureOutputExhausted)) {
 		w.FailureDetail = FailureDetailModelOutputExhausted
+	}
+	if s.routeFailures != nil && s.routeFailures.retriedAnswer() {
+		w.Limitations = append(w.Limitations, LimitationModelAnswerRetried)
 	}
 	if state.Status() == controlplane.ReviewRunFailed && s.routeFailures != nil && w.FailureDetail == "" {
 		if shortfall, ok := s.routeFailures.contextShortfall(); ok {
@@ -498,8 +503,10 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 	}
 	// A direct run records up to 16 events, and each same-route retry after a
 	// rate limit adds a claim, a completion and a settlement, at most
-	// gateway.MaxRateLimitRetries times for each of its two model tasks.
-	auditLimit, maximumAudit := uint16(32), 16+2*3*gateway.MaxRateLimitRetries
+	// gateway.MaxRateLimitRetries times for each of its two model tasks. An
+	// answer retry takes one of those retries, and after a wrong-shape answer
+	// it adds one more rejection event.
+	auditLimit, maximumAudit := uint16(32), 16+2*3*gateway.MaxRateLimitRetries+1
 	if s.investigation != nil {
 		auditLimit, maximumAudit = 1000, 1000
 	}
@@ -717,14 +724,14 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 			execution := verification.RouteExecution()
 			recorded[execution.Authorization().Identity()] = recordedAttempt{execution.Outcome().Usage(), execution.Reconciliation().ActualCost(), tokenStageVerification}
 		}
-		// A direct run claims at most the generation attempt, whose
-		// authorization its recorded input names, and then the verification
-		// attempt.
+		// A direct run claims the generation attempt, whose authorization its
+		// recorded input names, then the verification attempt; a retry of
+		// either sends its request again.
 		stageOf := func(authorization string) tokenStage {
 			switch {
 			case generationAuthorization == "":
 				return tokenStageUnattributed
-			case authorization == generationAuthorization:
+			case authorization == generationAuthorization || s.routeFailures.requestOf(authorization) == w.GenerationRequest:
 				return tokenStageGeneration
 			default:
 				return tokenStageVerification
@@ -983,6 +990,9 @@ func RenderResultWithOptions(writer io.Writer, r Result, options RenderOptions) 
 	}
 	if slices.Contains(r.wire.Limitations, LimitationOpenRouterZDRNotRequired) {
 		buffer.WriteString(ZeroDataRetentionNotRequiredText)
+	}
+	if slices.Contains(r.wire.Limitations, LimitationModelAnswerRetried) {
+		buffer.WriteString(ModelAnswerRetriedText)
 	}
 	if r.wire.TokenUsage != nil {
 		buffer.WriteString(r.wire.TokenUsage.line())

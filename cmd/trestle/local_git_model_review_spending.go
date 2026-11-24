@@ -59,6 +59,8 @@ type reviewSpending struct {
 	mu sync.Mutex
 	// warned is set once the invocation's worst case was checked.
 	warned bool
+	// retried is what the answer retries allowed so far reserve.
+	retried uint64
 }
 
 // invocationRuns is how many review runs an invocation may start.
@@ -186,6 +188,40 @@ func (s *reviewSpending) refuse() bool {
 		s.say(lines...)
 	}
 	return refused
+}
+
+// allowAnswerRetry reports whether a request whose answer was not usable may
+// be sent once more, reserving reserved. With limits it is allowed only when
+// the recorded spend plus the invocation's worst case, every answer retry
+// already allowed and this one could not reach any limit, so a retry never
+// takes a key past its limit; a limit that cannot be read refuses it. Without
+// limits, or without a usage folder, it is allowed.
+func (s *reviewSpending) allowAnswerRetry(reserved uint64) bool {
+	if s == nil || s.store == nil {
+		return true
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	worst := timesRuns(s.worst, s.runs)
+	for _, add := range []uint64{s.retried, reserved} {
+		worst = min(worst, ^uint64(0)-add) + add
+	}
+	now := spendingNow()
+	for _, scope := range s.scopes {
+		limit, found, err := s.store.Limit(scope)
+		if err == nil && !found {
+			continue
+		}
+		var status spending.Status
+		if err == nil {
+			status, err = s.store.CurrentStatus(limit, now)
+		}
+		if err != nil || status.Reached() || status.WouldCross(worst) {
+			return false
+		}
+	}
+	s.retried = min(s.retried, ^uint64(0)-reserved) + reserved
+	return true
 }
 
 // record appends the ledger entry of one run that sent at least one request:

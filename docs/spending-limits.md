@@ -108,6 +108,13 @@ to $1.38." Open Trestle still checks each member before it starts and refuses it
 at the limit. Specialists run concurrently only when no limited key could reach
 its limit during the concurrent wave.
 
+A model answer that is not usable is sent once more (see
+[remote model review](remote-model-review.md#provider-failures)). That retry is a
+second paid request. It is sent only when the recorded spend plus the worst case
+above, every retry already sent in the command and this one could not reach a
+limit; otherwise the review fails on the first answer. A key without a limit
+allows it. Both requests count in the review's cost and requests sent.
+
 After a run that sent at least one request, Open Trestle appends one ledger
 entry. When that entry crosses an alert percentage, one line says so.
 

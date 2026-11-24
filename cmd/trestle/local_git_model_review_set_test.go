@@ -157,17 +157,9 @@ func droppedReason(receipt localModelSetReceipt, id string) string {
 	return ""
 }
 
-// memberTokens is the token_usage of a member whose route attempts each
-// reported 100 input and 100 output tokens: generation, then verification.
-func memberTokens(attempts int) string {
-	stage := `{"known":true,"route_attempts":1,"input_tokens":100,"output_tokens":100,"cached_input_tokens":0}`
-	verification := stage
-	if attempts == 1 {
-		verification = `{"known":true,"route_attempts":0,"input_tokens":0,"output_tokens":0,"cached_input_tokens":0}`
-	}
-	total := attempts * 100
-	return fmt.Sprintf(`{"known":true,"route_attempts":%d,"input_tokens":%d,"output_tokens":%d,"cached_input_tokens":0,"generation":%s,"verification":%s}`, attempts, total, total, stage, verification)
-}
+// memberTokens is the token_usage of a member whose generation and
+// verification attempts each reported 100 input and 100 output tokens.
+const memberTokens = `{"known":true,"route_attempts":2,"input_tokens":200,"output_tokens":200,"cached_input_tokens":0,"generation":{"known":true,"route_attempts":1,"input_tokens":100,"output_tokens":100,"cached_input_tokens":0},"verification":{"known":true,"route_attempts":1,"input_tokens":100,"output_tokens":100,"cached_input_tokens":0}}`
 
 func TestParseSpecialistRequest(t *testing.T) {
 	for name, tc := range map[string]struct {
@@ -378,7 +370,7 @@ func TestRunLocalGitModelReviewAutoSpecialistsRunsAndMerges(t *testing.T) {
 		if member.GenerationRoute != f.generationRoute || member.VerificationRoute != f.verificationRoute || !member.UsageKnown {
 			t.Fatal("member did not use the runtime policy route pair")
 		}
-		if tokens, err := json.Marshal(member.TokenUsage); err != nil || string(tokens) != memberTokens(2) {
+		if tokens, err := json.Marshal(member.TokenUsage); err != nil || string(tokens) != memberTokens {
 			t.Fatalf("member %s token usage = %s", member.Member, tokens)
 		}
 		runs[member.ReviewRunID] = true
@@ -566,23 +558,22 @@ func TestRunLocalGitModelReviewSpecialistFailureStopsFurtherMembers(t *testing.T
 			if skipped.Member != "backend" || skipped.Launched || skipped.NotLaunchedReason != "stopped_after_bug_hunter_failed" || skipped.ReviewRunID != "" {
 				t.Fatalf("further member was launched or mislabeled: %+v", skipped)
 			}
-			// The failed specialist's rejected generation was dispatched and
-			// reported its usage; the member that never ran reports none.
-			for _, member := range []struct {
-				name     string
-				tokens   *localreview.TokenUsage
-				attempts int
-			}{{"general", general.TokenUsage, 2}, {"bug_hunter", failed.TokenUsage, 1}} {
-				if tokens, err := json.Marshal(member.tokens); err != nil || string(tokens) != memberTokens(member.attempts) {
-					t.Fatalf("member %s token usage = %s", member.name, tokens)
-				}
+			// The failed specialist's rejected generation and its one retry were
+			// dispatched and reported their usage; the member that never ran
+			// reports none.
+			if tokens, err := json.Marshal(general.TokenUsage); err != nil || string(tokens) != memberTokens {
+				t.Fatalf("member general token usage = %s", tokens)
+			}
+			const retried = `{"known":true,"route_attempts":2,"input_tokens":200,"output_tokens":200,"cached_input_tokens":0,"generation":{"known":true,"route_attempts":2,"input_tokens":200,"output_tokens":200,"cached_input_tokens":0},"verification":{"known":true,"route_attempts":0,"input_tokens":0,"output_tokens":0,"cached_input_tokens":0}}`
+			if tokens, err := json.Marshal(failed.TokenUsage); err != nil || string(tokens) != retried {
+				t.Fatalf("member bug_hunter token usage = %s", tokens)
 			}
 			if skipped.TokenUsage != nil {
 				t.Fatalf("member that never ran reports token usage %+v", skipped.TokenUsage)
 			}
 			gc, _ := f.generation.snapshot()
 			vc, _ := f.verification.snapshot()
-			if gc != 2 || vc != 1 {
+			if gc != 3 || vc != 1 {
 				t.Fatalf("model calls=%d/%d after a member failure", gc, vc)
 			}
 			if len(receipt.Findings) != 1 || receipt.Findings[0].Contributors[0].Member != "general" || receipt.Findings[0].Severity != "error" {

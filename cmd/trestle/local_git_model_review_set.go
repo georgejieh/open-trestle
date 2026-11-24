@@ -1066,13 +1066,17 @@ func renderModelReviewSetText(set modelReviewSetWire, options localreview.Render
 		fmt.Fprintf(&buffer, "source coverage: analyzed=%d selected=%d omitted=%d\n", coverage.Analyzed, coverage.Selected, coverage.Omitted)
 	}
 	usages := make([]*localreview.TokenUsage, 0, len(set.Members))
-	zeroDataRetentionNotRequired := false
+	zeroDataRetentionNotRequired, answerRetried := false, false
 	for _, member := range set.Members {
 		usages = append(usages, member.TokenUsage)
 		zeroDataRetentionNotRequired = zeroDataRetentionNotRequired || slices.Contains(member.Limitations, localreview.LimitationOpenRouterZDRNotRequired)
+		answerRetried = answerRetried || slices.Contains(member.Limitations, localreview.LimitationModelAnswerRetried)
 	}
 	if zeroDataRetentionNotRequired {
 		buffer.WriteString(localreview.ZeroDataRetentionNotRequiredText)
+	}
+	if answerRetried {
+		buffer.WriteString(localreview.ModelAnswerRetriedText)
 	}
 	if line := localreview.TotalTokensLine(usages); line != "" {
 		buffer.WriteString(strings.Replace(line, "\n", fmt.Sprintf(" (%d reviewer%s)\n", len(reviewers), map[bool]string{true: "", false: "s"}[len(reviewers) == 1]), 1))

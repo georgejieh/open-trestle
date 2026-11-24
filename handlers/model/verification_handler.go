@@ -33,6 +33,9 @@ type VerificationHandler struct {
 	// answerRejected, when set, is told the class of each answer recorded as
 	// model_output_invalid.
 	answerRejected AnswerRejectionObserver
+	// answerRetry, when set, lets a request whose answer was not usable be
+	// sent once more.
+	answerRetry AnswerRetryGate
 }
 
 // WithAnswerRejectionObserver returns a copy of h that tells observe the class
@@ -40,6 +43,14 @@ type VerificationHandler struct {
 func (h *VerificationHandler) WithAnswerRejectionObserver(observe AnswerRejectionObserver) *VerificationHandler {
 	copied := *h
 	copied.answerRejected = observe
+	return &copied
+}
+
+// WithAnswerRetry returns a copy of h that sends a request once more when its
+// answer was not usable and gate allows the retry's reservation.
+func (h *VerificationHandler) WithAnswerRetry(gate AnswerRetryGate) *VerificationHandler {
+	copied := *h
+	copied.answerRetry = gate
 	return &copied
 }
 
@@ -227,19 +238,18 @@ func (h *VerificationHandler) Execute(ctx context.Context, task controlplane.Tas
 	send := func(ctx context.Context, authorization gateway.RouteAttemptAuthorization) (gateway.RouteDispatchResult, error) {
 		return dispatchAuthorizedSanitizedRouteFromCatalog(ctx, h.catalog, authorization, dispatchRequest, dispatchProof)
 	}
-	attempt, failed, settled := settleRouteAttempts(ctx, task, h.ledger, h.clock, h.wait, authority.Authorization(), started, send)
+	var verification review.VerificationBatch
+	parse := func(attempt routeAttempt) error {
+		var err error
+		verification, err = review.ParseContextVerificationBatch(attempt.result.Response(), generation.Candidates(), verificationContext)
+		return err
+	}
+	attempt, failed, settled := settleAnswer(ctx, task, h.ledger, h.clock, h.wait, h.answerRetry, authority.Authorization(), started, send, parse, h.answerRejected)
 	if !settled {
 		return failed
 	}
-	// After a rate-limited retry the last attempt holds its own authorization.
-	authorization, dispatch, outcome, reconciliation, finished := attempt.authorization, attempt.result, attempt.outcome, attempt.reconciliation, attempt.finished
-	if dispatch.Status() == gateway.RouteDispatchFailed {
-		return routeFailureCompletion(task, dispatch)
-	}
-	verification, err := review.ParseContextVerificationBatch(dispatch.Response(), generation.Candidates(), verificationContext)
-	if err != nil {
-		return answerFailureCompletion(task, dispatch.Response(), err, h.answerRejected)
-	}
+	// After a retry the last attempt holds its own authorization.
+	authorization, outcome, reconciliation, finished := attempt.authorization, attempt.outcome, attempt.reconciliation, attempt.finished
 	output, err := gateway.NewSuccessfulRouteOutputReceipt(gateway.RouteOutputVerificationBatch, verificationContext.Identity(), verification.Identity(), dispatchRequest, authorization, outcome)
 	if err != nil {
 		return generationFailure(controlplane.RunFailureInternal)

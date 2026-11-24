@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/georgejieh/open-trestle/internal/review"
+	"github.com/georgejieh/open-trestle/localreview"
 	"github.com/georgejieh/open-trestle/spending"
 )
 
@@ -236,6 +237,44 @@ func TestModelReviewCountsUnknownUsageAtTheReservation(t *testing.T) {
 	// counts at its reservation, which the $1.00 per-request bound caps.
 	if entry.UsageKnown || entry.CostKind() != spending.CostReservationUpperBound || entry.RequestsSent != 2 || entry.CostMicroUSD <= 280 || entry.CostMicroUSD > 280+1_000_000 {
 		t.Fatalf("entry=%+v", entry)
+	}
+}
+
+// A verifier answer that is not JSON is sent once more: the review completes,
+// and both verification requests count in its cost, tokens and ledger entry.
+func TestModelReviewCountsAnAnswerRetryInItsSpend(t *testing.T) {
+	store := spendingTestStore(t)
+	args, transport := spendingReviewSetup(t, "json")
+	transport.invalidVerifications = 1
+	var stdout, stderr bytes.Buffer
+	code := run(args, &stdout, &stderr)
+	var receipt map[string]any
+	if code != 4 || json.Unmarshal(stdout.Bytes(), &receipt) != nil || receipt["status"] != "findings" || receipt["actual_cost_micro_usd"] != float64(840) || len(transport.requests) != 3 {
+		t.Fatalf("review exit=%d out=%s err=%s requests=%v", code, stdout.String(), stderr.String(), transport.requests)
+	}
+	if !strings.Contains(stdout.String(), `"token_usage":{"known":true,"route_attempts":3,`) || !strings.Contains(stdout.String(), `"`+localreview.LimitationModelAnswerRetried+`"`) || strings.Contains(stdout.String(), "<|message|>") {
+		t.Fatalf("the retry is not reported: %s", stdout.String())
+	}
+	entries := spendingMonthEntries(t, store)
+	if len(entries) != 1 || entries[0].RequestsSent != 3 || entries[0].CostMicroUSD != 840 || !entries[0].UsageKnown {
+		t.Fatalf("entries=%+v", entries)
+	}
+}
+
+// An answer retry that could take a key past its limit is not sent: the
+// review fails on the first answer, as without a retry.
+func TestModelReviewRefusesAnAnswerRetryNearTheSpendingLimit(t *testing.T) {
+	store := spendingTestStore(t)
+	args, transport := spendingReviewSetup(t, "json")
+	transport.invalidVerifications = 1
+	spendingTestLimit(t, store, 10_000, spending.DefaultAlertPercents)
+	var stdout, stderr bytes.Buffer
+	code := run(args, &stdout, &stderr)
+	if code != 1 || len(transport.requests) != 2 || !strings.Contains(stdout.String(), `"failure_detail":"model_output_invalid","model_output_problem":"not_json"`) || strings.Contains(stdout.String(), localreview.LimitationModelAnswerRetried) {
+		t.Fatalf("review exit=%d out=%s requests=%v", code, stdout.String(), transport.requests)
+	}
+	if entries := spendingMonthEntries(t, store); len(entries) != 1 || entries[0].RequestsSent != 2 {
+		t.Fatalf("entries=%+v", entries)
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -128,8 +129,14 @@ func TestParseVerificationBatchEnforcesVerifiedEvidence(t *testing.T) {
 	}
 	otherRange, _ := evidence.NewSourceRange("internal/other.go", 1, 1)
 	otherItem, _ := evidence.NewEvidenceItem("other-evidence", evidence.EvidenceKindSource, strings.Repeat("c", 64), otherRange)
-	items = append(items, otherItem)
-	if batch, err := ParseVerificationBatch(response, candidates, items); !errors.Is(err, ErrVerificationEvidenceRangeMismatch) || batch.Identity() != "" {
+	// A verdict that cites only evidence outside the candidate's lines also
+	// cites the candidate's located source.
+	batch, err := ParseVerificationBatch(response, candidates, append(slices.Clone(items), otherItem))
+	if err != nil || !slices.Equal(batch.Results()[0].EvidenceIDs(), []string{"evidence-1", "other-evidence"}) || batch.Validate() != nil {
+		t.Fatalf("implicit source citation = %v", err)
+	}
+	// Without that source in the request nothing covers the lines.
+	if batch, err := ParseVerificationBatch(response, candidates, []evidence.EvidenceItem{otherItem}); !errors.Is(err, ErrVerificationEvidenceRangeMismatch) || batch.Identity() != "" {
 		t.Fatalf("range mismatch = (%#v, %v)", batch, err)
 	}
 }

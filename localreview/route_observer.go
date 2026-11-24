@@ -40,6 +40,12 @@ type routeFailureObserver struct {
 	// answerProblem is the class of the last answer a model handler recorded
 	// as model_output_invalid.
 	answerProblem review.ModelOutputProblem
+	// answerRetried reports that a request was sent once more after an
+	// answer that was not usable.
+	answerRetried bool
+	// requests names the request each dispatched authorization sent, so a
+	// retry's attempt is counted in its request's stage.
+	requests map[string]string
 }
 
 // SpendObservation is what one run's model requests may have cost, for the
@@ -160,6 +166,52 @@ func (o *routeFailureObserver) reset() {
 	o.lastOpenRouter = false
 	o.spend = SpendObservation{}
 	o.answerProblem = ""
+	o.answerRetried = false
+	o.requests = nil
+}
+
+// recordAnswerRetry notes that a request was sent once more after an answer
+// that was not usable.
+func (o *routeFailureObserver) recordAnswerRetry() {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.answerRetried = true
+}
+
+func (o *routeFailureObserver) retriedAnswer() bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.answerRetried
+}
+
+// recordRequest notes the request an authorization dispatched.
+func (o *routeFailureObserver) recordRequest(authorization, request string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.requests == nil {
+		o.requests = map[string]string{}
+	}
+	if len(o.requests) < maxObservedRouteUsages {
+		o.requests[authorization] = request
+	}
+}
+
+// requestOf returns the request an authorization dispatched, or "".
+func (o *routeFailureObserver) requestOf(authorization string) string {
+	if o == nil {
+		return ""
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.requests[authorization]
+}
+
+// lastFailed reports whether the most recent dispatch failed with failure
+// after its request was sent.
+func (o *routeFailureObserver) lastFailed(failure gateway.RouteFailureClass) bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.last == failure
 }
 
 // recordAnswerProblem keeps the class of an answer a model handler recorded
@@ -232,6 +284,7 @@ func (d observedRouteDispatcher) DispatchRoute(ctx context.Context, request gate
 	d.observer.record(request.Authorization().Identity(), request.Request().Capability(), request.Authorization().Pricing(), result)
 	d.observer.recordSent(request.Authorization().Identity(), request.Authorization().ReservedCostMicroUSD(), result)
 	d.observer.recordRoute(request.Authorization().RouteReference())
+	d.observer.recordRequest(request.Authorization().Identity(), request.Authorization().RequestIdentity())
 	return result
 }
 
@@ -248,6 +301,7 @@ func (d observedSanitizedRouteDispatcher) DispatchSanitizedRoute(ctx context.Con
 	d.observer.record(request.Authorization().Identity(), request.Request().Capability(), request.Authorization().Pricing(), result)
 	d.observer.recordSent(request.Authorization().Identity(), request.Authorization().ReservedCostMicroUSD(), result)
 	d.observer.recordRoute(request.Authorization().RouteReference())
+	d.observer.recordRequest(request.Authorization().Identity(), request.Authorization().RequestIdentity())
 	return result
 }
 
