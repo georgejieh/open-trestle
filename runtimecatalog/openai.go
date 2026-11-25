@@ -163,6 +163,7 @@ func NewOpenAIRouteDispatcherCatalogWithOptions(inventory runtimeconfig.RouteInv
 				profileAuthority.ProviderSlugs = append([]string{}, authority.ProviderSlugs()...)
 				witness, _ := inventory.OpenRouterObservedWitness(authority.RouteRecordIdentity())
 				profileAuthority.Reasoning = witness.Reasoning
+				profileAuthority.StructuredVerification = authority.StructuredVerification()
 			}
 			profileClock = options.Clock
 		}

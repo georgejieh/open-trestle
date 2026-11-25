@@ -405,14 +405,17 @@ The status and CI disposition of the set follow the members:
 
 | Set | `status` | `ci_disposition` | Default exit |
 |---|---|---|---|
-| A member did not complete and an introduced merged finding is high or critical | most serious member status | `blocked` | 4 |
-| A member did not complete, no such finding | most serious member status | `failed` gives `error`, `refused` gives `blocked`, otherwise `inconclusive` | 1, 4 or 3 |
+| The general review completed and a specialist failed, with an introduced medium, high or critical merged finding | `findings` | `blocked` | 4 |
+| The general review completed and a specialist failed, every merged finding low severity or pre-existing | `findings` | `inconclusive` | 3 |
+| The general review completed and a specialist failed, with no merged finding | `incomplete` | `inconclusive` | 3 |
+| Otherwise a member did not complete and an introduced merged finding is high or critical | most serious member status | `blocked` | 4 |
+| Otherwise a member did not complete, no such finding | most serious member status | `failed` gives `error`, `refused` gives `blocked`, otherwise `inconclusive` | 1, 4 or 3 |
 | Every member completed, an introduced medium, high or critical merged finding | `findings` | `blocked` | 4 |
 | Every member completed, every merged finding low severity or [pre-existing](#pre-existing-findings) | `findings` | `inconclusive` | 3 |
 | Every member completed with no candidates | `no_candidates` | `inconclusive` | 3 |
 | Every member completed, otherwise | `incomplete` | `inconclusive` | 3 |
 
-An incomplete set never demotes the verified high or critical finding of a completed member. A check regression makes any set `blocked` and keeps its status.
+An incomplete set never demotes the verified high or critical finding of a completed member. A set with a failed specialist keeps `complete: false`, lists that member's failure, and `trestle review` names it on stderr (`Not finished: backend (failed: internal (task verification): model_output_invalid)`). A check regression makes any set `blocked` and keeps its status.
 
 Text output starts with `status:` and `ci:`, then lists the reviewers that ran (`reviewers: general, bug_hunter, backend (3 of 3 ran)`). A member whose run did not succeed gets a `not finished:` line and a `hint:` line, and a member that was not started gets a `not run:` line. The walkthrough, the merged findings in rank order (each with a `confirmed by:` line and, when wordings were merged, an `also reported as:` line), the pre-existing findings, the hidden count, the token total, the style advice and `comprehensive clearance: false` follow. `--verbose` adds the selection trace, one `member:` line for each member and the `limitations:` list. `--format markdown` renders the set as a pull request summary. The SARIF output is one run whose results are the merged findings, each with a `trestleContributors` property.
 

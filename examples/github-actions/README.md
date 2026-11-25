@@ -6,10 +6,11 @@ alerts (SARIF), as inline pull-request review comments, and as a job summary. It
 reuses `github/codeql-action/upload-sarif` and `reviewdog`, and Open Trestle posts
 nothing to GitHub itself in this path.
 
-Status: this workflow has never run on GitHub. The Open Trestle side (SARIF, exit
-policy, checkout diagnostics) is tested offline. The workflow file itself is
-checked only for being well-formed YAML and for its `jq` escaping module. Treat
-every GitHub-facing step as unverified, and read the logs of your first run. See
+Status: this workflow has run on a GitHub-hosted `ubuntu-24.04` runner in a
+private repository, with the `openrouter-zdr` provider in place of
+`ollama-cloud`. The build, install, setup, review with repository checks,
+reviewdog comments and job summary worked. The `upload-sarif` step is unverified,
+because that repository had no code scanning. Read the logs of your first run. See
 [GitHub pull-request review](../../docs/github-pr-review.md).
 
 ## Before you copy it
@@ -18,8 +19,10 @@ Make these five changes before you use the workflow.
 
 1. Check the install step. No Open Trestle release exists yet, so the workflow
    builds the unsigned Linux candidate from source, following
-   [operations](../../docs/operations.md). That step is untested on a hosted
-   runner and takes a while. The commented `PLACEHOLDER` block shows where a
+   [operations](../../docs/operations.md). That step takes about four minutes.
+   It installs into a private folder under `RUNNER_TEMP`, because
+   `/usr/local/bin` on a hosted runner is writable by every user and the
+   installer refuses a system install there. The commented `PLACEHOLDER` block shows where a
    pinned release artifact and its checksum go once one exists. Set
    `OPEN_TRESTLE_REF` to a commit SHA.
 2. Set the models. Set `GENERATION_MODEL` and `VERIFICATION_MODEL` to two
@@ -49,20 +52,29 @@ Make these five changes before you use the workflow.
   `github.event.pull_request.base.sha` and `head.sha` (passed through `env`, not
   interpolated into a script). The merge base is the comparison that GitHub shows for the pull request.
 - It runs `trestle setup bootstrap init`, then `check`, then the printed review
-  command. Because `init` is not given `--specialists none`, that command carries
+  command. `init` runs without the key and so reports the setup as pending
+  (exit 3), which the step accepts; `check` runs with the key. Because `init` is not given `--specialists none`, that command carries
   `--specialists auto`. The job then runs the general review plus the specialists
   that Open Trestle selects, one after another, and each is a paid model run. Add
   `--specialists none` to the `init` step for a single review. The job runs the
   command with `--format text` replaced by
   `--format sarif --exit-code-policy findings`, and with the base and head set to
   that merge base and `head.sha`.
+- It adds `--repository-checks`, so the repository's own tests run in a sandbox
+  on base and head, and a test that passes on base and fails on head fails the
+  job. The sandbox needs unprivileged user namespaces, which `ubuntu-24.04`
+  runners restrict, so the step first runs
+  `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0` for that job's
+  virtual machine. Without that line the review still runs and reports that the
+  checks could not. Remove the line and the flag to skip the checks.
 - It uploads SARIF to code scanning only when the SARIF run property
   `trestleRunStatus` is `succeeded` (a `jq` check). The SARIF of a refused, failed
   or canceled run has no results, and uploading it could close open alerts as if
   they were fixed. The upload passes `sha` (the pull request head) and `ref`
   (`refs/pull/<number>/head`), because `upload-sarif` otherwise uses `github.sha`,
   the temporary merge commit. Those inputs come from the `upload-sarif`
-  documentation and are unverified live.
+  documentation and are unverified live. On a repository without code scanning
+  the step fails and the job is red whatever the review found.
 - It lists findings in rank order. A finding on unchanged lines that the change
   provably cannot reach carries `trestlePreExisting` in the SARIF properties.
   Under `--exit-code-policy findings`, that finding and any medium or low finding

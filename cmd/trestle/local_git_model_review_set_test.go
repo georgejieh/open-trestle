@@ -546,9 +546,10 @@ func TestRunLocalGitModelReviewSpecialistFailureStopsFurtherMembers(t *testing.T
 		t.Run(tc.policy, func(t *testing.T) {
 			f := newLocalModelFixture(t, localModelFixtureOptions{generationMode: "malformed_specialist"})
 			receipt, _ := runLocalModelSet(t, f, []string{"--specialists", "bug_hunter,backend", "--exit-code-policy", tc.policy}, tc.code)
-			// A failed member makes the set incomplete, but the general review's
-			// verified error-severity finding still blocks: it is never demoted.
-			if receipt.Status != "failed" || receipt.CI != "blocked" || receipt.Complete || len(receipt.Members) != 3 || receipt.Summary.MembersRun != 2 {
+			// A failed specialist makes the set incomplete but not failed: the
+			// general review finished, and its verified error-severity finding
+			// still blocks.
+			if receipt.Status != "findings" || receipt.CI != "blocked" || receipt.Complete || len(receipt.Members) != 3 || receipt.Summary.MembersRun != 2 {
 				t.Fatalf("receipt=%+v", receipt)
 			}
 			general, failed, skipped := receipt.Members[0], receipt.Members[1], receipt.Members[2]
@@ -615,10 +616,25 @@ func TestRunLocalGitModelReviewSetSARIFAndExitPolicy(t *testing.T) {
 			t.Fatalf("incomplete set SARIF=%q", text)
 		}
 	})
-	t.Run("incomplete set without error finding is not blocked", func(t *testing.T) {
+	t.Run("failed specialist keeps the finished findings", func(t *testing.T) {
 		f := newLocalModelFixture(t, localModelFixtureOptions{generationMode: "malformed_specialist", verificationMode: "medium"})
-		receipt, _ := runLocalModelSet(t, f, []string{"--specialists", "bug_hunter"}, 1)
-		if receipt.Complete || receipt.Status != "failed" || receipt.CI != "error" || len(receipt.Findings) != 1 || receipt.Findings[0].Severity == "error" {
+		receipt, _ := runLocalModelSet(t, f, []string{"--specialists", "bug_hunter"}, 4)
+		if receipt.Complete || receipt.Status != "findings" || receipt.CI != "blocked" || len(receipt.Findings) != 1 || receipt.Findings[0].Severity == "error" {
+			t.Fatalf("receipt=%+v", receipt)
+		}
+		// The outcome a person is told names the reviewer that did not finish.
+		observed := newLocalModelFixture(t, localModelFixtureOptions{generationMode: "malformed_specialist", verificationMode: "medium"})
+		var outcome modelReviewOutcome
+		var stdout, stderr bytes.Buffer
+		runLocalGitModelReviewObserved(context.Background(), append(append([]string{}, observed.args[2:]...), "--specialists", "bug_hunter"), &stdout, &stderr, func(value modelReviewOutcome) { outcome = value })
+		if outcome.status != "findings" || strings.Join(outcome.unfinished, "|") != "bug_hunter (failed: internal (task candidates): model_output_invalid)" {
+			t.Fatalf("outcome=%+v", outcome)
+		}
+	})
+	t.Run("failed specialist without findings is incomplete", func(t *testing.T) {
+		f := newLocalModelFixture(t, localModelFixtureOptions{generationMode: "malformed_specialist", verificationMode: "inconclusive"})
+		receipt, _ := runLocalModelSet(t, f, []string{"--specialists", "bug_hunter"}, 3)
+		if receipt.Complete || receipt.Status != "incomplete" || receipt.CI != "inconclusive" || len(receipt.Findings) != 0 || receipt.Members[1].Status != "failed" {
 			t.Fatalf("receipt=%+v", receipt)
 		}
 	})

@@ -65,6 +65,8 @@ Because the request requires ZDR, OpenRouter refuses it instead of sending it to
 
 A request also carries `"reasoning":{"effort":"low"}` when every pinned endpoint lists `reasoning` among its supported parameters. Reasoning tokens count against `max_tokens`, and OpenRouter documents low effort as about a fifth of the allowance, so the answer keeps room (the model provider decides the exact use). With `require_parameters` true, OpenRouter would not route a request to an endpoint that lacks a parameter it carries, so a route with any other endpoint, or with no recorded slugs, sends no `reasoning` member.
 
+A verification request also carries `response_format` with the request's output schema (`json_schema`, `strict` true) when every pinned endpoint of the verification route supports structured outputs. The endpoint then constrains the checker's answer to that schema. Open Trestle still checks every answer as before. Generation requests send no `response_format`. Each verification reservation counts the schema's bytes.
+
 The 16384-token allowance that setup aims for gets the longest request deadline, five minutes (see [the request deadline](remote-model-review.md#output-allowance-and-request-deadline)).
 
 The setup summary, `bootstrap check` (`data_retention: required_per_request`) and the wizard all say that ZDR is required on every request. This describes the request, not what a provider retains. OpenRouter documents legal exceptions to ZDR, such as CSAM handling.
