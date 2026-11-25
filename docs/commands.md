@@ -241,7 +241,7 @@ Keys
     -> trestle keys set OPEN_TRESTLE_PROVIDER_OLLAMA_CLOUD
 ```
 
-It ends with `All checks passed.` or a numbered list of the problems, each with
+It ends with `All checks passed.`, with `Nothing to fix.` and a count of the rows marked for attention, or with a numbered list of the problems, each with
 its command. Only `✗` rows are problems: `…` needs attention and `–` is
 optional or not set up, and neither fails. Outside a Git checkout the
 repository and setup sections say so and the rest still run.

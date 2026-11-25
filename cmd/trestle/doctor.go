@@ -117,7 +117,19 @@ func renderDoctor(p outPrinter, report doctorReport) {
 	}
 	p.sayVerbatim("")
 	if report.Passed {
-		p.sayVerbatim(p.style.paint(initToneSuccess, "All checks passed."))
+		attention := 0
+		for _, section := range report.Sections {
+			for _, row := range section.Rows {
+				if row.State == healthAttention {
+					attention++
+				}
+			}
+		}
+		if attention == 0 {
+			p.sayVerbatim(p.style.paint(initToneSuccess, "All checks passed."))
+		} else {
+			p.sayVerbatim(p.style.paint(initToneWarning, fmt.Sprintf("Nothing to fix. %d row%s above need%s a look.", attention, initPlural(attention), map[bool]string{true: "s", false: ""}[attention == 1])))
+		}
 		return
 	}
 	p.sayVerbatim(p.style.paint(initToneDanger, fmt.Sprintf("%d problem%s to fix:", len(report.Problems), initPlural(len(report.Problems)))))

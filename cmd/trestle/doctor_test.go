@@ -165,7 +165,7 @@ func TestDoctorOutsideARepositoryRunsTheRest(t *testing.T) {
 	assertInOrder(t, out,
 		"✓ Scanner", "… Checkout this folder is not inside a Git checkout, or git is not installed", "-> cd REPOSITORY && trestle doctor",
 		"– Folder not checked: no Git checkout here", "– Key not checked: no usable setup", "– Spending not checked: no usable setup",
-		"– Checks not checked: no usable setup", "✓ Sandbox available here", "– Update", "All checks passed.")
+		"– Checks not checked: no usable setup", "✓ Sandbox available here", "– Update", "Nothing to fix. 1 row above needs a look.")
 	// A repository without a setup fails on the setup.
 	code, out, _ = runDoctorIn(t, latestChangeCheckout(t))
 	if code != 1 || !initHas(out, "✗ Folder none for this repository; looked in") || !strings.Contains(out, "  1. Folder: none for this repository") || !strings.HasSuffix(out, "\n     -> trestle init\n") {
