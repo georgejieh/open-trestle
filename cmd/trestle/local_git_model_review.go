@@ -278,6 +278,9 @@ type modelReviewOutcome struct {
 	// regressions counts the tests the repository's own checks proved
 	// broken.
 	regressions int
+	// unfinished names each reviewer of a set that ran but did not finish,
+	// with its failure.
+	unfinished []string
 }
 
 // advisoryOutcomeNote follows the finished-review line of an advisory review.

@@ -7,7 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/georgejieh/open-trestle/internal/gateway"
 	"github.com/georgejieh/open-trestle/internal/provider"
+	"github.com/georgejieh/open-trestle/internal/review"
 )
 
 // Every value below is a synthetic offline fixture, not an observation of
@@ -279,6 +281,54 @@ func TestObservedOpenRouterWitnessReportsReasoningOnlyWhenEveryPinnedEndpointAcc
 				if !ok || fields.Reasoning != form.want {
 					t.Fatalf("reasoning = %v (ok %v), want %v", fields.Reasoning, ok, form.want)
 				}
+			}
+		})
+	}
+}
+
+// Structured verification is read from the witness and applies only to the
+// policy's verification route.
+func TestObservedOpenRouterStructuredVerificationOnlyOnTheVerificationRoute(t *testing.T) {
+	for _, form := range []struct {
+		name               string
+		structured         []bool
+		verification, want bool
+	}{{"verification route", []bool{true, true}, true, true}, {"generation route", []bool{true, true}, false, false}, {"one endpoint without", []bool{true, false}, true, false}} {
+		t.Run(form.name, func(t *testing.T) {
+			witness := observedWitnessFixture([]string{"fixture-a/fp8", "fixture-b"}, "openrouter_api", true)
+			for i, endpoint := range witness["observation"].(map[string]any)["zdr_endpoints"].([]any) {
+				endpoint.(map[string]any)["structured_outputs"] = form.structured[i]
+			}
+			inventory, wire := observedPolicyDocument(t, witness)
+			if form.verification {
+				wire["pinned_route_record_identity"], wire["verification_route_record_identity"] = wire["verification_route_record_identity"], wire["pinned_route_record_identity"]
+			}
+			policy, err := decodeObservedPolicy(t, inventory, wire)
+			if err != nil {
+				t.Fatalf("policy refused: %v", err)
+			}
+			var routes []gateway.ObservedRouteCandidate
+			for _, observed := range inventory.Candidates() {
+				record := observed.ResolvedRecord().RouteRegistryRecord()
+				if record.RouteCandidateDeclaration().RouteCapabilityDeclaration().RouteReference().AdapterID() != "adapter-a" {
+					continue
+				}
+				routes = append(routes, observed)
+				if fields, ok := inventory.OpenRouterObservedWitness(record.Identity()); !ok || fields.StructuredOutputs != (form.structured[0] && form.structured[1]) {
+					t.Fatalf("structured outputs = %v (ok %v)", fields.StructuredOutputs, ok)
+				}
+			}
+			for _, connection := range policy.Connections() {
+				if connection.AdapterID() == "adapter-a" && connection.BrokeredAuthority().StructuredVerification() != form.want {
+					t.Fatalf("structured verification = %v, want %v", connection.BrokeredAuthority().StructuredVerification(), form.want)
+				}
+			}
+			want := review.ModelRequestTransportStandard
+			if form.want {
+				want = review.ModelRequestTransportLocalStructuredOutput
+			}
+			if got := policy.ModelRequestTransport(routes); got != want {
+				t.Fatalf("transport = %s, want %s", got, want)
 			}
 		})
 	}
