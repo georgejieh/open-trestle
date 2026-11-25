@@ -18,7 +18,7 @@ GOWORK=off GOTOOLCHAIN=go1.26.11 go test ./...
 
 ### Build information
 
-`trestle build-info` and `trestled build-info` print the same JSON about the source: the program name, `source_revision`, `source_tree` and `source_bound`. They start no daemon and read no credentials. Ordinary development builds report empty source identities and `source_bound: false`.
+`trestle build-info` and `trestled build-info` print the same JSON about the source: the program name, `source_revision`, `source_tree` and `source_bound`. They start no daemon and read no credentials. Ordinary development builds report empty source identities and `source_bound: false`. A release build also reports `version`.
 
 Protected packaging requires clean, committed source. It derives the revision and tree from `HEAD`, injects them into both product binaries, runs each `build-info` command and compares the result. `--verify` also checks the staged product against the current clean source. Root product builds ignore Go environment files, `GOFLAGS` and `GOEXPERIMENT`. The embedded identities describe a local build and are not a publisher's signature.
 
@@ -31,6 +31,20 @@ python3 tools/package_secret_scanner.py --development DIR [--target GOOS/GOARCH]
 ```
 
 `DIR` is relative to the current directory, and the default target is the machine you run it on. The tool writes `DIR/bin/trestle`, `DIR/bin/trestled` and `DIR/libexec/open-trestle/open-trestle-scan-helper` (`.exe` names on Windows) with the helper pinned. Run `DIR/bin/trestle`.
+
+`--release-version VERSION` makes a release build: it requires clean committed source, embeds the source revision, tree and `VERSION`, and, for the machine's own target, runs both `build-info` commands and compares them.
+
+### Build the release archives
+
+`tools/release_archives.py` makes the files that the [install scripts](install.md#install-with-one-command) download. It needs clean committed source, Go 1.26.11 and Python 3:
+
+```sh
+python3 tools/release_archives.py --version 0.1.0-alpha.1 --output DIR [--target GOOS/GOARCH ...]
+```
+
+For each target (default `linux/amd64` and `windows/amd64`) it makes a release build and writes `open-trestle-<version>-linux-amd64.tar.gz` or `open-trestle-<version>-windows-amd64.zip`. Each holds one folder, `open-trestle-<version>-<os>-<arch>/`, with `bin/trestle`, `bin/trestled`, `libexec/open-trestle/open-trestle-scan-helper` (`.exe` names on Windows), `LICENSE`, `NOTICE`, `licenses/` and `README.txt`. Programs are mode `0555` and other files `0444`. Then it writes `SHA256SUMS` for every file in `DIR`, in the format `sha256sum -c` reads.
+
+`.github/workflows/release.yml` runs on a pushed `v*` tag, or by hand with a tag. It runs the tests, the staging build and the [vulnerability gate](vulnerability-gate.md), builds the Linux package and the archives into one folder, checks that `install.sh` installs the Linux archive, and publishes a GitHub release with every file. A tag with a `-`, such as `v0.1.0-alpha.1`, makes a pre-release. Nothing is signed.
 
 To build the release staging tree, use the output mode:
 

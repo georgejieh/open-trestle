@@ -11,10 +11,9 @@ command is listed in [commands](commands.md), and every page is in the
 Every review, with a model server on this machine or a remote provider
 (OpenRouter, Ollama Cloud, OpenCode Go, and Ollama signed in to Ollama Cloud),
 scans each request for secrets in the secret scan helper before it is sent. A
-plain `go build` pins no helper and refuses every review. Build with
-`python3 tools/package_secret_scanner.py --development DIR` on Linux or
-Windows, or use the packaged Linux amd64 install. [platforms](platforms.md) says
-what works on each system today. See
+plain `go build` pins no helper and refuses every review. The
+[install scripts](install.md) install a release that includes it.
+[platforms](platforms.md) says what works on each system today. See
 [prerequisite 1](remote-model-review.md#prerequisite-1-a-trestle-with-its-secret-scanner).
 
 ```sh
@@ -47,13 +46,21 @@ You need four things.
      This needs no API key, but it is a remote provider: the models run on
      Ollama Cloud, and your source is sent there when you run a review. See
      [Ollama signed in to Ollama Cloud](remote-model-review.md#ollama-signed-in-to-ollama-cloud).
-3. A `trestle` binary with its secret scan helper. Nothing is released yet. In a
-   clone of this repository (Go 1.26.11 and Python 3),
-   `python3 tools/package_secret_scanner.py --development DIR` builds a
-   development binary at `DIR/bin/trestle`. Run it by its path. Every request is
-   scanned for secrets before it is sent, and a plain `go build` pins no helper,
-   so it refuses every review. On Linux amd64 you can use the packaged install
-   instead.
+3. A `trestle` binary with its secret scan helper. Install a release with one
+   command:
+
+   ```sh
+   curl -fsSL https://georgejieh.dev/open-trestle/install.sh | bash   # Linux
+   ```
+
+   ```powershell
+   irm https://georgejieh.dev/open-trestle/install.ps1 | iex          # Windows
+   ```
+
+   The first releases are unsigned pre-releases. To build from source instead,
+   see [install](install.md#build-from-source). Every request is scanned for
+   secrets before it is sent, and a plain `go build` pins no helper, so it
+   refuses every review.
 
 If you start `trestle init` with a plain `go build` binary, the wizard detects
 it before you choose a provider and explains why it cannot continue. It shows

@@ -81,6 +81,16 @@ jobs:
         run: |
           python3 tools/release_archives.py --version "$RELEASE_VERSION" --output "$RUNNER_TEMP/dist"
           (cd "$RUNNER_TEMP/dist" && sha256sum -c SHA256SUMS && cat SHA256SUMS)
+      - name: Check the Linux archive installs
+        run: |
+          mkdir -p "$RUNNER_TEMP/mirror"
+          ln -s "$RUNNER_TEMP/dist" "$RUNNER_TEMP/mirror/v$RELEASE_VERSION"
+          OPEN_TRESTLE_BASE_URL="file://$RUNNER_TEMP/mirror" \
+            OPEN_TRESTLE_VERSION="$RELEASE_VERSION" \
+            OPEN_TRESTLE_INSTALL_ROOT="$RUNNER_TEMP/install" \
+            OPEN_TRESTLE_BIN_DIR="$RUNNER_TEMP/install-bin" \
+            bash install.sh
+          "$RUNNER_TEMP/install-bin/trestle" build-info
       - name: Upload the release files
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:

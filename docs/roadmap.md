@@ -44,8 +44,12 @@ released.
 - **Specialists.** Six packaged profiles can run as specialists, one at a time with
   `--profile` or as a set with `--specialists` (at most three at once when every route is
   remote). See [agent profiles](agent-profiles.md).
+- **Install.** A release workflow builds Linux and Windows amd64 archives, and
+  one-line install scripts install them for your account. The pre-releases are
+  unsigned. See [install](install.md).
 - **Updates.** `trestle update` for the packaged Linux amd64 install. No release
-  key is pinned yet, so the release channel refuses. See [updates](updates.md).
+  key is pinned yet, so the release channel refuses. An install made by the
+  scripts is updated by running the script again. See [updates](updates.md).
 - **GitHub Actions example.** A workflow that runs the direct review and uploads
   SARIF. It has been tested offline only. See
   [GitHub pull-request review](github-pr-review.md).
@@ -58,13 +62,14 @@ released.
 - **Evaluation corpus.** 23 synthetic Go cases with a run driver and a scorer.
   The labels await independent human adjudication, so no model quality has been
   measured. See [quality evaluation](quality-evaluation.md).
-- **Platforms.** Linux and Windows run the whole loop from a development build.
+- **Platforms.** Linux and Windows run the whole loop from a release or a development build.
   macOS is not supported. See [platforms](platforms.md#macos).
 
 ## Next release
 
-- Installers or native packages for Linux and Windows, a signed release,
-  and `trestle update` on each system.
+- A signed release, and `trestle update` for the installs that the install
+  scripts make. The scripts themselves install unsigned pre-releases on Linux
+  and Windows (amd64) today; see [install](install.md).
 - A desktop app, built from the web console in a native shell, that opens a
   repository, runs the setup wizard, starts a review and shows the findings.
 - A GitHub Action (`action.yml`) verified on a test repository.

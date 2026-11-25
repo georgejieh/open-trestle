@@ -58,6 +58,7 @@ absolute path.
 | `<folder of the trestle program>/../libexec/open-trestle/open-trestle-scan-helper` (`.exe` on Windows) | The secret scan helper. The Linux package installs it at `/usr/local/libexec/open-trestle/open-trestle-scan-helper`. | not writable, owned by you or root (Windows: you or a system account) |
 | `$XDG_STATE_HOME/open-trestle/sandbox-grants`, default `~/.local/state/open-trestle/sandbox-grants` | On Windows, the folder grants made for the check sandbox. `trestle checks off` takes them back. See [repository checks](repository-checks.md#what-the-sandbox-allows). | |
 | `/usr/local/share/open-trestle/distribution/receipt.json` | The package receipt that marks the packaged install. | written by the package |
+| `$XDG_DATA_HOME/open-trestle/<version>/` and `current`, default `~/.local/share/open-trestle/` (Windows: `%LOCALAPPDATA%\Programs\OpenTrestle\<version>\`) | An install made by the [install scripts](install.md#install-with-one-command), with `install.log` beside it. On Linux, `~/.local/bin/trestle` and `trestled` link to `current`. | not writable by others (Windows: your account and the system's own accounts only) |
 
 On Windows the credential, setup, usage and scan-cache folders and files have an
 access control list in place of these modes, which gives only your account and
