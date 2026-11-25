@@ -59,10 +59,12 @@ func commandFail(stderr io.Writer, code int, command, message string, next ...st
 	return code
 }
 
-// outRow is one row; label may be empty, and tone colors the value.
+// outRow is one row; label may be empty, tone colors the value, and next are
+// the commands that fix it, printed beneath it.
 type outRow struct {
 	mark, label, value string
 	tone               initTone
+	next               []string
 }
 
 // rows prints rows with their labels padded to the longest one. A value
@@ -83,6 +85,9 @@ func (p outPrinter) rows(rows ...outRow) {
 				prefix = hang
 			}
 			p.sayVerbatim(prefix + p.style.paint(row.tone, part))
+		}
+		for _, command := range row.next {
+			p.sayVerbatim(p.style.paint(initToneDim, "    -> "+command))
 		}
 	}
 }
@@ -106,14 +111,53 @@ func (p outPrinter) next(commands ...string) {
 // mark and the percentage in the text say the same, so color is never the
 // only signal.
 func (p outPrinter) spendingState(status spending.Status) (string, initTone) {
+	state, tone := spendingLevel(status)
+	return p.style.markOf(state), tone
+}
+
+func spendingLevel(status spending.Status) (healthState, initTone) {
 	percent := status.Percent()
 	switch {
 	case status.Reached():
-		return p.bad, initToneDanger
+		return healthFail, initToneDanger
 	case len(status.Limit.AlertPercents) > 0 && percent >= uint64(status.Limit.AlertPercents[0]):
-		return p.wait, initToneWarning
+		return healthAttention, initToneWarning
 	case percent < 50:
-		return p.ok, initToneDim
+		return healthOK, initToneDim
 	}
-	return p.ok, initToneBody
+	return healthOK, initToneBody
+}
+
+// healthState is how a row of `trestle doctor`, `trestle status` or the home
+// screen stands. Only a failure needs fixing; the others never fail a command.
+type healthState string
+
+const (
+	healthOK        healthState = "ok"
+	healthOptional  healthState = "optional"
+	healthAttention healthState = "attention"
+	healthFail      healthState = "fail"
+)
+
+// healthRow is one such row, in the JSON those commands print. Next are the
+// commands that fix it.
+type healthRow struct {
+	Label string      `json:"label"`
+	Value string      `json:"value"`
+	State healthState `json:"state"`
+	Next  []string    `json:"next,omitempty"`
+	tone  initTone
+}
+
+func (s initStyle) markOf(state healthState) string {
+	ok, wait, bad, optional := s.marks()
+	switch state {
+	case healthFail:
+		return bad
+	case healthAttention:
+		return wait
+	case healthOptional:
+		return optional
+	}
+	return ok
 }

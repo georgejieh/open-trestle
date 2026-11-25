@@ -76,7 +76,11 @@ func updatePackageInstalled() (update.Installed, bool) {
 
 // updateNotice is the one-line notice, or "" when there is nothing newer, the
 // check is off, or it cannot tell.
-func updateNotice(ctx context.Context) string {
+func updateNotice(ctx context.Context) string { return updateNoticeFrom(ctx, true) }
+
+// updateNoticeFrom is the notice; without fetch it reads only the cache and
+// writes nothing.
+func updateNoticeFrom(ctx context.Context, fetch bool) string {
 	if updateCheckDisabled() {
 		return ""
 	}
@@ -93,7 +97,7 @@ func updateNotice(ctx context.Context) string {
 			}
 		}
 	}
-	release, hasRelease := updateNewestRelease(ctx, installed.Version)
+	release, hasRelease := updateNewestRelease(ctx, installed.Version, fetch)
 	switch {
 	case hasRelease && (!hasLocal || release.Compare(local) >= 0):
 		return fmt.Sprintf("Update available: %s (you have %s). Run trestle update.", release, installed.Version)
@@ -114,8 +118,8 @@ func updateCachePath() (string, error) {
 // updateNewestRelease is the newest release installed may move to, from
 // the cache when it is under a day old and otherwise from one GET. Without a
 // pinned key, or without a usable state folder to rate-limit the GET, it
-// does not check.
-func updateNewestRelease(ctx context.Context, installed update.Version) (update.Version, bool) {
+// does not check. Without fetch it uses the cache whatever its age.
+func updateNewestRelease(ctx context.Context, installed update.Version, fetch bool) (update.Version, bool) {
 	if ring, err := updateKeys(); err != nil || len(ring) == 0 {
 		return update.Version{}, false
 	}
@@ -123,13 +127,13 @@ func updateNewestRelease(ctx context.Context, installed update.Version) (update.
 	if err != nil {
 		return update.Version{}, false
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil || fileauthority.CheckDirectory(filepath.Dir(path)) != nil {
+	if fetch && (os.MkdirAll(filepath.Dir(path), 0o700) != nil || fileauthority.CheckDirectory(filepath.Dir(path)) != nil) {
 		return update.Version{}, false
 	}
 	now := updateNow().UTC()
 	cache, cached := readUpdateCache(path)
 	checked, _ := time.Parse(time.RFC3339, cache.CheckedAt)
-	if !cached || !now.Before(checked.Add(updateCheckInterval)) || checked.After(now.Add(time.Hour)) {
+	if fetch && (!cached || !now.Before(checked.Add(updateCheckInterval)) || checked.After(now.Add(time.Hour))) {
 		fresh := updateCheckCache{Contract: updateCacheContract, SchemaVersion: 1, CheckedAt: now.Format(time.RFC3339)}
 		releases, err := update.Client{Transport: updateTransport}.Releases(ctx, updateNoticeTimeout)
 		switch {

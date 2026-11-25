@@ -142,6 +142,9 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 	if len(args) >= 1 && args[0] == "profile" {
 		return runProfile(ctx, args[1:], stdout, stderr)
 	}
+	if len(args) >= 1 && args[0] == "doctor" {
+		return runDoctor(ctx, args[1:], stdout, stderr)
+	}
 	// `trestle review <path>` reviews a fixture file, as before; any other
 	// form reviews the latest change with the repository's setup.
 	if len(args) >= 1 && args[0] == "review" && !(len(args) == 2 && !strings.HasPrefix(args[1], "-")) {

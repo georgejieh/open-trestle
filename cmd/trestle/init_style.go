@@ -117,7 +117,7 @@ func initVisible(text string) int {
 }
 
 // initMarkers start a line whose continuation lines hang after them.
-var initMarkers = regexp.MustCompile(`^(✓|…|✗|–|•|\[ok\]|\[\.\.\]|\[x\]|\[--\]|\d+\)|-)$`)
+var initMarkers = regexp.MustCompile(`^(✓|…|✗|–|•|\[ok\]|\[\.\.\]|\[x\]|\[--\]|\d+[.)]|-)$`)
 
 // initLabelColumn is a "Label:" followed by two or more spaces: a value
 // column that continuation lines line up with.
