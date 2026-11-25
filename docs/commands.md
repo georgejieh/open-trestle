@@ -40,7 +40,7 @@ Reviews the latest committed change with the setup that `trestle init` made.
 | `--directory PATH` | The setup folder, when it is not the one `trestle init` proposes. |
 | `--format text\|json\|sarif\|markdown` | Result format. Default: the setup's. |
 | `--all` | List every finding, not only confirmed high and medium ones. |
-| `--verbose` | Add internal fields to the text output. |
+| `--verbose` | Add internal fields to the text output. On a terminal, print the full text document instead of the [short view](local-model-review.md#the-result-on-a-terminal). |
 | `--timeout DURATION` | Time limit for the review. |
 | `--profile ID` | Run one [specialist profile](agent-profiles.md). |
 | `--specialists auto\|none\|ID[,ID...]` | Run the general review plus selected specialists. |

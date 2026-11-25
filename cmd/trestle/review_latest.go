@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -480,16 +481,44 @@ func reviewLatestChange(ctx context.Context, w *initWizard, repo repositorySetup
 		return 2, false
 	}
 	w.say("  Running the review. This can take several minutes; press Ctrl-C to stop.")
+	// On a terminal a person reads the view, which starts with the verdict;
+	// --verbose and every other output keep the text document.
+	viewed := !options.verbose && latestReviewFormat(command) == "text" && initTerminal(stdout)
+	var document bytes.Buffer
+	out := stdout
+	if viewed {
+		out = &document
+	}
 	var outcome modelReviewOutcome
-	code = runLocalGitModelReviewObserved(ctx, command[3:], stdout, stderr, func(result modelReviewOutcome) { outcome = result })
+	code = runLocalGitModelReviewObserved(ctx, command[3:], out, stderr, func(result modelReviewOutcome) { outcome = result })
+	if viewed {
+		if outcome.view == nil {
+			_, _ = stdout.Write(document.Bytes())
+		} else {
+			outcome.view.render(newOutPrinter(ctx, stdout), code, localreview.RenderOptions{All: options.all})
+		}
+	}
 	if outcome.status != "" {
 		recordLastReview(ctx, repo.directory, lastReview{Status: outcome.status, Findings: outcome.findings, Base: source.base, Head: source.head})
+		if viewed && outcome.view != nil {
+			return code, true
+		}
 		if outcome.regressions > 0 {
 			w.say("  %s The repository's own tests show %d regression%s: tests that passed on base fail on head. The result lists them under check regressions.", w.bad, outcome.regressions, initPlural(outcome.regressions))
 		}
 		w.say("%s", latestOutcomeLine(w, outcome))
 	}
 	return code, true
+}
+
+// latestReviewFormat is the output format of a review command line.
+func latestReviewFormat(command []string) string {
+	for i := 3; i+1 < len(command); i++ {
+		if command[i] == "--format" {
+			return command[i+1]
+		}
+	}
+	return "json"
 }
 
 // latestOutcomeLine says what a finished review means, in the words the

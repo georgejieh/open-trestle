@@ -588,7 +588,7 @@ func runLocalModelReviewSet(ctx, execution context.Context, options localModelRe
 	}
 	inputs.spending.finish()
 	if observe != nil {
-		outcome := modelReviewOutcome{status: set.Status, findings: len(set.Findings), advisory: set.Status == "findings" && set.CI == "inconclusive"}
+		outcome := modelReviewOutcome{status: set.Status, findings: len(set.Findings), advisory: set.Status == "findings" && set.CI == "inconclusive", view: setReviewView(set)}
 		if set.CheckRegressions != nil {
 			outcome.regressions = set.CheckRegressions.Count
 		}

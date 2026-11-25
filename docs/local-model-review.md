@@ -90,6 +90,39 @@ The result goes to standard output in the saved format or in the one you pass wi
 
 The command sends nothing and exits with 3 when the repository has no setup, when there is no committed change to review, or when the API key of the setup is missing (set it with `trestle keys set NAME`). It exits with 4 when the saved setup cannot be loaded. It exits with 2 outside a Git checkout, with flags that the saved setup cannot combine, or when the setup belongs to another repository. `trestle review PATH` reviews a local fixture file instead.
 
+### The result on a terminal
+
+When standard output is a terminal and the format is `text`, `trestle review`
+prints a short view instead of the text document. It starts with the verdict
+and the exit status, then the reviewers that ran, any reviewer that did not
+finish and its hint, the check regressions, and the findings, numbered by rank,
+with the severity in color (`error` red, `warning` amber, the others dim), the
+location, category, the reviewers that confirmed each, the claim and the fix
+text. A short "Checked" line follows, then the reminder that the review is not a
+complete audit. The verdict is printed once, at the top, and standard error no
+longer repeats it.
+
+```text
+  ✗ 1 confirmed finding · CI blocked (exit 4)
+    4 of 4 reviewers ran: general, bug_hunter, backend,
+    drift_auditor
+
+  1. error  Zero-valued caller now panics
+     a.go:2-2 · correctness · confirmed by general,
+     bug_hunter, backend, drift_auditor
+     Consume passes zero to Changed after removal of the
+     division guard.
+
+  Checked:  secret scan clean · checker confirmed 4 of 4
+            candidates · 1 changed function without a test
+  Not a complete audit. Details: trestle review --verbose
+```
+
+`--verbose` prints the full text document on a terminal too. When standard
+output is not a terminal, and in the `json`, `sarif` and `markdown` formats,
+the output is the same as before, byte for byte, and the verdict line stays on
+standard error.
+
 ### Progress
 
 A review can take several minutes, so standard error shows what it is doing. On a terminal, one line names the stage, with a spinner and the time it has taken, redrawn in place. When a stage ends, a line with its duration stays behind:
