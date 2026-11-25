@@ -209,7 +209,8 @@ func (s initStyle) marks() (string, string, string, string) {
 }
 
 // initPanel draws rows of label and value in a box at most initWidth columns
-// wide. Long values wrap inside the box.
+// wide. Long values wrap inside the box. A value may carry color codes, which
+// take no columns; a colored word longer than a line is not split.
 func initPanel(title string, rows [][2]string, ascii bool) []string {
 	horizontal, vertical, corners := "─", "│", [4]string{"┌", "┐", "└", "┘"}
 	if ascii {
@@ -217,7 +218,7 @@ func initPanel(title string, rows [][2]string, ascii bool) []string {
 	}
 	labelWidth := 0
 	for _, row := range rows {
-		labelWidth = max(labelWidth, utf8.RuneCountInString(row[0]))
+		labelWidth = max(labelWidth, initVisible(row[0]))
 	}
 	inner := initWidth - 4
 	valueWidth := inner - labelWidth - 2
@@ -231,26 +232,26 @@ func initPanel(title string, rows [][2]string, ascii bool) []string {
 			if i == 0 {
 				label = row[0]
 			}
-			cell := label + strings.Repeat(" ", labelWidth-utf8.RuneCountInString(label)) + "  " + part
-			lines = append(lines, vertical+" "+cell+strings.Repeat(" ", max(0, inner-utf8.RuneCountInString(cell)))+" "+vertical)
+			cell := label + strings.Repeat(" ", labelWidth-initVisible(label)) + "  " + part
+			lines = append(lines, vertical+" "+cell+strings.Repeat(" ", max(0, inner-initVisible(cell)))+" "+vertical)
 		}
 	}
 	return append(lines, corners[2]+strings.Repeat(horizontal, initWidth-2)+corners[3])
 }
 
-// initWrapWords splits text into lines of at most width runes, breaking a
-// word only when it alone is longer than a line.
+// initWrapWords splits text into lines of at most width columns, breaking a
+// word without color only when it alone is longer than a line.
 func initWrapWords(text string, width int) []string {
 	lines, line := []string{}, ""
 	for _, word := range strings.Fields(text) {
-		for utf8.RuneCountInString(word) > width {
+		for utf8.RuneCountInString(word) > width && !strings.Contains(word, "\x1b") {
 			if line != "" {
 				lines, line = append(lines, line), ""
 			}
 			runes := []rune(word)
 			lines, word = append(lines, string(runes[:width])), string(runes[width:])
 		}
-		if line != "" && utf8.RuneCountInString(line)+1+utf8.RuneCountInString(word) > width {
+		if line != "" && initVisible(line)+1+initVisible(word) > width {
 			lines, line = append(lines, line), ""
 		}
 		if line != "" {
