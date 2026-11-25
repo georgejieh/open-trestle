@@ -3,10 +3,21 @@
 This page lists every `trestle` command and its flags, grouped as `trestle --help`
 groups them. Use it to look up a flag; for a first walkthrough, start with [getting started](getting-started.md).
 
-`trestle --help`, `trestle -h` and `trestle help` print the usage to standard
-output and exit `0`. A command line that Open Trestle does not recognise, and a
-bare `trestle` without a terminal, print the same usage to standard error and
-exit `2`. Each command also prints its own usage when its arguments are wrong.
+`trestle --help`, `trestle -h` and `trestle help` print a short overview to
+standard output and exit `0`: a "Start here" block, then each group with one
+line per command. `trestle COMMAND --help` prints that command's full usage. A
+bare `trestle` without a terminal, and a known command with wrong arguments,
+print the overview to standard error and exit `2`. An unknown command prints
+three lines to standard error and exits `2`:
+
+```text
+trestle: "reveiw" is not a trestle command.
+Did you mean: review?
+Run trestle --help to see all commands.
+```
+
+The second line appears only when a command name is close. Each command also
+prints its own usage when its arguments are wrong.
 Exit codes are in [exit codes](exit-codes.md), and variables and paths are in
 [environment variables and files](environment-and-files.md).
 
@@ -251,6 +262,13 @@ Builds and queries the [repository index](repository-index.md) of the checkout i
 ### `trestle profile`
 
 Prints the repository profile of a commit (default `HEAD`) of the checkout in the current directory: its languages and their shares, the test frameworks and layout, the checks its CI enforces, grouped by class, and the checks that are only configured. A check counts as enforced when a GitHub Actions step that runs on pushes or pull requests, and is not disabled or allowed to fail, runs it. Other CI systems and linter configuration alone are listed as configured. Configuration files are read as data from the verified Git object store and never run. A review reads the checks of its base commit. Flags: `--commit REF`, `--directory PATH`, `--json`.
+
+### `trestle version`
+
+`trestle version` and `trestle --version` print one line: `Open Trestle 0.1.0
+(source revision 3f2a9c1d0e4b), the packaged Linux amd64 install` for the
+packaged install's `trestle`, and `Open Trestle development build (source
+revision ...)` for any other build. `trestle build-info` is the JSON form.
 
 ### `trestle build-info`
 

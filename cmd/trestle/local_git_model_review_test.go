@@ -618,7 +618,7 @@ func TestLocalModelCleanupTimeoutUsesConfiguredBoundWithThreeSecondFloor(t *test
 // rejects --checkout.
 func TestUsageAttachesCheckoutAlternativeToModelReview(t *testing.T) {
 	var usage bytes.Buffer
-	writeUsage(&usage)
+	writeLocalGitUsage(&usage)
 	lines := strings.Split(strings.TrimSpace(usage.String()), "\n")
 	for index, line := range lines {
 		if !strings.Contains(line, "checkout source alternative") {
