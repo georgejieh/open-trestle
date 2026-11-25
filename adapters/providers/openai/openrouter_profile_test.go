@@ -1,6 +1,7 @@
 package openai
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/georgejieh/open-trestle/internal/provider"
+	"github.com/georgejieh/open-trestle/internal/review"
 )
 
 func openRouterV2Config(t *testing.T, slugs []string) Config {
@@ -25,7 +27,7 @@ func openRouterV2Config(t *testing.T, slugs []string) Config {
 
 func openRouterRequestProvider(t *testing.T, adapter *Adapter) map[string]json.RawMessage {
 	t.Helper()
-	request, err := adapter.newRequest(context.Background(), APIKey{value: "synthetic"}, "vendor/model", 4096, "fixed host instructions", []byte(`{"task":"fixture"}`))
+	request, err := adapter.newRequest(context.Background(), APIKey{value: "synthetic"}, "vendor/model", 4096, "fixed host instructions", []byte(`{"task":"fixture"}`), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +119,7 @@ func TestGenericOpenRouterConnectionReadsOpenRouterUsage(t *testing.T) {
 
 func requestReasoning(t *testing.T, adapter *Adapter) string {
 	t.Helper()
-	request, err := adapter.newRequest(context.Background(), APIKey{value: "synthetic"}, "vendor/model", 4096, "fixed host instructions", []byte(`{"task":"fixture"}`))
+	request, err := adapter.newRequest(context.Background(), APIKey{value: "synthetic"}, "vendor/model", 4096, "fixed host instructions", []byte(`{"task":"fixture"}`), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,5 +162,66 @@ func TestOpenRouterRequestsAskForLowReasoningOnlyWhereAccepted(t *testing.T) {
 	other, _ := provider.ParseServiceEndpoint("https://provider.example/v1")
 	if got := requestReasoning(t, &Adapter{protocol: ProtocolChatCompletions, endpoint: other}); got != "" {
 		t.Fatalf("another provider was sent %s", got)
+	}
+}
+
+func TestOpenRouterStructuredVerificationSendsTheOutputSchema(t *testing.T) {
+	config := openRouterV2Config(t, []string{"fixture-a"})
+	config.OpenRouterAuthority.StructuredVerification = true
+	structured, err := New(config)
+	if err != nil || !structured.structuredVerification() {
+		t.Fatalf("structured verification refused: %v", err)
+	}
+	plain, _ := New(openRouterV2Config(t, []string{"fixture-a"}))
+	if plain.structuredVerification() || plain.ConfigurationIdentity() == structured.ConfigurationIdentity() {
+		t.Fatal("structured verification is not part of the configuration identity")
+	}
+	raw := testRawVerificationRequest(t, "literal")
+	instructions, err := review.TrustedModelRequestInstructions(raw.Payload())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pinned, err := review.TrustedModelRequestOutputSchema(raw.Payload())
+	var schema bytes.Buffer
+	if err != nil || json.Compact(&schema, pinned) != nil {
+		t.Fatal(err)
+	}
+	for _, send := range []bool{true, false} {
+		request, err := structured.newRequest(context.Background(), APIKey{value: "synthetic"}, "vendor/model", 4096, instructions, raw.Payload(), send)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(request.Body)
+		var wire struct {
+			ResponseFormat *chatResponseFormat        `json:"response_format"`
+			Provider       map[string]json.RawMessage `json:"provider"`
+		}
+		if json.Unmarshal(body, &wire) != nil || string(wire.Provider["require_parameters"]) != "true" {
+			t.Fatalf("request body: %s", body)
+		}
+		if !send {
+			if wire.ResponseFormat != nil {
+				t.Fatal("a request without structured output sent response_format")
+			}
+			continue
+		}
+		if format := wire.ResponseFormat; format == nil || format.Type != "json_schema" || !format.JSONSchema.Strict || format.JSONSchema.Name != "open_trestle_review" || !bytes.Equal(format.JSONSchema.Schema, schema.Bytes()) {
+			t.Fatalf("response_format = %+v", wire.ResponseFormat)
+		}
+	}
+	for name, change := range map[string]func(*Config){
+		"unpinned": func(c *Config) { c.OpenRouterAuthority.ProviderSlugs = []string{} },
+		"v1": func(c *Config) {
+			c.RequestProfile = RequestProfileOpenRouterZDRChatV1
+			c.OpenRouterAuthority.AccountPolicyIdentity, c.OpenRouterAuthority.ProviderSlug, c.OpenRouterAuthority.ProviderSlugs = strings.Repeat("e", 64), "fixture-a", nil
+			c.OpenRouterAuthority.ValidFrom, c.OpenRouterAuthority.ValidUntil = time.Unix(1, 0), time.Unix(2_000_000_000, 0)
+		},
+	} {
+		config := openRouterV2Config(t, []string{"fixture-a"})
+		config.OpenRouterAuthority.StructuredVerification = true
+		change(&config)
+		if adapter, err := New(config); err == nil && adapter.Validate() == nil {
+			t.Fatalf("structured verification admitted %s", name)
+		}
 	}
 }

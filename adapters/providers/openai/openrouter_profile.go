@@ -43,6 +43,10 @@ type OpenRouterRouteAuthority struct {
 	// Reasoning is a V2 route whose every pinned endpoint accepts the
 	// reasoning parameter; its requests ask for low reasoning effort.
 	Reasoning bool
+	// StructuredVerification is a V2 verification route whose every pinned
+	// endpoint supports structured outputs; its verification requests carry
+	// the request's output schema as a strict response_format.
+	StructuredVerification bool
 }
 
 func cloneOpenRouterAuthority(value *OpenRouterRouteAuthority) *OpenRouterRouteAuthority {
@@ -90,10 +94,10 @@ func (a *Adapter) validRequestProfile() bool {
 		return false
 	}
 	if a.requestProfile == RequestProfileOpenRouterZDRChatV2 {
-		if authority.AccountPolicyIdentity != "" || authority.ProviderSlug != "" || !authority.ValidFrom.IsZero() || !authority.ValidUntil.IsZero() || authority.ProviderSlugs == nil || !validOpenRouterSlugList(authority.ProviderSlugs) || authority.Reasoning && len(authority.ProviderSlugs) == 0 {
+		if authority.AccountPolicyIdentity != "" || authority.ProviderSlug != "" || !authority.ValidFrom.IsZero() || !authority.ValidUntil.IsZero() || authority.ProviderSlugs == nil || !validOpenRouterSlugList(authority.ProviderSlugs) || (authority.Reasoning || authority.StructuredVerification) && len(authority.ProviderSlugs) == 0 {
 			return false
 		}
-	} else if !validConfigurationIdentity(authority.AccountPolicyIdentity) || !validOpenRouterSlug(authority.ProviderSlug) || authority.ProviderSlugs != nil || authority.Reasoning ||
+	} else if !validConfigurationIdentity(authority.AccountPolicyIdentity) || !validOpenRouterSlug(authority.ProviderSlug) || authority.ProviderSlugs != nil || authority.Reasoning || authority.StructuredVerification ||
 		authority.ValidFrom.IsZero() || authority.ValidUntil.IsZero() || authority.ValidFrom.Year() < 1 || authority.ValidUntil.Year() > 9999 || !authority.ValidUntil.After(authority.ValidFrom) {
 		return false
 	}
@@ -157,9 +161,10 @@ func (a *Adapter) profileIdentityPreimage(configuration []byte) []byte {
 			AllowFallbacks    bool            `json:"allow_fallbacks"`
 			RequireParameters bool            `json:"require_parameters"`
 			ReasoningEffort   string          `json:"reasoning_effort,omitempty"`
+			Structured        bool            `json:"structured_verification,omitempty"`
 		}{"open-trestle/openrouter-zdr-chat-adapter", 5, configuration, a.requestProfile, a.protocol, a.credentialMode,
 			[]string{authority.Route.Zone().String(), authority.Route.ProviderID(), authority.Route.AdapterID(), authority.Route.ConnectionID(), authority.Route.ModelID(), authority.Route.ModelVersion()}, authority.RouteRecordIdentity, authority.EvidenceIdentity,
-			authority.TenantID, authority.RepositoryID, append([]string{}, authority.ProviderSlugs...), true, false, true, true, a.reasoningEffort()})
+			authority.TenantID, authority.RepositoryID, append([]string{}, authority.ProviderSlugs...), true, false, true, true, a.reasoningEffort(), authority.StructuredVerification})
 		return encoded
 	}
 	encoded, _ := json.Marshal(struct {
@@ -232,6 +237,13 @@ const openRouterReasoningEffort = "low"
 
 type chatReasoning struct {
 	Effort string `json:"effort"`
+}
+
+// structuredVerification reports a V2 route whose verification requests carry
+// a strict response_format. With require_parameters, OpenRouter routes them
+// only to pinned endpoints that take it.
+func (a *Adapter) structuredVerification() bool {
+	return a.requestProfile == RequestProfileOpenRouterZDRChatV2 && a.openRouterAuthority != nil && a.openRouterAuthority.StructuredVerification
 }
 
 // reasoningEffort is the effort a request asks for, or "" for none. A V2

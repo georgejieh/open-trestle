@@ -475,6 +475,7 @@ func TestExampleGitHubWorkflowIsWellFormed(t *testing.T) {
 		"pull_request:", "fetch-depth: 0", "contents: read", "pull-requests: write", "security-events: write",
 		"--format sarif", "--exit-code-policy", "github.event.pull_request.base.sha", "github.event.pull_request.head.sha",
 		"github/codeql-action/upload-sarif@", "reviewdog", "GITHUB_STEP_SUMMARY", "OLLAMA_API_KEY", "PLACEHOLDER",
+		"tools/vulnerability_gate.py --staging .container", "install --destdir", "--repository-checks",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("example workflow lacks %q", want)

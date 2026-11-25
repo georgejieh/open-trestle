@@ -537,7 +537,8 @@ func (a *Adapter) executeWithDispatchProof(
 	if err != nil {
 		return failed(gateway.RouteFailureInvalidResponse, gateway.RouteReplayNotDispatched, 0)
 	}
-	if a.localStructuredOutput {
+	structured := a.localStructuredOutput || a.structuredVerification() && candidateErr != nil && verificationErr == nil
+	if structured {
 		format, err := localStructuredResponseFormat(payload)
 		if err != nil {
 			return failed(gateway.RouteFailureInvalidResponse, gateway.RouteReplayNotDispatched, 0)
@@ -573,7 +574,7 @@ func (a *Adapter) executeWithDispatchProof(
 		requestContext, cancel = context.WithTimeout(ctx, DefaultClientRequestTimeout(maxOutputTokens))
 		defer cancel()
 	}
-	request, err := a.newRequest(requestContext, credentials, modelSelector(route), maxOutputTokens, instructions, payload)
+	request, err := a.newRequest(requestContext, credentials, modelSelector(route), maxOutputTokens, instructions, payload, structured)
 	if err != nil {
 		return failed(gateway.RouteFailureInvalidResponse, gateway.RouteReplayNotDispatched, 0)
 	}
@@ -659,6 +660,7 @@ func (a *Adapter) newRequest(
 	maxOutputTokens uint32,
 	instructions string,
 	payload []byte,
+	structured bool,
 ) (*http.Request, error) {
 	if strings.TrimSpace(instructions) == "" {
 		return nil, errors.New("invalid model request instructions")
@@ -671,7 +673,7 @@ func (a *Adapter) newRequest(
 		if effort := a.reasoningEffort(); effort != "" {
 			chat.Reasoning = &chatReasoning{Effort: effort}
 		}
-		if a.localStructuredOutput {
+		if structured {
 			format, err := localStructuredResponseFormat(payload)
 			if err != nil {
 				return nil, err

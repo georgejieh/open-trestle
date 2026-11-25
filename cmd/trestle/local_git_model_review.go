@@ -283,6 +283,9 @@ type modelReviewOutcome struct {
 	regressions int
 	// view is the result as a person reads it on a terminal.
 	view *reviewView
+	// unfinished names each reviewer of a set that ran but did not finish,
+	// with its failure.
+	unfinished []string
 }
 
 // advisoryOutcomeNote follows the finished-review line of an advisory review.

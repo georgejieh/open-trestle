@@ -406,6 +406,8 @@ func DecodeRuntimePolicy(ctx context.Context, reader io.Reader, inventory RouteI
 			if !ok {
 				return RuntimePolicy{}, ErrInvalidRouteInventory
 			}
+			witness, _ := inventory.OpenRouterObservedWitness(authority.record)
+			authority.structuredVerification = witness.StructuredOutputs && authority.record == verificationID
 		case OpenCodeGoChatProfile:
 			var ok bool
 			goAuthority, ok = decodeOpenCodeGoAuthority(v.OpenCodeGoAuthority)

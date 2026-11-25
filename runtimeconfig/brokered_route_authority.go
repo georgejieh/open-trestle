@@ -20,7 +20,15 @@ type BrokeredRouteAuthority struct {
 	from, until                                         time.Time
 	slugs                                               string // observed form: slugs joined by newlines
 	observed                                            bool
+	// structuredVerification is an observed form for the policy's
+	// verification route whose every pinned endpoint supports structured
+	// outputs. It is read from the bound witness, not from the policy.
+	structuredVerification bool
 }
+
+// StructuredVerification reports that verification requests on this route
+// carry the request's output schema as response_format.
+func (a BrokeredRouteAuthority) StructuredVerification() bool { return a.structuredVerification }
 
 func (a BrokeredRouteAuthority) RouteRecordIdentity() string    { return a.record }
 func (a BrokeredRouteAuthority) EvidenceManifestDigest() string { return a.evidence }

@@ -1,8 +1,9 @@
-# Open Trestle pull-request review (example, engineering-tested offline only).
+# Open Trestle pull-request review (example).
 #
-# STATUS: this workflow has never run on GitHub. The Open Trestle flags and the
-# SARIF output are covered by offline tests; the GitHub-side steps (install,
-# upload-sarif, reviewdog) are written from documentation and are unverified.
+# STATUS: this workflow has run on a GitHub-hosted ubuntu-24.04 runner in a
+# private repository with the openrouter-zdr provider: build, install, setup,
+# review with repository checks, reviewdog comments and the job summary. The
+# upload-sarif step is unverified, because that repository had no code scanning.
 # Read examples/github-actions/README.md before copying it.
 name: Open Trestle review
 
@@ -74,8 +75,11 @@ jobs:
       #
       # Working alternative: build the unsigned Linux candidate from source
       # (docs/operations.md). Remote egress needs this packaged build, because a
-      # plain `go build` has no scanner digests and refuses remote requests. The
-      # steps below follow those docs; they are untested on a hosted runner.
+      # plain `go build` has no scanner digests and refuses remote requests.
+      #
+      # The install goes into a private folder. A hosted runner's /usr/local/bin
+      # is writable by every user, and the installer refuses a system install
+      # under a folder like that.
       - name: Fetch Open Trestle source at the pinned ref
         run: |
           git clone --no-tags "$OPEN_TRESTLE_REPOSITORY" "$RUNNER_TEMP/open-trestle-src"
@@ -91,13 +95,16 @@ jobs:
         run: |
           python3 tools/package_secret_scanner.py --output .container
           python3 tools/package_secret_scanner.py --verify .container
+          python3 tools/vulnerability_gate.py --staging .container
           REVISION="$(git rev-parse HEAD)"
           CREATED="$(date -u -d "$(git show -s --format=%cI "$REVISION")" +%Y-%m-%dT%H:%M:%SZ)"
           python3 tools/linux_distribution.py --staging .container --version 0.1.0-dev \
             --revision "$REVISION" --created "$CREATED" --output open-trestle-linux-amd64.pyz
           sha256sum -c open-trestle-linux-amd64.pyz.sha256
-          sudo ./open-trestle-linux-amd64.pyz install
-          trestle build-info
+          install -d -m 0755 "$RUNNER_TEMP/open-trestle"
+          ./open-trestle-linux-amd64.pyz install --destdir "$RUNNER_TEMP/open-trestle"
+          echo "$RUNNER_TEMP/open-trestle/usr/local/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/open-trestle/usr/local/bin/trestle" build-info
 
       # ---- Configure the provider -------------------------------------------
       # Bootstrap records your declarations and prints the exact review command.
@@ -138,7 +145,10 @@ jobs:
             --context-tokens 128000 --output-tokens 8192 \
             --input-micro-usd-per-million-tokens 0 --output-micro-usd-per-million-tokens 0 \
             --max-cost-micro-usd 0 \
-            --declare-remote-route
+            --declare-remote-route || status=$?
+          # The key is not in this step's environment, so init reports the
+          # setup as pending (exit 3). The review step runs check with the key.
+          case "${status:-0}" in 0|3) ;; *) exit "$status" ;; esac
 
       # ---- Markdown escaping ------------------------------------------------
       # Untrusted text (model output in SARIF message.text and fix guidance,
@@ -192,6 +202,11 @@ jobs:
           # Map your repository secret onto the variable NAME recorded by bootstrap.
           OPEN_TRESTLE_PROVIDER_OLLAMA_CLOUD: ${{ secrets.OLLAMA_API_KEY }}
         run: |
+          # --repository-checks runs the repository's own tests in a sandbox
+          # that needs unprivileged user namespaces, which ubuntu-24.04 runners
+          # restrict. This lifts the restriction for this job's virtual machine.
+          # Remove this line and the flag below to review without the checks.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           set +e
           trestle setup bootstrap check --directory "$RUNNER_TEMP/trestle-review" > "$RUNNER_TEMP/check.json"
           check=$?
@@ -203,7 +218,7 @@ jobs:
           fi
           # Take the printed command, drop its `--format text` pair, ask for SARIF.
           mapfile -t ARGS < <(jq -r '.review_command[3:] | (index("--format")) as $i | (.[:$i] + .[$i+2:])[]' "$RUNNER_TEMP/check.json")
-          trestle local-git model-review "${ARGS[@]}" --format sarif --exit-code-policy findings \
+          trestle local-git model-review "${ARGS[@]}" --repository-checks --format sarif --exit-code-policy findings \
             > "$RUNNER_TEMP/open-trestle.sarif" 2> "$RUNNER_TEMP/review.stderr"
           status=$?
           cat "$RUNNER_TEMP/review.stderr" >&2
@@ -228,8 +243,8 @@ jobs:
       #
       # upload-sarif defaults to github.sha, which for pull_request is the
       # temporary merge commit, not the head that was reviewed. `ref` and `sha`
-      # bind the analysis to the reviewed pull request head instead. These inputs
-      # are taken from the upload-sarif documentation and are unverified live.
+      # bind the analysis to the reviewed pull request head instead. This step is
+      # unverified live; its inputs are taken from the upload-sarif documentation.
       - name: Upload SARIF to code scanning
         if: ${{ always() && steps.review.outputs.upload == 'true' }}
         uses: github/codeql-action/upload-sarif@v4 # Pin to a full commit SHA in your repository.

@@ -100,7 +100,7 @@ func TestChatCompletionsProtocolIdentityAndResponsesCompatibility(t *testing.T) 
 		t.Fatal("explicit Responses changed identity")
 	}
 	instructions := "trusted"
-	request, err := a.newRequest(context.Background(), testKey(t), "model", 10, instructions, []byte("payload"))
+	request, err := a.newRequest(context.Background(), testKey(t), "model", 10, instructions, []byte("payload"), false)
 	if err != nil {
 		t.Fatal(err)
 	}
