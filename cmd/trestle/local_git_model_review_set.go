@@ -469,6 +469,10 @@ type modelReviewSetWire struct {
 func runLocalModelReviewSet(ctx, execution context.Context, options localModelReviewOptions, inputs localModelReviewInputs, preparedStatus string, stdout, stderr io.Writer, observe func(modelReviewOutcome)) int {
 	request := options.specialists
 	selection := specialistSelectionWire{Mode: request.mode, MaxSpecialists: request.max, Selected: []selectedSpecialistWire{}, Dropped: []droppedSpecialistWire{}, Inactive: []string{}, RouteAssignment: routeAssignmentNotApplied}
+	progress := reviewProgressOf(ctx)
+	if request.mode == specialistModeExplicit {
+		progress.setReviewers(1 + len(request.explicit))
+	}
 	var general localModelReviewMember
 	if preparedStatus != "" {
 		result, err := localreview.NewUnstartedSpecialistResult(preparedStatus, options.objectStoreProfile, review.ContextSpecialist{})
@@ -485,6 +489,7 @@ func runLocalModelReviewSet(ctx, execution context.Context, options localModelRe
 		if general.partialCheckout {
 			fmt.Fprintln(stderr, partialCheckoutHint)
 		}
+		progress.memberDone()
 	}
 	var selected []review.ContextSpecialist
 	switch {
@@ -503,6 +508,9 @@ func runLocalModelReviewSet(ctx, execution context.Context, options localModelRe
 	default:
 		selection.Status = "features_unavailable"
 		selection.Reason = featuresUnavailableReason(general.result)
+	}
+	if request.mode != specialistModeExplicit {
+		progress.setReviewers(1 + len(selected))
 	}
 	if selection.Features != nil {
 		selection.Features.StyleConfigurationUnread = general.styleConfigUnread
@@ -536,6 +544,9 @@ func runLocalModelReviewSet(ctx, execution context.Context, options localModelRe
 			}
 			continue
 		}
+		if end-start > 1 {
+			progress.beginWave()
+		}
 		wave := make([]localModelReviewMember, end-start)
 		launched := make([]bool, end-start)
 		var group sync.WaitGroup
@@ -546,9 +557,11 @@ func runLocalModelReviewSet(ctx, execution context.Context, options localModelRe
 				memberExecution, cancel := context.WithTimeout(ctx, options.timeout)
 				defer cancel()
 				wave[slot], launched[slot] = runLocalModelReviewMember(ctx, memberExecution, options, inputs, specialist, false)
+				progress.memberDone()
 			}(index-start, selected[index])
 		}
 		group.Wait()
+		progress.endWave()
 		// Members are recorded in selection order, whichever finished first.
 		for slot, member := range wave {
 			if !launched[slot] {
@@ -568,6 +581,7 @@ func runLocalModelReviewSet(ctx, execution context.Context, options localModelRe
 			}
 		}
 	}
+	progress.finish()
 	set := buildModelReviewSet(selection, members, notLaunched, options, concurrency, sequentialReason)
 	if regressions := localreview.NewCheckRegressions(inputs.checks); regressions != nil {
 		set.CheckRegressions, set.CI = regressions, "blocked"

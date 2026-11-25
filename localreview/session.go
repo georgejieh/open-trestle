@@ -95,6 +95,9 @@ type SessionOptions struct {
 	// the retry's reservation. Nil sends no such retry. An investigation
 	// session ignores it.
 	AnswerRetry func(reservedMicroUSD uint64) bool
+	// Progress, when set, is called before each model request is sent. It runs
+	// on the dispatching goroutine and must return quickly.
+	Progress func(ProgressEvent)
 }
 type Session struct {
 	mu                               sync.Mutex
@@ -280,7 +283,7 @@ func newSession(o SessionOptions, investigationPolicy *review.InvestigationPolic
 	if err != nil {
 		return nil, ErrInvalidSession
 	}
-	routeFailures := &routeFailureObserver{}
+	routeFailures := &routeFailureObserver{progress: o.Progress}
 	if dispatchers, err = observeRouteDispatchers(dispatchers, routeFailures); err != nil {
 		return nil, ErrInvalidSession
 	}

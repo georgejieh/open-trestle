@@ -4,6 +4,8 @@ import (
 	"io"
 	"os"
 	"syscall"
+
+	"golang.org/x/sys/windows"
 )
 
 // consoleTerminal turns echo off with the console input mode, keeping line
@@ -79,4 +81,13 @@ func enableTerminalOutput(out io.Writer) (func(), bool) {
 		return nil, false
 	}
 	return func() { _ = console.setMode(saved) }, true
+}
+
+// terminalColumns is the width of the console file is, or 0 when unknown.
+func terminalColumns(file *os.File) int {
+	var info windows.ConsoleScreenBufferInfo
+	if windows.GetConsoleScreenBufferInfo(windows.Handle(file.Fd()), &info) != nil {
+		return 0
+	}
+	return int(info.Window.Right-info.Window.Left) + 1
 }

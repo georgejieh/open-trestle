@@ -373,7 +373,7 @@ func TestLocalModelSessionCapacityAndTimingRemainBounded(t *testing.T) {
 }
 
 func TestLocalModelSessionCannotReceiveForgeOrCustomHandlerCapabilities(t *testing.T) {
-	allowed := map[string]bool{"TenantID": true, "RepositoryID": true, "Repository": true, "ObjectsRoot": true, "ObjectStoreProfile": true, "ObjectAlgorithm": true, "Inventory": true, "Policy": true, "Egress": true, "Credentials": true, "Clock": true, "Timeout": true, "ArtifactCapacity": true, "RenewalInterval": true, "Retention": true, "RetainedMemoryInput": true, "GenerationSanitizer": true, "VerificationSanitizer": true, "ModelHTTPClient": true, "ModelHTTPClientIdentity": true, "IndexContext": true, "Scanner": true, "CheckRuns": true, "AnswerRetry": true}
+	allowed := map[string]bool{"TenantID": true, "RepositoryID": true, "Repository": true, "ObjectsRoot": true, "ObjectStoreProfile": true, "ObjectAlgorithm": true, "Inventory": true, "Policy": true, "Egress": true, "Credentials": true, "Clock": true, "Timeout": true, "ArtifactCapacity": true, "RenewalInterval": true, "Retention": true, "RetainedMemoryInput": true, "GenerationSanitizer": true, "VerificationSanitizer": true, "ModelHTTPClient": true, "ModelHTTPClientIdentity": true, "IndexContext": true, "Scanner": true, "CheckRuns": true, "AnswerRetry": true, "Progress": true}
 	options := reflect.TypeOf(localreview.SessionOptions{})
 	// The policy-approved transport is a plain identity-bound HTTP client, not a handler.
 	if field, ok := options.FieldByName("ModelHTTPClient"); !ok || field.Type != reflect.TypeOf((*http.Client)(nil)) {
@@ -404,6 +404,10 @@ func TestLocalModelSessionCannotReceiveForgeOrCustomHandlerCapabilities(t *testi
 	// The answer retry option only allows or refuses a retry's spend.
 	if retry, ok := options.FieldByName("AnswerRetry"); !ok || retry.Type != reflect.TypeOf(func(uint64) bool { return false }) {
 		t.Fatal("answer retry option must remain a spend decision")
+	}
+	// Progress only hears that a request is being sent; it carries no content.
+	if progress, ok := options.FieldByName("Progress"); !ok || progress.Type != reflect.TypeOf(func(localreview.ProgressEvent) {}) {
+		t.Fatal("progress option must remain a notification of the stage")
 	}
 	for i := 0; i < options.NumField(); i++ {
 		field := options.Field(i)

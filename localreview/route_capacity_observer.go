@@ -71,6 +71,7 @@ type observedGenerationAuthorizer struct {
 }
 
 func (a observedGenerationAuthorizer) Authorize(ctx context.Context, scope audit.ReviewScope, request provider.Request, policyIdentity string, at time.Time) (gateway.RouteAttemptAuthorization, error) {
+	a.observer.setStage(ProgressFinder)
 	authorization, err := a.GenerationAuthorizer.Authorize(ctx, scope, request, policyIdentity, at)
 	a.observer.refused(err)
 	return authorization, err
@@ -82,6 +83,7 @@ type observedVerificationAuthorizer struct {
 }
 
 func (a observedVerificationAuthorizer) Authorize(ctx context.Context, scope audit.ReviewScope, request provider.Request, generation gateway.RouteExecutionRecord) (modelhandler.VerificationAuthority, error) {
+	a.observer.setStage(ProgressChecker)
 	authority, err := a.VerificationAuthorizer.Authorize(ctx, scope, request, generation)
 	a.observer.refused(err)
 	return authority, err

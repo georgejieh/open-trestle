@@ -46,6 +46,12 @@ type routeFailureObserver struct {
 	// requests names the request each dispatched authorization sent, so a
 	// retry's attempt is counted in its request's stage.
 	requests map[string]string
+	// progress, when set, is told of each request before it is sent. stage is
+	// the kind of the next request, set by its authorizer; retryNext marks the
+	// request after an unusable answer as a retry.
+	progress  func(ProgressEvent)
+	stage     ProgressStage
+	retryNext bool
 }
 
 // SpendObservation is what one run's model requests may have cost, for the
@@ -176,6 +182,7 @@ func (o *routeFailureObserver) recordAnswerRetry() {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.answerRetried = true
+	o.retryNext = true
 }
 
 func (o *routeFailureObserver) retriedAnswer() bool {
@@ -280,6 +287,7 @@ type observedRouteDispatcher struct {
 }
 
 func (d observedRouteDispatcher) DispatchRoute(ctx context.Context, request gateway.RouteDispatchRequest) gateway.RouteDispatchResult {
+	d.observer.started(request.Authorization())
 	result := d.RouteDispatcher.DispatchRoute(ctx, request)
 	d.observer.record(request.Authorization().Identity(), request.Request().Capability(), request.Authorization().Pricing(), result)
 	d.observer.recordSent(request.Authorization().Identity(), request.Authorization().ReservedCostMicroUSD(), result)
@@ -297,6 +305,7 @@ type observedSanitizedRouteDispatcher struct {
 }
 
 func (d observedSanitizedRouteDispatcher) DispatchSanitizedRoute(ctx context.Context, request gateway.RouteDispatchRequest, proof modelhandler.SanitizedDispatchProof) gateway.RouteDispatchResult {
+	d.observer.started(request.Authorization())
 	result := d.sanitized.DispatchSanitizedRoute(ctx, request, proof)
 	d.observer.record(request.Authorization().Identity(), request.Request().Capability(), request.Authorization().Pricing(), result)
 	d.observer.recordSent(request.Authorization().Identity(), request.Authorization().ReservedCostMicroUSD(), result)
@@ -327,4 +336,23 @@ func observeRouteDispatchers(catalog gateway.RouteDispatcherCatalog, observer *r
 		return gateway.RouteDispatcherCatalog{}, ErrInvalidSession
 	}
 	return observedCatalog, nil
+}
+
+// setStage names the kind of the next request.
+func (o *routeFailureObserver) setStage(stage ProgressStage) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.stage = stage
+}
+
+// started reports a request about to be sent to the progress callback.
+func (o *routeFailureObserver) started(authorization gateway.RouteAttemptAuthorization) {
+	if o.progress == nil {
+		return
+	}
+	o.mu.Lock()
+	event := ProgressEvent{Stage: o.stage, Retry: o.retryNext || authorization.Kind() == gateway.RouteAttemptRetry}
+	o.retryNext = false
+	o.mu.Unlock()
+	o.progress(event)
 }

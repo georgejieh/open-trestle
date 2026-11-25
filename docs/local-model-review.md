@@ -90,6 +90,28 @@ The result goes to standard output in the saved format or in the one you pass wi
 
 The command sends nothing and exits with 3 when the repository has no setup, when there is no committed change to review, or when the API key of the setup is missing (set it with `trestle keys set NAME`). It exits with 4 when the saved setup cannot be loaded. It exits with 2 outside a Git checkout, with flags that the saved setup cannot combine, or when the setup belongs to another repository. `trestle review PATH` reviews a local fixture file instead.
 
+### Progress
+
+A review can take several minutes, so standard error shows what it is doing. On a terminal, one line names the stage, with a spinner and the time it has taken, redrawn in place. When a stage ends, a line with its duration stays behind:
+
+```text
+✓ Repository checks · 38s
+⠹ Checking findings · bug_hunter (2 of 4 reviewers) · 1m 12s
+```
+
+The stages are indexing the repository, the repository checks, preparing the secret scanner (first use only), preparing the review, finding problems, checking findings, finishing, and a request sent again after a failure or an answer that could not be used, which shows as `(retrying)`. In a specialist review each line names the reviewer and its place, and reviewers that run at once share one line: `Reviewing · 2 of 4 reviewers done · 2m 03s`. There is no percentage, because the time a model takes is not known; the counts are the only bound shown. The repository checks run as one stage, without a count of tests.
+
+When the locale is set and is not UTF-8, the spinner is `|`, `/`, `-` and `\` in turn and a finished stage starts with `[ok]`. `NO_COLOR` removes the colors. When standard error is not a terminal, such as in CI or a pipe, or `TERM` is `dumb`, each stage prints one plain line when it starts, with no control characters:
+
+```text
+Preparing the review
+Finding problems
+Checking findings
+Finishing
+```
+
+The stages that already print their own notice (indexing, checks, the scanner) print nothing more. The line is cleared before any other message and before the result, so standard output is the result alone, byte for byte, in every format. A line is cut to the width of the terminal, or 60 columns when it is not known.
+
 ## Ordinary checkout source selection
 
 Instead of the object-root flag and the three revision flags, you can select two immutable commits from an ordinary local checkout:
