@@ -136,6 +136,7 @@ All notable changes to released versions of Open Trestle will be documented in t
 
 ### Fixed
 
+- The GitHub Actions example now works on a GitHub-hosted runner. It ran the build without the vulnerability gate, which the package builder requires; it installed with `sudo` under `/usr/local`, which the installer refuses on a hosted runner because `/usr/local/bin` there is writable by every user; and it stopped when `setup bootstrap init` reported the setup as pending without the key. It now runs the gate, installs into a private folder, accepts the pending status, and turns on repository checks.
 - Fixed the first review inside `trestle init`, which printed the result before the progress lines written earlier. When that review fails, the last line now points to the reason and hint above it, and suggests checking that the models are reachable only when the review reported no reason.
 - Fixed the `model_output_exhausted` hint, which named `setup bootstrap init --max-output-tokens`. It now names the command that changes the allowance: `trestle init --directory NEW_FOLDER --max-output-tokens N`.
 - Fixed repeated repository check names in a repository with several Go modules. A check of a module below the root now names its folder, for example `go test . (in _examples)`.
