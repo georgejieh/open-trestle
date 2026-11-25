@@ -25,11 +25,46 @@ When standard output is a terminal, `trestle keys`, `trestle usage`,
 `trestle checks` and `trestle update --check` print a heading, one row per item
 with a mark (labels lined up), and the next command after `->`, wrapped at 60
 columns. Without a terminal they print the same plain text as before, for
-scripts.
+scripts. The marks and colors are listed in
+[terminal symbols and colors](#terminal-symbols-and-colors).
 
 `--flag=value` and `--flag value` both work, except for `profiles` and
 `local-git`, which take each flag and its value as two separate words. `init`, `review`, `update` and
 `usage` reject a flag that you give twice.
+
+### Terminal symbols and colors
+
+Every screen uses the same marks, and each state has its mark, so color is
+never the only signal:
+
+| Mark | With `TERM=dumb` | Color | Meaning |
+| --- | --- | --- | --- |
+| `✓` | `[ok]` | green | Done, found, or within its limit. |
+| `…` | `[..]` | amber | Needs attention, or waiting. |
+| `✗` | `[x]` | red | Needs a fix, refused, or at its limit. |
+| `–` | `[--]` | dim | Optional, or not set up. |
+| `->` | `->` | dim | The command to run next. |
+
+Titles are bold blue, questions blue, frames and the bridge mark slate, and
+hints dim. Other text keeps the terminal's own color, so it reads on light and
+dark themes. Lines are at most 60 columns wide; a command to copy is never
+wrapped, even when it is longer.
+
+Color is used only when standard output is a terminal. `NO_COLOR` (set to any
+value) turns color off and keeps the marks. `TERM=dumb` turns color off and
+switches the marks and frames to the ASCII forms above. `trestle init
+--no-input` prints no color either. Without a terminal, output is plain text for
+scripts.
+
+A refusal names the command, says what happened and what did or did not
+change, and gives the command to run next on its own line:
+
+```text
+trestle review: this repository has no Open Trestle setup yet (looked in ~/.local/state/open-trestle/app-1a2b3c4d). Nothing was sent.
+  -> trestle init
+```
+
+Exit codes are in [exit codes](exit-codes.md).
 
 ## Everyday
 

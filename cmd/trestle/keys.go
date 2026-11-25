@@ -31,8 +31,7 @@ func writeKeysUsage(w io.Writer) {
 }
 
 func keysFail(stderr io.Writer, code int, format string, values ...any) int {
-	fmt.Fprintf(stderr, "trestle keys: "+format+"\n", values...)
-	return code
+	return commandFail(stderr, code, "keys", fmt.Sprintf(format, values...))
 }
 
 func runKeys(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -49,10 +48,11 @@ func runKeys(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 	}
 	name := args[1]
 	if !credentialstore.ValidName(name) {
+		example := "trestle keys " + args[0] + " OPEN_TRESTLE_PROVIDER_NAME"
 		if _, err := initCredentialName(name); err != nil {
-			return keysFail(stderr, 2, "%s", err.Error())
+			return commandFail(stderr, 2, "keys", err.Error()+" Nothing was changed.", example)
 		}
-		return keysFail(stderr, 2, "%s is not an OPEN_TRESTLE_PROVIDER_ variable name", name)
+		return commandFail(stderr, 2, "keys", name+" is not an OPEN_TRESTLE_PROVIDER_ variable name. Nothing was changed.", example)
 	}
 	if args[0] == "remove" {
 		return runKeysRemove(ctx, name, stdout, stderr)
@@ -197,18 +197,19 @@ func readKeyInput(ctx context.Context, name string, stdin io.Reader, stdout, std
 func runKeysSet(ctx context.Context, name string, stdin io.Reader, stdout, stderr io.Writer) int {
 	store, err := providerCredentialStore()
 	if err != nil {
-		return keysFail(stderr, 1, "the credential folder cannot be found (set HOME or XDG_CONFIG_HOME)")
+		return keysFail(stderr, 1, "the credential folder cannot be found (set HOME or XDG_CONFIG_HOME). Nothing was changed.")
 	}
+	again := "trestle keys set " + name
 	key, err := readKeyInput(ctx, name, stdin, stdout, stderr)
 	switch {
 	case errors.Is(err, errInitSecretUnavailable):
-		return keysFail(stderr, 1, "hidden input is not available on this terminal, so no key was read; pipe the key in instead")
+		return commandFail(stderr, 1, "keys", "hidden input is not available on this terminal, so no key was read. Nothing was changed. Pipe the key in instead:", "read -rs KEY && printf '%s\\n' \"$KEY\" | "+again)
 	case errors.Is(err, errInitInputEnded) || errors.Is(err, errInitTooManyTries):
-		return keysFail(stderr, 2, "no key was read; nothing was changed")
+		return commandFail(stderr, 2, "keys", "no key was read. Nothing was changed.", again)
 	case err != nil || key != "" && credentialstore.ValidKey(key) != nil:
-		return keysFail(stderr, 2, "that is not a usable API key: it must be one line of printable characters without spaces; nothing was changed")
+		return commandFail(stderr, 2, "keys", "that is not a usable API key: it must be one line of printable characters without spaces. Nothing was changed.", again)
 	case key == "":
-		return keysFail(stderr, 2, "no key was given; nothing was changed")
+		return commandFail(stderr, 2, "keys", "no key was given. Nothing was changed.", again)
 	}
 	p := newOutPrinter(ctx, stdout)
 	if usageUsualProviders()[name] == "openrouter" {
@@ -218,7 +219,7 @@ func runKeysSet(ctx context.Context, name string, stdin io.Reader, stdout, stder
 		case err == nil:
 			p.note(p.ok, "OpenRouter accepted the key (one GET /api/v1/key, which costs nothing and sends no source).")
 		case errors.As(err, &status) && status.KeyRefused():
-			return keysFail(stderr, 4, "OpenRouter refused this key (HTTP %d); nothing was saved. Check that you copied the whole key and try again.", status.StatusCode)
+			return commandFail(stderr, 4, "keys", fmt.Sprintf("OpenRouter refused this key (HTTP %d); nothing was saved. Check that you copied the whole key and try again:", status.StatusCode), again)
 		default:
 			p.note(p.wait, fmt.Sprintf("The key could not be checked (%s); it is saved as typed, and the next review shows whether it works.", strings.TrimPrefix(err.Error(), spending.ErrOpenRouterKeyUnreadable.Error()+": ")))
 		}
@@ -226,7 +227,7 @@ func runKeysSet(ctx context.Context, name string, stdin io.Reader, stdout, stder
 		p.note(p.optional, "This provider has no call that checks a key for free, so the key is not checked now; the next review shows whether it works.")
 	}
 	if err := store.Set(ctx, name, key); err != nil {
-		return keysFail(stderr, 1, "the key could not be saved: %v", err)
+		return keysFail(stderr, 1, "the key could not be saved (%v). Nothing was changed.", err)
 	}
 	p.note(p.ok, fmt.Sprintf("Saved the key for %s in %s (%s).", name, providerCredentialDisplayDirectory(), providerCredentialProtection()))
 	if os.Getenv(name) != "" {
@@ -238,11 +239,11 @@ func runKeysSet(ctx context.Context, name string, stdin io.Reader, stdout, stder
 func runKeysRemove(ctx context.Context, name string, stdout, stderr io.Writer) int {
 	store, err := providerCredentialStore()
 	if err != nil {
-		return keysFail(stderr, 1, "the credential folder cannot be found (set HOME or XDG_CONFIG_HOME)")
+		return keysFail(stderr, 1, "the credential folder cannot be found (set HOME or XDG_CONFIG_HOME). Nothing was changed.")
 	}
 	removed, err := store.Remove(ctx, name)
 	if err != nil {
-		return keysFail(stderr, 1, "the saved key could not be removed: %v", err)
+		return commandFail(stderr, 1, "keys", fmt.Sprintf("the saved key could not be removed (%v). See what is saved:", err), "trestle keys")
 	}
 	p := newOutPrinter(ctx, stdout)
 	if removed {

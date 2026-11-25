@@ -225,3 +225,26 @@ func TestChecksStatusAndUpdateCheckOnATerminal(t *testing.T) {
 		t.Fatalf("update --check: exit=%d\n%q\nwant\n%q", code, out, want)
 	}
 }
+
+// A refusal says what happened and what did or did not change, then the
+// command to run next on its own line.
+func TestRefusalsNameTheNextCommand(t *testing.T) {
+	keyStoreForTest(t)
+	t.Chdir(t.TempDir())
+	var stdout, stderr bytes.Buffer
+	if code := runChecks(context.Background(), []string{"status"}, &stdout, &stderr); code != 2 || stderr.String() != "trestle checks: this folder is not inside a Git checkout, or git is not installed. Nothing was changed.\n  -> cd REPOSITORY && trestle checks status\n" {
+		t.Fatalf("checks: exit=%d %q", code, stderr.String())
+	}
+	if code, _, errText := runKeysCommand(t, "", "remove", "OPENAI_API_KEY"); code != 2 || errText != "trestle keys: The name must start with OPEN_TRESTLE_PROVIDER_ and use only capital letters, digits and _. Nothing was changed.\n  -> trestle keys remove OPEN_TRESTLE_PROVIDER_NAME\n" {
+		t.Fatalf("keys: exit=%d %q", code, errText)
+	}
+	if code, _, errText := runReviewCommand(t, t.TempDir()); code != 2 || errText != "trestle review: this folder is not inside a Git checkout, or git is not installed. Nothing was sent.\n  -> cd REPOSITORY && trestle review\n  -> trestle review <path>   (a fixture file)\n" {
+		t.Fatalf("review: exit=%d %q", code, errText)
+	}
+	checkout := latestChangeCheckout(t)
+	t.Setenv("HOME", t.TempDir())
+	code, _, errText := runReviewCommand(t, checkout)
+	if first, rest, _ := strings.Cut(errText, "\n"); code != 3 || !strings.HasPrefix(first, "trestle review: this repository has no Open Trestle setup yet (looked in ") || !strings.HasSuffix(first, "). Nothing was sent.") || rest != "  -> trestle init\n" {
+		t.Fatalf("review without a setup: exit=%d %q", code, errText)
+	}
+}

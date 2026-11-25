@@ -80,7 +80,9 @@ function publish(root: string, list: Finding[]) {
     );
 }
 function finish(root: string, executable: string, result: RunResult) {
-  const last = result.stderrTail.at(-1) ?? "";
+  // A refusal ends with "  -> command" lines; the reason is the line above.
+  const last =
+    result.stderrTail.filter((item) => !item.startsWith("  -> ")).at(-1) ?? "";
   output?.appendLine(
     `trestle review ended with exit code ${result.code ?? "none"}.`,
   );

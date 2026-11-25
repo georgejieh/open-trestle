@@ -406,8 +406,7 @@ func runLatestReview(ctx context.Context, args []string, stdout, stderr io.Write
 	}
 	checkout, err := findRepositoryCheckout(ctx)
 	if err != nil {
-		fmt.Fprintln(stderr, "trestle review: this folder is not inside a Git checkout (or git is not installed). Change into your repository and run trestle review again. To review a fixture file, run trestle review <path>.")
-		return 2
+		return commandFail(stderr, 2, "review", "this folder is not inside a Git checkout, or git is not installed. Nothing was sent.", "cd REPOSITORY && trestle review", "trestle review <path>   (a fixture file)")
 	}
 	dir := discoverSetupDirectory(ctx, checkout)
 	if options.directory != "" {
@@ -417,17 +416,14 @@ func runLatestReview(ctx context.Context, args []string, stdout, stderr io.Write
 		}
 	}
 	if !setupExists(dir) {
-		fmt.Fprintf(stderr, "trestle review: this repository has no Open Trestle setup yet (looked in %s). Run trestle init here first: it asks a few questions and can run the first review.\n", initDisplayPath(dir))
-		return 3
+		return commandFail(stderr, 3, "review", fmt.Sprintf("this repository has no Open Trestle setup yet (looked in %s). Nothing was sent.", initDisplayPath(dir)), "trestle init")
 	}
 	repo, err := loadRepositorySetup(ctx, checkout, dir)
 	if err != nil {
-		fmt.Fprintf(stderr, "trestle review: the setup in %s cannot be used (%s). Nothing was sent. Run trestle init to check it.\n", initDisplayPath(dir), err)
-		return 4
+		return commandFail(stderr, 4, "review", fmt.Sprintf("the setup in %s cannot be used (%s). Nothing was sent.", initDisplayPath(dir), err), "trestle init")
 	}
 	if !sameCheckout(repo.templateCheckout, checkout) {
-		fmt.Fprintf(stderr, "trestle review: the setup in %s is for %s, not this repository. Run trestle review there, or trestle init here.\n", initDisplayPath(dir), initDisplayPath(repo.templateCheckout))
-		return 2
+		return commandFail(stderr, 2, "review", fmt.Sprintf("the setup in %s is for %s, not this repository. Nothing was sent.", initDisplayPath(dir), initDisplayPath(repo.templateCheckout)), "cd "+updateShellLine([]string{repo.templateCheckout})+" && trestle review", "trestle init")
 	}
 	printer := latestReviewPrinter(ctx, stderr, checkout)
 	code, ran := reviewLatestChange(ctx, printer, repo, options, stdout, stderr)

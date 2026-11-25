@@ -47,6 +47,18 @@ func (p outPrinter) heading(title string) {
 	p.sayVerbatim(p.style.paint(initToneHeading, title))
 }
 
+// commandFail prints a refusal on standard error, "trestle <command>: <what
+// happened>. <what did or did not change>.", then each command to run next on
+// its own indented line, never wrapped. It returns code.
+func commandFail(stderr io.Writer, code int, command, message string, next ...string) int {
+	fmt.Fprintf(stderr, "trestle %s: %s\n", command, message)
+	style := newInitStyle(stderr, false)
+	for _, line := range next {
+		fmt.Fprintln(stderr, style.paint(initToneDim, "  -> "+line))
+	}
+	return code
+}
+
 // outRow is one row; label may be empty, and tone colors the value.
 type outRow struct {
 	mark, label, value string

@@ -43,8 +43,8 @@ When the review writes a SARIF result, its findings replace the earlier ones,
 and a one-line summary gives the status, the commit and the number of findings.
 An empty list is not a clearance. Findings that have no line in `HEAD`, such as
 findings on removed lines, are written to the output channel. When the review
-writes no result, the earlier findings stay and the CLI's last line is shown,
-for example "Run trestle init here first". **Open Trestle: Clear Findings**
+writes no result, the earlier findings stay and the CLI's last line is shown.
+**Open Trestle: Clear Findings**
 removes them.
 
 ## Setting

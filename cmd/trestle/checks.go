@@ -108,8 +108,7 @@ func runChecks(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	}
 	checkout, err := findRepositoryCheckout(ctx)
 	if err != nil {
-		fmt.Fprintln(stderr, "trestle checks: this folder is not inside a Git checkout (or git is not installed). Change into your repository and try again.")
-		return 2
+		return commandFail(stderr, 2, "checks", "this folder is not inside a Git checkout, or git is not installed. Nothing was changed.", "cd REPOSITORY && trestle checks "+args[0])
 	}
 	dir := discoverSetupDirectory(ctx, checkout)
 	if directory != "" {
@@ -119,20 +118,18 @@ func runChecks(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		}
 	}
 	if !setupExists(dir) {
-		fmt.Fprintf(stderr, "trestle checks: this repository has no Open Trestle setup yet (looked in %s). Run trestle init here first.\n", initDisplayPath(dir))
-		return 3
+		return commandFail(stderr, 3, "checks", fmt.Sprintf("this repository has no Open Trestle setup yet (looked in %s). Nothing was changed.", initDisplayPath(dir)), "trestle init")
 	}
 	repository := checksRepository(ctx, checkout)
 	switch args[0] {
 	case "on", "off":
 		if err := writeChecksConsent(ctx, dir, repository, args[0] == "on"); err != nil {
-			fmt.Fprintf(stderr, "trestle checks: the answer could not be saved in %s (%v).\n", initDisplayPath(dir), err)
-			return 4
+			return commandFail(stderr, 4, "checks", fmt.Sprintf("the answer could not be saved in %s (%v). The earlier answer stays.", initDisplayPath(dir), err))
 		}
 	}
 	if args[0] == "off" {
 		if err := checksandbox.RemoveToolchainGrants(); err != nil {
-			fmt.Fprintf(stderr, "trestle checks: some toolchain folders still grant the sandbox read access (%v); run trestle checks off again to retry.\n", withoutHomeFolder(err.Error()))
+			commandFail(stderr, 0, "checks", fmt.Sprintf("some toolchain folders still grant the sandbox read access (%v). Checks are off, and running this again retries.", withoutHomeFolder(err.Error())), "trestle checks off")
 		}
 	}
 	allowed, decided := readChecksConsent(dir, repository)

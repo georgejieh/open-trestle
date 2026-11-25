@@ -75,8 +75,7 @@ func runUsage(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 }
 
 func usageFail(stderr io.Writer, code int, format string, values ...any) int {
-	fmt.Fprintf(stderr, "trestle usage: "+format+"\n", values...)
-	return code
+	return commandFail(stderr, code, "usage", fmt.Sprintf(format, values...))
 }
 
 func runUsageChange(ctx context.Context, command string, args []string, stdout, stderr io.Writer) int {
@@ -105,7 +104,11 @@ func runUsageChange(ctx context.Context, command string, args []string, stdout, 
 	}
 	if !runtimeconfig.ValidCredentialEnvironment(*variable) {
 		if *variable == "" {
-			return usageFail(stderr, 2, "--credential-env is required: the NAME of the variable that holds the key, such as OPEN_TRESTLE_PROVIDER_OPENROUTER")
+			example := "trestle usage clear --credential-env OPEN_TRESTLE_PROVIDER_OPENROUTER"
+			if command == "set" {
+				example = "trestle usage set --credential-env OPEN_TRESTLE_PROVIDER_OPENROUTER --limit 10"
+			}
+			return commandFail(stderr, 2, "usage", "--credential-env is required: the NAME of the variable that holds the key, such as OPEN_TRESTLE_PROVIDER_OPENROUTER. Nothing was changed.", example)
 		}
 		return usageFail(stderr, 2, "--credential-env takes the NAME of an environment variable matching OPEN_TRESTLE_PROVIDER_[A-Z0-9_]+, never a key value")
 	}
@@ -133,7 +136,7 @@ func runUsageChange(ctx context.Context, command string, args []string, stdout, 
 		}
 	}
 	if provider == "" {
-		return usageFail(stderr, 2, "--provider is needed: %s is not a provider's usual key variable. Give the provider ID its routes use, such as openrouter, ollama-cloud or opencode-go", *variable)
+		return commandFail(stderr, 2, "usage", fmt.Sprintf("--provider is needed: %s is not a provider's usual key variable. Give the provider ID its routes use, such as openrouter, ollama-cloud or opencode-go. Nothing was changed.", *variable), updateShellLine(append([]string{"trestle", "usage", command}, args...))+" --provider openrouter")
 	}
 	scope, err := spending.NewScope(provider, *variable)
 	if err != nil {
