@@ -239,6 +239,8 @@ func (w *initWizard) saveChecksAnswer(repository string, allowed bool) {
 // check applies to is an outcome too, so the walkthrough says so.
 func runRepositoryChecks(ctx context.Context, objectsPath string, base, head evidence.RevisionIdentity, index *reviewIndexContext, stderr io.Writer) *review.CheckRuns {
 	fmt.Fprintln(stderr, "Running this repository's checks for the change in a sandbox (tests twice on each side, linters once)...")
+	progress := reviewProgressOf(ctx)
+	progress.begin("Repository checks", true)
 	checksandbox.SweepStale()
 	dependents, scope := index.dependents(ctx)
 	switch scope {
@@ -248,6 +250,7 @@ func runRepositoryChecks(ctx context.Context, objectsPath string, base, head evi
 		fmt.Fprintln(stderr, "The repository index does not cover the whole change, so the checks cover only some of its dependents.")
 	}
 	report, err := repositoryChecksReport(ctx, objectsPath, base, head, dependents)
+	progress.end()
 	if err != nil {
 		report = repochecks.Report{Results: []repochecks.Result{{Name: "repository checks", Reason: err.Error()}}}
 	}

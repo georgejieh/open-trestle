@@ -469,6 +469,10 @@ type modelReviewSetWire struct {
 func runLocalModelReviewSet(ctx, execution context.Context, options localModelReviewOptions, inputs localModelReviewInputs, preparedStatus string, stdout, stderr io.Writer, observe func(modelReviewOutcome)) int {
 	request := options.specialists
 	selection := specialistSelectionWire{Mode: request.mode, MaxSpecialists: request.max, Selected: []selectedSpecialistWire{}, Dropped: []droppedSpecialistWire{}, Inactive: []string{}, RouteAssignment: routeAssignmentNotApplied}
+	progress := reviewProgressOf(ctx)
+	if request.mode == specialistModeExplicit {
+		progress.setReviewers(1 + len(request.explicit))
+	}
 	var general localModelReviewMember
 	if preparedStatus != "" {
 		result, err := localreview.NewUnstartedSpecialistResult(preparedStatus, options.objectStoreProfile, review.ContextSpecialist{})
@@ -485,6 +489,7 @@ func runLocalModelReviewSet(ctx, execution context.Context, options localModelRe
 		if general.partialCheckout {
 			fmt.Fprintln(stderr, partialCheckoutHint)
 		}
+		progress.memberDone()
 	}
 	var selected []review.ContextSpecialist
 	switch {
@@ -503,6 +508,9 @@ func runLocalModelReviewSet(ctx, execution context.Context, options localModelRe
 	default:
 		selection.Status = "features_unavailable"
 		selection.Reason = featuresUnavailableReason(general.result)
+	}
+	if request.mode != specialistModeExplicit {
+		progress.setReviewers(1 + len(selected))
 	}
 	if selection.Features != nil {
 		selection.Features.StyleConfigurationUnread = general.styleConfigUnread
@@ -536,6 +544,9 @@ func runLocalModelReviewSet(ctx, execution context.Context, options localModelRe
 			}
 			continue
 		}
+		if end-start > 1 {
+			progress.beginWave()
+		}
 		wave := make([]localModelReviewMember, end-start)
 		launched := make([]bool, end-start)
 		var group sync.WaitGroup
@@ -546,9 +557,11 @@ func runLocalModelReviewSet(ctx, execution context.Context, options localModelRe
 				memberExecution, cancel := context.WithTimeout(ctx, options.timeout)
 				defer cancel()
 				wave[slot], launched[slot] = runLocalModelReviewMember(ctx, memberExecution, options, inputs, specialist, false)
+				progress.memberDone()
 			}(index-start, selected[index])
 		}
 		group.Wait()
+		progress.endWave()
 		// Members are recorded in selection order, whichever finished first.
 		for slot, member := range wave {
 			if !launched[slot] {
@@ -568,6 +581,7 @@ func runLocalModelReviewSet(ctx, execution context.Context, options localModelRe
 			}
 		}
 	}
+	progress.finish()
 	set := buildModelReviewSet(selection, members, notLaunched, options, concurrency, sequentialReason)
 	if regressions := localreview.NewCheckRegressions(inputs.checks); regressions != nil {
 		set.CheckRegressions, set.CI = regressions, "blocked"
@@ -577,6 +591,15 @@ func runLocalModelReviewSet(ctx, execution context.Context, options localModelRe
 		outcome := modelReviewOutcome{status: set.Status, findings: len(set.Findings), advisory: set.Status == "findings" && set.CI == "inconclusive"}
 		if set.CheckRegressions != nil {
 			outcome.regressions = set.CheckRegressions.Count
+		}
+		for _, member := range set.Members {
+			if member.Launched && member.RunStatus != "succeeded" {
+				text := member.Status
+				if member.Failure != "" {
+					text += ": " + localreview.FailureLine(member.Failure, member.FailureTask, member.FailureDetail)
+				}
+				outcome.unfinished = append(outcome.unfinished, member.Member+" ("+text+")")
+			}
 		}
 		observe(outcome)
 	}
@@ -696,7 +719,7 @@ func buildModelReviewSet(selection specialistSelectionWire, members []localModel
 	var firstWalk *localreview.MemberWalkthrough
 	var memberFindings [][]localreview.ReportFinding
 	labels := make([]string, len(members))
-	complete := true
+	complete, stopped := true, false
 	worst := ""
 	for index, member := range members {
 		labels[index] = memberLabel(member.specialist)
@@ -759,6 +782,7 @@ func buildModelReviewSet(selection specialistSelectionWire, members []localModel
 		}
 		if wire.RunStatus != "succeeded" {
 			complete = false
+			stopped = stopped || wire.Status == "refused" || wire.Status == "canceled"
 			if setStatusRank(wire.Status) > setStatusRank(worst) {
 				worst = wire.Status
 				set.failure, set.runStatus = wire.Failure, wire.RunStatus
@@ -786,8 +810,13 @@ func buildModelReviewSet(selection specialistSelectionWire, members []localModel
 		set.Summary.ByCategory[category]++
 	}
 	set.Complete = complete
+	// A failed specialist does not fail a set whose general review finished
+	// and that no member refused or canceled: the set stays incomplete,
+	// reports what the finished members found, and names each member that did
+	// not finish.
+	specialistFailed := !complete && !stopped && worst == "failed" && len(set.Members) > 0 && set.Members[0].RunStatus == "succeeded"
 	switch {
-	case !complete:
+	case !complete && !specialistFailed:
 		set.Status = worst
 		set.CI = map[string]string{"failed": "error", "refused": "blocked"}[worst]
 		if set.CI == "" {

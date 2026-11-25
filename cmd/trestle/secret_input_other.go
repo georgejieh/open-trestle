@@ -12,3 +12,5 @@ import (
 func platformEchoTerminal(*os.File) (echoTerminal, bool) { return nil, false }
 
 func enableTerminalOutput(io.Writer) (func(), bool) { return nil, false }
+
+func terminalColumns(*os.File) int { return 0 }

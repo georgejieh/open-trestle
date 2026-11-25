@@ -960,7 +960,10 @@ func (w *initWizard) review(command []string) int {
 	var out bytes.Buffer
 	transcript := &initTranscript{}
 	var outcome modelReviewOutcome
-	code := runLocalGitModelReviewObserved(w.ctx, command[3:], io.MultiWriter(&out, transcript), transcript, func(result modelReviewOutcome) { outcome = result })
+	// The transcript is shown after the review, so progress goes to the terminal.
+	progress := startReviewProgress(w.errOut)
+	code := runLocalGitModelReviewObserved(withReviewProgress(w.ctx, progress), command[3:], io.MultiWriter(&out, transcript), transcript, func(result modelReviewOutcome) { outcome = result })
+	progress.stop()
 	if outcome.status != "" {
 		values := map[string]string{}
 		for i := 3; i+1 < len(command); i += 2 {

@@ -81,9 +81,12 @@ func prepareReviewIndex(ctx context.Context, session *indexSession, base, head e
 	}
 	deadline, _ := build.Deadline()
 	fmt.Fprintf(stderr, "Indexing the repository for review context (up to %s; later reviews reuse the index).\n", time.Until(deadline).Round(time.Second))
+	progress := reviewProgressOf(ctx)
+	progress.begin("Indexing the repository", true)
 	if !c.build(build, pending) {
 		c.state = review.ContextIndexOverBudget
 	}
+	progress.end()
 	return c
 }
 

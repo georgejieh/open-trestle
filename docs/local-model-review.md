@@ -90,6 +90,28 @@ The result goes to standard output in the saved format or in the one you pass wi
 
 The command sends nothing and exits with 3 when the repository has no setup, when there is no committed change to review, or when the API key of the setup is missing (set it with `trestle keys set NAME`). It exits with 4 when the saved setup cannot be loaded. It exits with 2 outside a Git checkout, with flags that the saved setup cannot combine, or when the setup belongs to another repository. `trestle review PATH` reviews a local fixture file instead.
 
+### Progress
+
+A review can take several minutes, so standard error shows what it is doing. On a terminal, one line names the stage, with a spinner and the time it has taken, redrawn in place. When a stage ends, a line with its duration stays behind:
+
+```text
+✓ Repository checks · 38s
+⠹ Checking findings · bug_hunter (2 of 4 reviewers) · 1m 12s
+```
+
+The stages are indexing the repository, the repository checks, preparing the secret scanner (first use only), preparing the review, finding problems, checking findings, finishing, and a request sent again after a failure or an answer that could not be used, which shows as `(retrying)`. In a specialist review each line names the reviewer and its place, and reviewers that run at once share one line: `Reviewing · 2 of 4 reviewers done · 2m 03s`. There is no percentage, because the time a model takes is not known; the counts are the only bound shown. The repository checks run as one stage, without a count of tests.
+
+When the locale is set and is not UTF-8, the spinner is `|`, `/`, `-` and `\` in turn and a finished stage starts with `[ok]`. `NO_COLOR` removes the colors. When standard error is not a terminal, such as in CI or a pipe, or `TERM` is `dumb`, each stage prints one plain line when it starts, with no control characters:
+
+```text
+Preparing the review
+Finding problems
+Checking findings
+Finishing
+```
+
+The stages that already print their own notice (indexing, checks, the scanner) print nothing more. The line is cleared before any other message and before the result, so standard output is the result alone, byte for byte, in every format. A line is cut to the width of the terminal, or 60 columns when it is not known.
+
 ## Ordinary checkout source selection
 
 Instead of the object-root flag and the three revision flags, you can select two immutable commits from an ordinary local checkout:
@@ -350,14 +372,17 @@ The status and CI disposition of the set follow the members:
 
 | Set | `status` | `ci_disposition` | Default exit |
 |---|---|---|---|
-| A member did not complete and an introduced merged finding is high or critical | most serious member status | `blocked` | 4 |
-| A member did not complete, no such finding | most serious member status | `failed` gives `error`, `refused` gives `blocked`, otherwise `inconclusive` | 1, 4 or 3 |
+| The general review completed and a specialist failed, with an introduced medium, high or critical merged finding | `findings` | `blocked` | 4 |
+| The general review completed and a specialist failed, every merged finding low severity or pre-existing | `findings` | `inconclusive` | 3 |
+| The general review completed and a specialist failed, with no merged finding | `incomplete` | `inconclusive` | 3 |
+| Otherwise a member did not complete and an introduced merged finding is high or critical | most serious member status | `blocked` | 4 |
+| Otherwise a member did not complete, no such finding | most serious member status | `failed` gives `error`, `refused` gives `blocked`, otherwise `inconclusive` | 1, 4 or 3 |
 | Every member completed, an introduced medium, high or critical merged finding | `findings` | `blocked` | 4 |
 | Every member completed, every merged finding low severity or [pre-existing](#pre-existing-findings) | `findings` | `inconclusive` | 3 |
 | Every member completed with no candidates | `no_candidates` | `inconclusive` | 3 |
 | Every member completed, otherwise | `incomplete` | `inconclusive` | 3 |
 
-An incomplete set never demotes the verified high or critical finding of a completed member. A check regression makes any set `blocked` and keeps its status.
+An incomplete set never demotes the verified high or critical finding of a completed member. A set with a failed specialist keeps `complete: false`, lists that member's failure, and `trestle review` names it on stderr (`Not finished: backend (failed: internal (task verification): model_output_invalid)`). A check regression makes any set `blocked` and keeps its status.
 
 Text output starts with `status:` and `ci:`, then lists the reviewers that ran (`reviewers: general, bug_hunter, backend (3 of 3 ran)`). A member whose run did not succeed gets a `not finished:` line and a `hint:` line, and a member that was not started gets a `not run:` line. The walkthrough, the merged findings in rank order (each with a `confirmed by:` line and, when wordings were merged, an `also reported as:` line), the pre-existing findings, the hidden count, the token total, the style advice and `comprehensive clearance: false` follow. `--verbose` adds the selection trace, one `member:` line for each member and the `limitations:` list. `--format markdown` renders the set as a pull request summary. The SARIF output is one run whose results are the merged findings, each with a `trestleContributors` property.
 

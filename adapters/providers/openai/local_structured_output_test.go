@@ -42,7 +42,7 @@ func TestLocalStructuredOutputWireAndIdentity(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, adapter := range []*Adapter{legacy, a} {
-			request, err := adapter.newRequest(context.Background(), testKey(t), "model", 100, instructions, raw.Payload())
+			request, err := adapter.newRequest(context.Background(), testKey(t), "model", 100, instructions, raw.Payload(), adapter.localStructuredOutput)
 			if err != nil {
 				t.Fatal(err)
 			}

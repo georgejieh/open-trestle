@@ -11,7 +11,7 @@ There are two ways to run Open Trestle on a GitHub pull request. They differ in 
 | Output | SARIF (code scanning alerts), inline review comments and a job summary | Run receipts and review diagnostics |
 | Fork pull requests | Not supported (no secrets, read-only token) | Not supported (the planner accepts only pull requests whose base and head are the configured repository) |
 
-Neither path has run against GitHub. The Actions example has never run on a hosted runner. Open Trestle ships no GitHub App of its own: on the daemon path you register an App on your own account and run the daemon yourself. There is also no packaged `action.yml` (see the [roadmap](roadmap.md#next-release)).
+The Actions example has run on a GitHub-hosted runner in a private repository, except for its `upload-sarif` step; the daemon path has not run against GitHub. Open Trestle ships no GitHub App of its own: on the daemon path you register an App on your own account and run the daemon yourself. There is also no packaged `action.yml` (see the [roadmap](roadmap.md#next-release)).
 
 Use the Actions path to try Open Trestle on a repository you control, with no server. Use the daemon path when you need durable runs. For the daemon path, see [webhook ingress](webhook-ingress.md) and [source acquisition](github-source-acquisition.md).
 

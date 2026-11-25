@@ -7,6 +7,8 @@ import (
 	"os"
 	"syscall"
 	"unsafe"
+
+	"golang.org/x/sys/unix"
 )
 
 // termiosTerminal turns echo off with the terminal's termios flags, keeping
@@ -67,3 +69,12 @@ func (t termiosTerminal) rawInput() (func() error, error) {
 // enableTerminalOutput has nothing to change: terminals here interpret
 // cursor movement already.
 func enableTerminalOutput(io.Writer) (func(), bool) { return func() {}, true }
+
+// terminalColumns is the width of the terminal file is, or 0 when unknown.
+func terminalColumns(file *os.File) int {
+	size, err := unix.IoctlGetWinsize(int(file.Fd()), unix.TIOCGWINSZ)
+	if err != nil {
+		return 0
+	}
+	return int(size.Col)
+}

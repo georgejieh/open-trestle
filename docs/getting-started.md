@@ -436,7 +436,8 @@ command, in `NEXT-STEPS.txt` in the setup folder. It then asks:
 ```
 
 Only `y` runs it. The review runs in the foreground and keeps nothing for
-resume. It can take several minutes. It first builds an index of the repository
+resume. It can take several minutes. A line on the terminal shows the current stage and how long it has taken; see
+[progress](local-model-review.md#progress). It first builds an index of the repository
 on this machine, with no network, and the models see the index's context for the
 change.
 
