@@ -83,8 +83,11 @@ var localReviewScanner = func(ctx context.Context, stderr io.Writer) (secretscan
 func prepareReviewScanner(ctx context.Context, stderr io.Writer, config secretscan.SessionConfig) (secretscan.ReviewSessionOpener, error) {
 	announce := func() {
 		fmt.Fprintln(stderr, "Preparing the secret scanner for first use; this can take a minute.")
+		reviewProgressOf(ctx).begin("Preparing the secret scanner", true)
 	}
-	if err := secretscan.PrepareCache(ctx, config, announce); err != nil {
+	err := secretscan.PrepareCache(ctx, config, announce)
+	reviewProgressOf(ctx).end()
+	if err != nil {
 		return nil, err
 	}
 	return config.Opener(), nil
@@ -333,6 +336,15 @@ func runLocalGitModelReviewObserved(ctx context.Context, args []string, stdout, 
 		}
 		return unstarted("canceled")
 	}
+	// A caller that supplies progress owns it; otherwise it lasts for this run,
+	// and standard output stops it before the first byte of the result.
+	if reviewProgressOf(ctx) == nil {
+		if progress := startReviewProgress(stderr); progress != nil {
+			defer progress.stop()
+			ctx = withReviewProgress(ctx, progress)
+			stdout, stderr = stopWriter{progress, stdout}, progressWriter{progress, stderr}
+		}
+	}
 	execution, cancel := context.WithTimeout(ctx, options.timeout)
 	defer cancel()
 	inputs, status := prepareLocalModelReview(execution, &options, repository, base, head, stderr)
@@ -351,6 +363,7 @@ func runLocalGitModelReviewObserved(ctx context.Context, args []string, stdout, 
 	if !ok {
 		return 1
 	}
+	reviewProgressOf(ctx).finish()
 	if member.partialCheckout {
 		fmt.Fprintln(stderr, partialCheckoutHint)
 	}
@@ -553,6 +566,13 @@ func runLocalModelReviewMember(ctx, execution context.Context, options localMode
 	if options.objectStoreProfile == scm.LocalGitObjectStoreProfileLooseAndPackIndexV1 {
 		sessionOptions.ObjectAlgorithm = base.Algorithm()
 	}
+	name := ""
+	if options.specialists.active() {
+		name = memberLabel(specialist)
+	}
+	progress := reviewProgressOf(ctx)
+	progress.startMember(name)
+	sessionOptions.Progress = progress.memberEvents()
 	var session *localreview.Session
 	if options.investigation != "" {
 		session, err = localreview.NewInvestigationSession(sessionOptions, inputs.investigationPolicy)

@@ -655,3 +655,18 @@ func TestRunLocalGitModelReviewSetSARIFAndExitPolicy(t *testing.T) {
 		}
 	})
 }
+
+func TestRunLocalGitModelReviewSetReportsReviewerProgress(t *testing.T) {
+	f := newLocalModelFixture(t, localModelFixtureOptions{chatCompletions: true, specialist: true, verificationMode: "medium_after_first"})
+	p, buf, _ := testProgress(false, false, 60)
+	var stdout, stderr bytes.Buffer
+	args := append(append([]string(nil), f.args[2:]...), "--specialists", "auto")
+	if code := runLocalGitModelReviewObserved(withReviewProgress(context.Background(), p), args, &stdout, &stderr, nil); code != 4 {
+		t.Fatalf("exit %d, stderr %q", code, stderr.String())
+	}
+	for _, want := range []string{"Finding problems · general\n", "Finding problems · bug_hunter (2 of 4 reviewers)\n", "Checking findings · drift_auditor (4 of 4 reviewers)\n", "Finishing\n"} {
+		if !strings.Contains(buf.String(), want) {
+			t.Fatalf("progress lacks %q:\n%s", want, buf.String())
+		}
+	}
+}
