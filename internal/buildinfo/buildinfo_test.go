@@ -59,3 +59,39 @@ func TestWriteFailureIsReturned(t *testing.T) {
 		t.Fatal("write failure lost")
 	}
 }
+
+func TestReleaseBuildReportsVersion(t *testing.T) {
+	oldRevision, oldTree, oldVersion := sourceRevision, sourceTree, version
+	t.Cleanup(func() { sourceRevision, sourceTree, version = oldRevision, oldTree, oldVersion })
+	sourceRevision, sourceTree, version = strings.Repeat("a", 40), strings.Repeat("b", 40), "0.1.0-alpha.1"
+	var output bytes.Buffer
+	if err := Write(&output, "trestle"); err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(output.Bytes(), &document); err != nil {
+		t.Fatal(err)
+	}
+	if document["version"] != "0.1.0-alpha.1" || Version() != "0.1.0-alpha.1" {
+		t.Fatalf("wrong version: %s", output.Bytes())
+	}
+}
+
+func TestInvalidOrUnboundVersionIsRefused(t *testing.T) {
+	oldRevision, oldTree, oldVersion := sourceRevision, sourceTree, version
+	t.Cleanup(func() { sourceRevision, sourceTree, version = oldRevision, oldTree, oldVersion })
+	for _, test := range []struct{ revision, tree, version string }{
+		{"", "", "0.1.0"},
+		{strings.Repeat("a", 40), strings.Repeat("b", 40), "v0.1.0"},
+		{strings.Repeat("a", 40), strings.Repeat("b", 40), "0.1"},
+	} {
+		sourceRevision, sourceTree, version = test.revision, test.tree, test.version
+		var output bytes.Buffer
+		if err := Write(&output, "trestle"); err == nil || output.Len() != 0 {
+			t.Fatalf("invalid version accepted: %v", test)
+		}
+		if test.version != "0.1.0" && Version() != "" {
+			t.Fatalf("invalid version reported: %v", test)
+		}
+	}
+}

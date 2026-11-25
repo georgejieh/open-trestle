@@ -398,6 +398,30 @@ class DevelopmentBuildTest(unittest.TestCase):
                     if os.name != "nt":
                         self.assertEqual(stat.S_IMODE((output / "bin" / name).stat().st_mode), 0o555)
 
+    def test_release_build_reports_version_and_source(self):
+        binding = {"source_revision": "a" * 40, "source_tree": "b" * 40}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            go_mod = b"module example.org/test\n\ngo 1.25.0\ntoolchain go1.26.11\n"
+            for relative in ("go.mod", f"{SCANNER}/go.mod", f"{GUEST}/go.mod"):
+                _write(root, relative, go_mod)
+            go = _FakeGo(self, binding={**binding, "version": "0.1.0-alpha.1"})
+            build_helper, _ = _FakeGo.build_helper()
+            with patch.multiple(
+                package_secret_scanner, build_helper=build_helper, _run=go.run,
+                source_binding=lambda _root: {**binding, "verified_source": "stable"},
+                _host_target=lambda *_args: ("linux", "amd64"),
+            ):
+                package_secret_scanner.build_development(root, root / "dev", None, "0.1.0-alpha.1")
+                with self.assertRaisesRegex(ValueError, "SemVer"):
+                    package_secret_scanner.build_development(root, root / "dev", None, "v0.1.0")
+            arguments, _ = go.builds["trestle"]
+            flags = next(item for item in arguments if item.startswith("-ldflags="))
+            self.assertTrue(flags.endswith(
+                f" -X {package_secret_scanner.BUILDINFO_PACKAGE}.sourceTree={'b' * 40}"
+                f" -X {package_secret_scanner.BUILDINFO_PACKAGE}.version=0.1.0-alpha.1"
+            ))
+
     def test_development_build_rejects_a_helper_for_another_target(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
