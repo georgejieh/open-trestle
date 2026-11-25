@@ -578,6 +578,15 @@ func runLocalModelReviewSet(ctx, execution context.Context, options localModelRe
 		if set.CheckRegressions != nil {
 			outcome.regressions = set.CheckRegressions.Count
 		}
+		for _, member := range set.Members {
+			if member.Launched && member.RunStatus != "succeeded" {
+				text := member.Status
+				if member.Failure != "" {
+					text += ": " + localreview.FailureLine(member.Failure, member.FailureTask, member.FailureDetail)
+				}
+				outcome.unfinished = append(outcome.unfinished, member.Member+" ("+text+")")
+			}
+		}
 		observe(outcome)
 	}
 	return writeModelReviewSet(options.format, options.exitPolicy, options.renderOptions(), set, stdout, stderr)
@@ -696,7 +705,7 @@ func buildModelReviewSet(selection specialistSelectionWire, members []localModel
 	var firstWalk *localreview.MemberWalkthrough
 	var memberFindings [][]localreview.ReportFinding
 	labels := make([]string, len(members))
-	complete := true
+	complete, stopped := true, false
 	worst := ""
 	for index, member := range members {
 		labels[index] = memberLabel(member.specialist)
@@ -759,6 +768,7 @@ func buildModelReviewSet(selection specialistSelectionWire, members []localModel
 		}
 		if wire.RunStatus != "succeeded" {
 			complete = false
+			stopped = stopped || wire.Status == "refused" || wire.Status == "canceled"
 			if setStatusRank(wire.Status) > setStatusRank(worst) {
 				worst = wire.Status
 				set.failure, set.runStatus = wire.Failure, wire.RunStatus
@@ -786,8 +796,13 @@ func buildModelReviewSet(selection specialistSelectionWire, members []localModel
 		set.Summary.ByCategory[category]++
 	}
 	set.Complete = complete
+	// A failed specialist does not fail a set whose general review finished
+	// and that no member refused or canceled: the set stays incomplete,
+	// reports what the finished members found, and names each member that did
+	// not finish.
+	specialistFailed := !complete && !stopped && worst == "failed" && len(set.Members) > 0 && set.Members[0].RunStatus == "succeeded"
 	switch {
-	case !complete:
+	case !complete && !specialistFailed:
 		set.Status = worst
 		set.CI = map[string]string{"failed": "error", "refused": "blocked"}[worst]
 		if set.CI == "" {

@@ -488,6 +488,9 @@ func reviewLatestChange(ctx context.Context, w *initWizard, repo repositorySetup
 			w.say("  %s The repository's own tests show %d regression%s: tests that passed on base fail on head. The result lists them under check regressions.", w.bad, outcome.regressions, initPlural(outcome.regressions))
 		}
 		w.say("%s", latestOutcomeLine(w, outcome))
+		if len(outcome.unfinished) > 0 {
+			w.say("  %s Not finished: %s. The result covers only the reviewers that finished.", w.wait, strings.Join(outcome.unfinished, ", "))
+		}
 	}
 	return code, true
 }
