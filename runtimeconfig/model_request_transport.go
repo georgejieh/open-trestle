@@ -7,14 +7,15 @@ import (
 
 // ModelRequestTransport returns the request wire that an input estimate for one
 // planning step over routes must count. A step plans one reservation for all
-// of its candidate routes, so it uses the local structured-output transport
-// when any route's connection enables it: that reservation is exact for those
-// routes and covers a standard route in the same step. Otherwise it returns the
-// standard transport.
+// of its candidate routes, so it uses the structured-output transport when any
+// route's connection sends response_format (local structured output, or an
+// OpenRouter verification route with structured verification): that
+// reservation is exact for those routes and covers a standard route in the
+// same step. Otherwise it returns the standard transport.
 func (p RuntimePolicy) ModelRequestTransport(routes []gateway.ObservedRouteCandidate) review.ModelRequestTransport {
 	structured := map[string]bool{}
 	for _, connection := range p.connections {
-		if connection.localStructuredOutput {
+		if connection.localStructuredOutput || connection.brokeredAuthority.structuredVerification {
 			structured[connection.adapterID] = true
 		}
 	}

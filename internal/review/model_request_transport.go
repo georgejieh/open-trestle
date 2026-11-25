@@ -15,9 +15,10 @@ const (
 	// ModelRequestTransportStandard sends the request payload and the trusted
 	// system channel. ModelRequestBudget estimates it.
 	ModelRequestTransportStandard ModelRequestTransport = iota
-	// ModelRequestTransportLocalStructuredOutput is the opt-in local Chat
-	// schema transport. It also sends a serialized response_format that carries
-	// the request's host-pinned output schema.
+	// ModelRequestTransportLocalStructuredOutput is the Chat schema transport
+	// of the opt-in local option and of OpenRouter structured verification. It
+	// also sends a serialized response_format that carries the request's
+	// host-pinned output schema.
 	ModelRequestTransportLocalStructuredOutput
 )
 

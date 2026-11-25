@@ -256,7 +256,7 @@ func TestResponsesWireCarriesExactReadableReviewContracts(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			request, err := adapter.newRequest(context.Background(), testKey(t), "pinned-model-version", 4096, instructions, tc.request.Payload())
+			request, err := adapter.newRequest(context.Background(), testKey(t), "pinned-model-version", 4096, instructions, tc.request.Payload(), false)
 			if err != nil {
 				t.Fatal(err)
 			}
