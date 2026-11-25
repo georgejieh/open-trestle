@@ -10,6 +10,12 @@ exit `2`. Each command also prints its own usage when its arguments are wrong.
 Exit codes are in [exit codes](exit-codes.md), and variables and paths are in
 [environment variables and files](environment-and-files.md).
 
+When standard output is a terminal, `trestle keys`, `trestle usage`,
+`trestle checks` and `trestle update --check` print a heading, one row per item
+with a mark (labels lined up), and the next command after `->`, wrapped at 60
+columns. Without a terminal they print the same plain text as before, for
+scripts.
+
 `--flag=value` and `--flag value` both work, except for `profiles` and
 `local-git`, which take each flag and its value as two separate words. `init`, `review`, `update` and
 `usage` reject a flag that you give twice.
@@ -68,6 +74,11 @@ Shows the spending recorded in this period against each key's limit. See
 | `trestle usage` | Show each limited key's state. |
 | `trestle usage set --credential-env NAME --limit USD` | Set a limit. Also takes `--period week\|month\|year`, `--alert 80,100` and `--provider ID`. |
 | `trestle usage clear --credential-env NAME` | Remove a limit. Also takes `--provider ID`. |
+
+On a terminal, each limited key's mark and color follow its percentage of the
+limit: `✓` and dim below 50%, `✓` from 50%, `…` in amber from the first alert
+percentage (80% by default), and `✗` in red at 100% or more. The percentage is
+always printed.
 
 ### `trestle profiles`
 

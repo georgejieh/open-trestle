@@ -94,6 +94,10 @@ func runKeysList(ctx context.Context, stdout, stderr io.Writer) int {
 		return keysFail(stderr, 1, "the credential folder cannot be found (set HOME or XDG_CONFIG_HOME)")
 	}
 	names, listErr := keysKnownNames(ctx, store)
+	if p := newOutPrinter(ctx, stdout); p.terminal {
+		keysListTerminal(p, store, names, listErr)
+		return 0
+	}
 	fmt.Fprintf(stdout, "API keys (the environment first, then the keys saved in %s):\n", providerCredentialDisplayDirectory())
 	if listErr != nil {
 		fmt.Fprintf(stdout, "  The saved keys cannot be read: %v\n", listErr)
@@ -110,10 +114,8 @@ func runKeysList(ctx context.Context, stdout, stderr io.Writer) int {
 	for _, name := range names {
 		key, state := providerKey(name)
 		where := state.where()
-		if state.source == providerKeyFromEnvironment {
-			if _, saved, err := store.Get(name); err == nil && saved {
-				where += "; a saved key exists too, and the environment wins"
-			}
+		if keysBothSet(store, name, state) {
+			where += "; a saved key exists too, and the environment wins"
 		}
 		if suffix := keysMaskedSuffix(key); suffix != "" {
 			where += " · " + suffix
@@ -122,6 +124,50 @@ func runKeysList(ctx context.Context, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintln(stdout, "Change one: trestle keys set NAME · delete a saved one: trestle keys remove NAME")
 	return 0
+}
+
+// keysListTerminal is the key list for a person: one row per variable whose
+// mark says whether a key is found, then the commands that change one.
+func keysListTerminal(p outPrinter, store *credentialstore.Store, names []string, listErr error) {
+	p.heading("API keys")
+	p.hint("  The environment first, then the keys saved in " + providerCredentialDisplayDirectory() + ".")
+	if listErr != nil {
+		p.rows(outRow{mark: p.bad, value: fmt.Sprintf("The saved keys cannot be read: %v", listErr)})
+	}
+	if len(names) == 0 {
+		p.rows(outRow{mark: p.optional, value: "No API key is set or saved."})
+		p.next("trestle keys set OPEN_TRESTLE_PROVIDER_NAME   (for example OPEN_TRESTLE_PROVIDER_OPENROUTER)")
+		return
+	}
+	rows := []outRow{}
+	for _, name := range names {
+		key, state := providerKey(name)
+		row := outRow{mark: p.ok, label: name, value: state.where()}
+		switch {
+		case state.source == providerKeyFromStore:
+			row.value = "saved"
+		case !state.available():
+			row.mark = p.bad
+		}
+		if keysBothSet(store, name, state) {
+			row.value += "; a saved key too, and the environment wins"
+		}
+		if suffix := keysMaskedSuffix(key); suffix != "" {
+			row.value += " · " + suffix
+		}
+		rows = append(rows, row)
+	}
+	p.rows(rows...)
+	p.next("trestle keys set NAME", "trestle keys remove NAME")
+}
+
+// keysBothSet reports a key in the environment that is saved too.
+func keysBothSet(store *credentialstore.Store, name string, state providerKeyState) bool {
+	if state.source != providerKeyFromEnvironment {
+		return false
+	}
+	_, saved, err := store.Get(name)
+	return err == nil && saved
 }
 
 // readKeyInput reads the key: with hidden input on a terminal, or one line
@@ -164,26 +210,27 @@ func runKeysSet(ctx context.Context, name string, stdin io.Reader, stdout, stder
 	case key == "":
 		return keysFail(stderr, 2, "no key was given; nothing was changed")
 	}
+	p := newOutPrinter(ctx, stdout)
 	if usageUsualProviders()[name] == "openrouter" {
 		_, err := spending.ReadOpenRouterKeyUsage(ctx, usageOpenRouterTransport, key)
 		var status spending.OpenRouterKeyStatusError
 		switch {
 		case err == nil:
-			fmt.Fprintln(stdout, "OpenRouter accepted the key (one GET /api/v1/key, which costs nothing and sends no source).")
+			p.note(p.ok, "OpenRouter accepted the key (one GET /api/v1/key, which costs nothing and sends no source).")
 		case errors.As(err, &status) && status.KeyRefused():
 			return keysFail(stderr, 4, "OpenRouter refused this key (HTTP %d); nothing was saved. Check that you copied the whole key and try again.", status.StatusCode)
 		default:
-			fmt.Fprintf(stdout, "The key could not be checked (%s); it is saved as typed, and the next review shows whether it works.\n", strings.TrimPrefix(err.Error(), spending.ErrOpenRouterKeyUnreadable.Error()+": "))
+			p.note(p.wait, fmt.Sprintf("The key could not be checked (%s); it is saved as typed, and the next review shows whether it works.", strings.TrimPrefix(err.Error(), spending.ErrOpenRouterKeyUnreadable.Error()+": ")))
 		}
 	} else {
-		fmt.Fprintln(stdout, "This provider has no call that checks a key for free, so the key is not checked now; the next review shows whether it works.")
+		p.note(p.optional, "This provider has no call that checks a key for free, so the key is not checked now; the next review shows whether it works.")
 	}
 	if err := store.Set(ctx, name, key); err != nil {
 		return keysFail(stderr, 1, "the key could not be saved: %v", err)
 	}
-	fmt.Fprintf(stdout, "Saved the key for %s in %s (%s).\n", name, providerCredentialDisplayDirectory(), providerCredentialProtection())
+	p.note(p.ok, fmt.Sprintf("Saved the key for %s in %s (%s).", name, providerCredentialDisplayDirectory(), providerCredentialProtection()))
 	if os.Getenv(name) != "" {
-		fmt.Fprintf(stdout, "Note: %s is also set in this shell, and the environment wins over the saved key until you unset it.\n", name)
+		p.note(p.wait, fmt.Sprintf("Note: %s is also set in this shell, and the environment wins over the saved key until you unset it.", name))
 	}
 	return 0
 }
@@ -197,13 +244,14 @@ func runKeysRemove(ctx context.Context, name string, stdout, stderr io.Writer) i
 	if err != nil {
 		return keysFail(stderr, 1, "the saved key could not be removed: %v", err)
 	}
+	p := newOutPrinter(ctx, stdout)
 	if removed {
-		fmt.Fprintf(stdout, "Removed the saved key for %s.\n", name)
+		p.note(p.ok, "Removed the saved key for "+name+".")
 	} else {
-		fmt.Fprintf(stdout, "No key is saved for %s; nothing was changed.\n", name)
+		p.note(p.optional, "No key is saved for "+name+"; nothing was changed.")
 	}
 	if os.Getenv(name) != "" {
-		fmt.Fprintf(stdout, "%s is still set in this shell; reviews from this shell keep using it.\n", name)
+		p.note(p.wait, name+" is still set in this shell; reviews from this shell keep using it.")
 	}
 	return 0
 }

@@ -139,16 +139,18 @@ func runUsageChange(ctx context.Context, command string, args []string, stdout, 
 	if err != nil {
 		return usageFail(stderr, 2, "--provider must be a provider ID of lowercase letters, digits, '.', '_' and '-', such as openrouter")
 	}
+	p := newOutPrinter(ctx, stdout)
 	if command == "clear" {
 		cleared, err := store.ClearLimit(ctx, scope)
 		if err != nil {
 			return usageFail(stderr, 1, "the limit could not be cleared: %v", err)
 		}
 		if !cleared {
-			fmt.Fprintf(stdout, "No spending limit was set for %s (%s).\n", scope.CredentialEnvironment, scope.ProviderID)
+			p.note(p.optional, fmt.Sprintf("No spending limit was set for %s.", usageKeyLabel(scope)))
 			return 0
 		}
-		fmt.Fprintf(stdout, "Spending limit cleared for %s (%s). Reviews still record their spend.\n%s\n", scope.CredentialEnvironment, scope.ProviderID, spending.Note)
+		p.note(p.ok, fmt.Sprintf("Spending limit cleared for %s. Reviews still record their spend.", usageKeyLabel(scope)))
+		p.aside(spending.Note)
 		return 0
 	}
 	if *amount == "" {
@@ -173,11 +175,13 @@ func runUsageChange(ctx context.Context, command string, args []string, stdout, 
 	if err := store.SetLimit(ctx, limit); err != nil {
 		return usageFail(stderr, 1, "the limit could not be saved: %v", err)
 	}
-	fmt.Fprintf(stdout, "Spending limit set: %s for %s (%s), alerts at %s.\n", limit.Describe(), scope.CredentialEnvironment, scope.ProviderID, spending.AlertList(limit.AlertPercents))
+	p.note(p.ok, fmt.Sprintf("Spending limit set: %s for %s, alerts at %s.", limit.Describe(), usageKeyLabel(scope), spending.AlertList(limit.AlertPercents)))
 	if status, err := store.CurrentStatus(limit, spendingNow()); err == nil {
-		fmt.Fprintf(stdout, "Recorded %s: %s (%d%%).\n", limit.Period.Current(), spending.FormatUSD(status.Spend.MicroUSD), status.Percent())
+		mark, tone := p.spendingState(status)
+		p.note(mark, p.style.paint(tone, fmt.Sprintf("Recorded %s: %s (%d%%).", limit.Period.Current(), spending.FormatUSD(status.Spend.MicroUSD), status.Percent())))
 	}
-	fmt.Fprintf(stdout, "A review is refused once the recorded spend reaches the limit, and warns when it could pass it.\n%s\n", spending.Note)
+	p.note(p.optional, "A review is refused once the recorded spend reaches the limit, and warns when it could pass it.")
+	p.aside(spending.Note)
 	return 0
 }
 
@@ -186,20 +190,68 @@ func runUsageStatus(ctx context.Context, stdout, stderr io.Writer) int {
 	if err != nil {
 		return usageFail(stderr, 1, "the usage folder cannot be found (set HOME or XDG_STATE_HOME)")
 	}
-	lines, err := usageStatusLines(ctx, store)
+	keys, err := usageKeys(ctx, store)
 	if err != nil {
 		return usageFail(stderr, 1, "the usage folder %s cannot be used: %v", spending.DisplayDirectory(store.Directory()), err)
 	}
-	for _, line := range lines {
-		fmt.Fprintln(stdout, line)
+	folder := spending.DisplayDirectory(store.Directory())
+	p := newOutPrinter(ctx, stdout)
+	if !p.terminal {
+		fmt.Fprintln(stdout, "Spending recorded by Open Trestle (usage folder "+folder+"):")
+		for _, key := range keys {
+			fmt.Fprintln(stdout, "  "+usageKeyLabel(key.scope)+": "+key.text())
+			for _, line := range key.provider {
+				fmt.Fprintln(stdout, line)
+			}
+		}
+		if len(keys) == 0 {
+			fmt.Fprintln(stdout, "  No spending limit is set and no spend is recorded this month.")
+			fmt.Fprintln(stdout, "  Set one: trestle usage set --credential-env OPEN_TRESTLE_PROVIDER_NAME --limit USD [--period week|month|year]")
+		}
+		fmt.Fprintln(stdout, spending.Note)
+		return 0
 	}
+	p.heading("Spending recorded by Open Trestle")
+	p.hint("  Usage folder " + folder + ".")
+	for _, key := range keys {
+		mark, tone := p.optional, initToneBody
+		if key.status != nil {
+			mark, tone = p.spendingState(*key.status)
+		}
+		p.rows(outRow{mark: mark, value: usageKeyLabel(key.scope)})
+		p.detail(key.text(), tone)
+		for _, line := range key.provider {
+			p.detail(strings.TrimSpace(line), initToneDim)
+		}
+	}
+	if len(keys) == 0 {
+		p.rows(outRow{mark: p.optional, value: "No spending limit is set and no spend is recorded this month."})
+		p.next("trestle usage set --credential-env OPEN_TRESTLE_PROVIDER_NAME --limit USD [--period week|month|year]")
+	}
+	p.aside(spending.Note)
 	return 0
 }
 
-// usageStatusLines is the state of every limited key, and of every key with
-// spend recorded this month, with OpenRouter's own figures for an OpenRouter
-// key whose variable is set. `trestle init` shows the same lines.
-func usageStatusLines(ctx context.Context, store *spending.Store) ([]string, error) {
+// usageKey is one key's spending: the status of its limit, or without a
+// limit what is recorded this month, and OpenRouter's own figures.
+type usageKey struct {
+	scope    spending.Scope
+	status   *spending.Status
+	spend    spending.Spend
+	provider []string
+}
+
+func (k usageKey) text() string {
+	if k.status != nil {
+		return k.status.Brief()
+	}
+	return k.spend.Unlimited(spending.PeriodMonth)
+}
+
+// usageKeys is every limited key, then every key with spend recorded this
+// month, with OpenRouter's own figures for an OpenRouter key whose variable
+// is set.
+func usageKeys(ctx context.Context, store *spending.Store) ([]usageKey, error) {
 	now := spendingNow()
 	limits, err := store.Limits()
 	if err != nil {
@@ -210,7 +262,7 @@ func usageStatusLines(ctx context.Context, store *spending.Store) ([]string, err
 	if err != nil {
 		return nil, err
 	}
-	lines := []string{"Spending recorded by Open Trestle (usage folder " + spending.DisplayDirectory(store.Directory()) + "):"}
+	keys := []usageKey{}
 	shown := map[spending.Scope]bool{}
 	for _, limit := range limits {
 		status, err := store.CurrentStatus(limit, now)
@@ -218,27 +270,21 @@ func usageStatusLines(ctx context.Context, store *spending.Store) ([]string, err
 			return nil, err
 		}
 		shown[limit.Scope] = true
-		lines = append(lines, "  "+usageKeyLabel(limit.Scope)+": "+status.Brief())
-		lines = append(lines, usageProviderLines(ctx, limit.Scope)...)
+		keys = append(keys, usageKey{scope: limit.Scope, status: &status, provider: usageProviderLines(ctx, limit.Scope)})
 	}
 	for _, scope := range spending.Scopes(entries) {
 		if shown[scope] {
 			continue
 		}
-		lines = append(lines, "  "+usageKeyLabel(scope)+": "+spending.SumSpend(entries, scope).Unlimited(spending.PeriodMonth))
-		lines = append(lines, usageProviderLines(ctx, scope)...)
+		keys = append(keys, usageKey{scope: scope, spend: spending.SumSpend(entries, scope), provider: usageProviderLines(ctx, scope)})
 	}
 	// An OpenRouter key in this shell or the credential store with no limit
 	// and no spend yet still gets OpenRouter's own figures, which need no
 	// limit to be useful.
 	if scope, err := spending.NewScope("openrouter", usageOpenRouterKeyVariable); err == nil && !shown[scope] && providerKeyStatus(usageOpenRouterKeyVariable).available() && !slices.Contains(spending.Scopes(entries), scope) {
-		lines = append(lines, "  "+usageKeyLabel(scope)+": "+spending.SumSpend(entries, scope).Unlimited(spending.PeriodMonth))
-		lines = append(lines, usageProviderLines(ctx, scope)...)
+		keys = append(keys, usageKey{scope: scope, spend: spending.SumSpend(entries, scope), provider: usageProviderLines(ctx, scope)})
 	}
-	if len(lines) == 1 {
-		lines = append(lines, "  No spending limit is set and no spend is recorded this month.", "  Set one: trestle usage set --credential-env OPEN_TRESTLE_PROVIDER_NAME --limit USD [--period week|month|year]")
-	}
-	return append(lines, spending.Note), nil
+	return keys, nil
 }
 
 // usageOpenRouterKeyVariable is the key variable `trestle init` names for

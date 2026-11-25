@@ -136,6 +136,11 @@ func runChecks(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		}
 	}
 	allowed, decided := readChecksConsent(dir, repository)
+	sandbox := checksandbox.Available()
+	if p := newOutPrinter(ctx, stdout); p.terminal {
+		checksStatusTerminal(p, allowed, decided, sandbox)
+		return 0
+	}
 	switch {
 	case !decided:
 		fmt.Fprintln(stdout, "Repository checks: not decided yet. The next review asks before it runs any.")
@@ -144,12 +149,30 @@ func runChecks(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	default:
 		fmt.Fprintln(stdout, "Repository checks: off. Reviews do not run this repository's code.")
 	}
-	if err := checksandbox.Available(); err != nil {
-		fmt.Fprintf(stdout, "Sandbox: not available on this machine, so checks would be reported as could not run (%v).\n", err)
+	if sandbox != nil {
+		fmt.Fprintf(stdout, "Sandbox: not available on this machine, so checks would be reported as could not run (%v).\n", sandbox)
 	} else {
 		fmt.Fprintln(stdout, "Sandbox: available here. Turn checks on or off with trestle checks on or trestle checks off.")
 	}
 	return 0
+}
+
+// checksStatusTerminal is the checks answer and the sandbox for a person.
+func checksStatusTerminal(p outPrinter, allowed, decided bool, sandbox error) {
+	answer := outRow{mark: p.optional, label: "Checks", value: "off: reviews do not run this repository's code"}
+	switch {
+	case !decided:
+		answer.mark, answer.value = p.wait, "not decided yet: the next review asks before it runs any"
+	case allowed:
+		answer.mark, answer.value = p.ok, "on: each review first runs this repository's tests for the changed area in a sandbox"
+	}
+	box := outRow{mark: p.ok, label: "Sandbox", value: "available here"}
+	if sandbox != nil {
+		box.mark, box.value = p.bad, fmt.Sprintf("not available on this machine, so checks would be reported as could not run (%v)", sandbox)
+	}
+	p.heading("Repository checks")
+	p.rows(answer, box)
+	p.next("trestle checks on", "trestle checks off")
 }
 
 // reviewChecksAllowed decides whether one `trestle review` runs the
