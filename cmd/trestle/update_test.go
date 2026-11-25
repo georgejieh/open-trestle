@@ -415,6 +415,17 @@ func TestUpdateRefusalsInstallNothing(t *testing.T) {
 		"receipt not root's": {func(f *updateFakes) {
 			updateRootOwner = uint32(os.Getuid() + 1)
 		}, "", 1, "is not owned by root. Nothing was changed.", nil},
+		"release archive": {func(f *updateFakes) {
+			previous := updateArchiveVersion
+			updateArchiveVersion = func() string { return "0.1.0-alpha.1" }
+			f.t.Cleanup(func() { updateArchiveVersion = previous })
+		}, "", 1, "this is Open Trestle 0.1.0-alpha.1 from a release archive, and trestle update updates only the packaged Linux amd64 install. To update, run the installer again:\n  curl -fsSL https://georgejieh.dev/open-trestle/install.sh | bash", nil},
+		"release archive on Windows": {func(f *updateFakes) {
+			previous := updateArchiveVersion
+			updateArchiveVersion = func() string { return "0.1.0" }
+			f.t.Cleanup(func() { updateArchiveVersion = previous })
+			updatePlatform = "windows/amd64"
+		}, "", 1, "  irm https://georgejieh.dev/open-trestle/install.ps1 | iex", nil},
 		"other platform": {func(f *updateFakes) { updatePlatform = "darwin/arm64" }, "", 1, "updates are for the packaged Linux amd64 install, and this is darwin/arm64.", nil},
 		"offline":        {func(f *updateFakes) {}, "", 1, "GitHub Releases could not be read: GitHub could not be reached. Nothing was changed.", nil},
 	} {

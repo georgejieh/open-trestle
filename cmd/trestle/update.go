@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/georgejieh/open-trestle/internal/buildinfo"
 	"github.com/georgejieh/open-trestle/internal/update"
 )
 
@@ -43,7 +44,18 @@ var (
 	updateTerminal      = func(stdin io.Reader) bool { file, ok := stdin.(*os.File); return ok && isTerminal(file) }
 	updateRun           = runUpdateCommand
 	updateDaemonRunning = trestledRunning
+	// updateArchiveVersion is set only in a build from a release archive.
+	updateArchiveVersion = buildinfo.Version
 )
+
+// updateInstallerCommand re-runs the install script, which is how a release
+// archive install is updated.
+func updateInstallerCommand(goos string) string {
+	if goos == "windows" {
+		return "irm https://georgejieh.dev/open-trestle/install.ps1 | iex"
+	}
+	return "curl -fsSL https://georgejieh.dev/open-trestle/install.sh | bash"
+}
 
 // updateFixedPath is the PATH every program trestle update runs gets, so the
 // user's PATH never chooses python3 or anything else they start.
@@ -141,6 +153,9 @@ func runUpdate(ctx context.Context, args []string, stdin io.Reader, stdout, stde
 	fail := func(code int, format string, values ...any) int {
 		fmt.Fprintf(stderr, "trestle update: "+format+"\n", values...)
 		return code
+	}
+	if version := updateArchiveVersion(); version != "" {
+		return fail(1, "this is Open Trestle %s from a release archive, and trestle update updates only the packaged Linux amd64 install. To update, run the installer again:\n  %s", version, updateInstallerCommand(strings.SplitN(updatePlatform, "/", 2)[0]))
 	}
 	if updatePlatform != "linux/amd64" {
 		return fail(1, "updates are for the packaged Linux amd64 install, and this is %s. Build trestle from source here instead (docs/getting-started.md).", updatePlatform)
