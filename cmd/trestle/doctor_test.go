@@ -239,6 +239,10 @@ func TestDoctorRowsForEachState(t *testing.T) {
 		if usable != nil || rows[0].State != healthFail || !strings.Contains(rows[0].Value, "cannot be used (") || rows[0].Next[0] != "trestle setup bootstrap inspect --directory "+initShellQuote(broken) || rows[0].Next[1] != "trestle init" {
 			t.Fatalf("unreadable setup: %+v", rows)
 		}
+		// trestle review names trestle doctor for it.
+		if code, _, errText := runReviewCommand(t, other); code != 4 || !strings.HasSuffix(errText, "Nothing was sent.\n  -> trestle doctor\n  -> trestle init\n") {
+			t.Fatalf("review of an unreadable setup: exit=%d %q", code, errText)
+		}
 	})
 	t.Run("keys and spending", func(t *testing.T) {
 		store := spendingTestStore(t)

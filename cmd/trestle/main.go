@@ -278,6 +278,7 @@ var trestleCommandGroups = []struct {
 }{
 	{"Everyday", []trestleCommand{
 		{"review", "Review the latest change or a fixture", writeLatestReviewUsage},
+		{"status", "Setup, key, spending and last review", writeStatusUsage},
 		{"update", "Install a newer verified build", writeUpdateUsage},
 		{"usage", "Spending against each API key's limit", writeUsageUsage},
 		{"profiles", "The specialist review profiles", writeProfilesUsage},
@@ -286,6 +287,7 @@ var trestleCommandGroups = []struct {
 		{"init", "Guided setup and the first review", writeInitUsage},
 		{"keys", "See, save and remove API keys", writeKeysUsage},
 		{"checks", "Run the repository's tests in a sandbox", writeChecksUsage},
+		{"doctor", "Check the install and setup, with fixes", writeDoctorUsage},
 	}},
 	{"Integrations", []trestleCommand{
 		{"local-git", "The direct review for CI, and Git tools", writeLocalGitUsage},

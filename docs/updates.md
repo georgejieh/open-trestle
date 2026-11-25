@@ -257,13 +257,17 @@ folder on an executable file system and run the command again.
 
 ## The update notice
 
-The home screen (`trestle` in a terminal) shows one line when a newer version is
-available, and `trestle review` shows it after the review when its output is a
-terminal:
+`trestle review` shows one line after the review when a newer version is
+available and its output is a terminal:
 
 ```text
   Update available: 0.2.0 (you have 0.1.0). Run trestle update.
 ```
+
+The home screen (`trestle` in a terminal) shows it as the card's last row,
+`Update … available: 0.2.0 (you have 0.1.0)`, with `-> trestle update` beneath
+it. `trestle status` and `trestle doctor` show the same notice from the cache
+and never ask for a new one.
 
 For a development install with a newer build in the local folder:
 

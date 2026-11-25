@@ -1,5 +1,11 @@
 # Troubleshooting
 
+Start with `trestle doctor` in the repository. It checks the install, the
+repository, the setup, the key, the spending limit and the repository checks,
+changes nothing, sends no source, and prints the command that fixes each
+problem. `trestle doctor --live` also reads the provider's model list with the
+key. See [commands](commands.md#trestle-doctor).
+
 This page lists the messages Open Trestle prints and what to do about each.
 Find the line you saw, then follow its fix. For a failed review, the `failure:`
 line names a [failure detail](failure-details.md). For an exit code, see
@@ -18,6 +24,14 @@ and run the command again. To review a fixture file instead, run
 Run `trestle init` in the repository. It asks a few questions, sends no source,
 and can run the first review. If the setup is in a folder you named with
 `--directory`, pass the same `--directory` to `trestle review`.
+
+### The setup cannot be used
+
+`trestle review` refuses with `the setup in FOLDER cannot be used (REASON)`, and
+nothing was sent. Run `trestle doctor`: its Setup section names the folder, the
+reason and the command to run, usually
+`trestle setup bootstrap inspect --directory FOLDER` for details, or
+`trestle init` for a new setup.
 
 ### No API key for OPEN_TRESTLE_PROVIDER_NAME
 

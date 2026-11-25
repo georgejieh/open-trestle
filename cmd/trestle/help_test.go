@@ -25,8 +25,8 @@ func TestUsageGroupsCommandsByAudience(t *testing.T) {
 		name     string
 		commands []string
 	}{
-		{"Everyday", []string{"\n  review ", "\n  update ", "\n  usage "}},
-		{"Setup and keys", []string{"\n  init ", "\n  keys "}},
+		{"Everyday", []string{"\n  review ", "\n  status ", "\n  update ", "\n  usage "}},
+		{"Setup and keys", []string{"\n  init ", "\n  keys ", "\n  doctor "}},
 		{"Integrations", []string{"\n  local-git ", "\n  runs ", "\n  mcp ", "\n  lsp "}},
 		{"Operators", []string{"\n  setup ", "\n  config ", "\n  admin "}},
 		{"Evaluation", []string{"\n  evaluate ", "\n  validate-fixture "}},
@@ -67,6 +67,8 @@ func TestUnknownCommandIsShortWithASuggestion(t *testing.T) {
 	}{
 		{[]string{"reveiw"}, "trestle: \"reveiw\" is not a trestle command.\nDid you mean: review?\nRun trestle --help to see all commands.\n"},
 		{[]string{"Keyz", "list"}, "trestle: \"Keyz\" is not a trestle command.\nDid you mean: keys?\nRun trestle --help to see all commands.\n"},
+		{[]string{"docter"}, "trestle: \"docter\" is not a trestle command.\nDid you mean: doctor?\nRun trestle --help to see all commands.\n"},
+		{[]string{"stauts", "--json"}, "trestle: \"stauts\" is not a trestle command.\nDid you mean: status?\nRun trestle --help to see all commands.\n"},
 		{[]string{"nonsense", "argument"}, "trestle: \"nonsense\" is not a trestle command.\nRun trestle --help to see all commands.\n"},
 		{[]string{"x"}, "trestle: \"x\" is not a trestle command.\nRun trestle --help to see all commands.\n"},
 		{[]string{"--verbose"}, "trestle: \"--verbose\" is not a trestle command.\nRun trestle --help to see all commands.\n"},

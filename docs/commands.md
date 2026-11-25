@@ -71,7 +71,9 @@ Exit codes are in [exit codes](exit-codes.md).
 ### `trestle`
 
 In a terminal, `trestle` shows this repository's setup, key, spending and last
-review, with numbered next actions. See
+review, with numbered next actions. A row that needs action starts with its
+mark and has the command that fixes it beneath it; a known update is the last
+row. See
 [getting started](getting-started.md#running-it-again). Outside a Git
 repository, it says so and exits `0`. Without a terminal on both sides, or with
 `NO_COLOR` set or `TERM=dumb`, it prints the usage and exits `2`.
@@ -97,6 +99,37 @@ Reviews the latest committed change with the setup that `trestle init` made.
 
 You cannot combine `--profile` and `--specialists`. `trestle review PATH`
 reviews a local fixture file instead.
+
+### `trestle status`
+
+```text
+trestle status [--json]
+```
+
+Prints the home screen's card without the actions: repository, setup folder,
+models, where reviews run, key, this month's spending, last review and a known
+update. It reads local files only and sends nothing; the update row comes from
+the notice cached by the home screen.
+
+On a terminal it prints the card. Without a terminal it prints one
+`Label:  value` line per row, and a row that needs action ends with
+`-> COMMAND`:
+
+```text
+Repository:  ~/work/app (on branch main)
+Setup:       ~/.local/state/open-trestle/app-1a2b3c4d
+Models:      finder gemma4:31b · checker qwen3.5:397b
+Runs on:     Ollama Cloud (https://ollama.com/v1)
+Key:         OPEN_TRESTLE_PROVIDER_OLLAMA_CLOUD (not set) -> trestle keys set OPEN_TRESTLE_PROVIDER_OLLAMA_CLOUD
+Spending:    $0.00 recorded this month; no limit set (an upper-bound estimate, not a bill)
+Last run:    none recorded yet
+```
+
+`--json` prints one document: `contract` (`open-trestle/status`),
+`schema_version`, `ready`, and `rows`, each with `label`, `value`, `state`
+(`ok`, `optional`, `attention` or `fail`) and, when there is one, `next` (the
+commands that fix it). It exits `0` with a usable setup, and `1` outside a Git
+checkout or without a usable setup.
 
 ### `trestle update`
 
@@ -177,6 +210,52 @@ review. See [repository checks](repository-checks.md).
 | `trestle checks status` | Show the saved answer and whether this machine has what the sandbox needs. |
 
 Each takes `--directory PATH` for a setup in another folder.
+
+### `trestle doctor`
+
+```text
+trestle doctor [--live] [--json]
+```
+
+Checks this install, the repository in the current folder and its setup, and
+names the command that fixes each problem. It changes nothing and sends no
+source. The sections, in order:
+
+| Section | What it checks |
+| --- | --- |
+| Install | The version and source revision, the secret scan helper (found and the one this build pins), and the platform. |
+| Repository | A Git checkout, its default branch, a shallow clone, and uncommitted changes (which reviews leave out). |
+| Setup | The setup folder and whether it loads, the provider, the two models, the route checks of `trestle setup bootstrap check`, and the zero-data-retention requirement for OpenRouter. |
+| Keys | Each key variable the setup names: from the environment or saved, with at most its last four characters. |
+| Spending | Each key's limit and how much of it is used, from the usage folder. |
+| Repository checks | Whether checks are on, off or not decided, and whether the sandbox can run here. |
+| Update | The cached update notice; doctor itself never asks for one. |
+
+Each row has a mark (see [terminal symbols and colors](#terminal-symbols-and-colors)),
+and a row marked `✗` or `…` has the command to run beneath it:
+
+```text
+Keys
+  ✗ Key       OPEN_TRESTLE_PROVIDER_OLLAMA_CLOUD is not set
+              in this shell and not saved
+    -> trestle keys set OPEN_TRESTLE_PROVIDER_OLLAMA_CLOUD
+```
+
+It ends with `All checks passed.` or a numbered list of the problems, each with
+its command. Only `✗` rows are problems: `…` needs attention and `–` is
+optional or not set up, and neither fails. Outside a Git checkout the
+repository and setup sections say so and the rest still run.
+
+`--live` adds network checks: for OpenRouter, whether it accepts the key
+(the free `GET /api/v1/key`), then the provider's model list, read with the key
+where the provider takes one, and whether both models are still listed. They
+send no source.
+
+`--json` prints one document: `contract` (`open-trestle/doctor`),
+`schema_version`, `live`, `passed`, `sections` (each a `title` and `rows`), and
+`problems` (the `fail` rows). Rows have the fields of `trestle status --json`.
+Without a terminal the output is the same text without color. It exits `0`
+when nothing needs fixing and `1` when something does.
 
 ## Integrations
 

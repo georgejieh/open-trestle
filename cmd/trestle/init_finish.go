@@ -80,7 +80,7 @@ func (w *initWizard) loadSetup() (initSetup, error) {
 	dir := w.a.directory
 	setup, err := loadInitSetup(w.ctx, dir)
 	if err != nil {
-		return initSetup{}, initStopf(initExitRefused, "%s holds an Open Trestle setup that could not be read (%s). Nothing was changed. Run `trestle setup bootstrap inspect --directory %s` for details, or pass --directory with a new folder.", dir, err.Error(), initShellQuote(dir))
+		return initSetup{}, initStopf(initExitRefused, "%s holds an Open Trestle setup that could not be read (%s). Nothing was changed. Run `trestle doctor` or `trestle setup bootstrap inspect --directory %s` for details, or pass --directory with a new folder.", dir, err.Error(), initShellQuote(dir))
 	}
 	return setup, nil
 }

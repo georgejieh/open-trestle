@@ -120,7 +120,9 @@ func runHomeScreen(ctx context.Context, stdin io.Reader, stdout, stderr io.Write
 	repo, err := loadRepositorySetup(ctx, checkout, dir)
 	if err != nil {
 		w.say("\n  %s The setup in %s cannot be read (%s).", w.bad, initDisplayPath(dir), err)
-		actions = append(actions, homeAction{"Check the setup", "trestle init", func() int { return runInit(ctx, nil, stdin, stdout, stderr) }})
+		actions = append(actions,
+			homeAction{"Find out why", "trestle doctor", func() int { return runDoctor(ctx, nil, stdout, stderr) }},
+			homeAction{"Check the setup", "trestle init", func() int { return runInit(ctx, nil, stdin, stdout, stderr) }})
 		return homeChoose(ctx, w, stdin, homeUpdate(ctx, w, notice, actions, stdin, stdout, stderr))
 	}
 	rows := statusRows(ctx, repo)

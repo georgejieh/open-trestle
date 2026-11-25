@@ -45,7 +45,7 @@ no release yet, and each page describes what the code does today. The
 
 ## Help
 
-- [Troubleshooting](troubleshooting.md): what each message means and how to fix it.
+- [Troubleshooting](troubleshooting.md): what each message means and how to fix it; start with `trestle doctor`.
 - [Privacy](privacy.md): what leaves your machine, when and where.
 - [Support](../SUPPORT.md) and [security reports](../SECURITY.md).
 
