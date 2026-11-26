@@ -77,6 +77,8 @@ The first review inside `trestle init` uses these codes, not the table for
 | `trestle keys set` | `0` saved; `4` OpenRouter refused the key, nothing saved; `2` no usable key was given or the name is not an `OPEN_TRESTLE_PROVIDER_` variable; `1` hidden input is unavailable, or the key could not be saved. |
 | `trestle keys remove` | `0`; `2` for a bad name; `1` when the key could not be removed. |
 | `trestle usage`, `set`, `clear` | `0`; `2` for a bad flag or value; `1` when the usage folder cannot be found or used. |
+| `trestle doctor` | `0` when nothing needs fixing (rows marked `…` or `–` do not count); `1` when a row is marked `✗`; `2` for a bad flag. |
+| `trestle status` | `0` with a usable setup, also when a row needs action; `1` outside a Git checkout or without a usable setup; `2` for a bad flag. |
 | `trestle` | In a terminal: `0` after you quit or outside a Git repository, and a chosen action returns its own code. Without a terminal: `2`, with the usage on standard error. |
 | `--help`, `-h`, `help` | `0`, usage on standard output. |
 | `trestle COMMAND --help` | `0`, that command's usage on standard output. |

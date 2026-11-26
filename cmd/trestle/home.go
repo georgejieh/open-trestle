@@ -7,9 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
-
-	"github.com/georgejieh/open-trestle/spending"
 )
 
 // `trestle` with no arguments, in an interactive terminal, is a home screen:
@@ -123,11 +120,20 @@ func runHomeScreen(ctx context.Context, stdin io.Reader, stdout, stderr io.Write
 	repo, err := loadRepositorySetup(ctx, checkout, dir)
 	if err != nil {
 		w.say("\n  %s The setup in %s cannot be read (%s).", w.bad, initDisplayPath(dir), err)
-		actions = append(actions, homeAction{"Check the setup", "trestle init", func() int { return runInit(ctx, nil, stdin, stdout, stderr) }})
+		actions = append(actions,
+			homeAction{"Find out why", "trestle doctor", func() int { return runDoctor(ctx, nil, stdout, stderr) }},
+			homeAction{"Check the setup", "trestle init", func() int { return runInit(ctx, nil, stdin, stdout, stderr) }})
 		return homeChoose(ctx, w, stdin, homeUpdate(ctx, w, notice, actions, stdin, stdout, stderr))
 	}
+	rows := statusRows(ctx, repo)
+	select {
+	case line := <-notice:
+		rows = withUpdate(rows, line)
+	case <-ctx.Done():
+	}
+	notice = nil
 	w.say("")
-	for _, line := range w.style.framed(initPanel(initLabel(filepath.Base(checkout), "repository"), homeRows(ctx, repo), w.style.ascii)) {
+	for _, line := range statusCard(w.style, initLabel(filepath.Base(checkout), "repository"), rows) {
 		w.sayVerbatim(line)
 	}
 	actions = append(actions,
@@ -156,10 +162,13 @@ func runHomeScreen(ctx context.Context, stdin io.Reader, stdout, stderr io.Write
 	return homeChoose(ctx, w, stdin, homeUpdate(ctx, w, notice, actions, stdin, stdout, stderr))
 }
 
-// homeUpdate prints the update notice and, on a packaged install, adds the
-// update action last, so the other actions keep their numbers.
+// homeUpdate prints the update notice unless the card shows it (notice is
+// nil) and, on a packaged install, adds the update action last, so the other
+// actions keep their numbers.
 func homeUpdate(ctx context.Context, w *initWizard, notice <-chan string, actions []homeAction, stdin io.Reader, stdout, stderr io.Writer) []homeAction {
-	sayUpdateNotice(ctx, w, notice)
+	if notice != nil {
+		sayUpdateNotice(ctx, w, notice)
+	}
 	if _, installed := updatePackageInstalled(); installed {
 		actions = append(actions, homeAction{"Update Open Trestle", "trestle update", func() int { return runUpdate(ctx, nil, stdin, stdout, stderr) }})
 	}
@@ -205,90 +214,4 @@ func homeChoose(ctx context.Context, w *initWizard, stdin io.Reader, actions []h
 		w.say("    Please type a number from 1 to %d, or press Enter to quit.", len(actions))
 	}
 	return 0
-}
-
-// homeRows is the status card: where the repository and setup are, which
-// models and provider review it, where the key comes from, this month's
-// recorded spending and the last review.
-func homeRows(ctx context.Context, repo repositorySetup) [][2]string {
-	setup := repo.setup
-	summary := initSummarizeChange(ctx, repo.checkout, "HEAD", "HEAD")
-	where := initDisplayPath(repo.checkout)
-	if summary.currentLabel != "" {
-		where += " (on branch " + summary.currentLabel + ")"
-	}
-	rows := [][2]string{
-		{"Repository", where},
-		{"Setup", initDisplayPath(repo.directory)},
-		{"Models", "finder " + setup.generationModel + " · checker " + setup.verificationModel},
-		{"Runs on", setup.destination()},
-	}
-	switch {
-	case setup.provider.key == ollamaSigninProvider:
-		rows = append(rows, [2]string{"Key", "none (your local Ollama's signed-in account)"})
-	case len(setup.credentials) == 0:
-		rows = append(rows, [2]string{"Key", "none"})
-	default:
-		for _, name := range setup.credentials {
-			state := providerKeyStatus(name)
-			value := name + " (" + state.where() + ")"
-			if !state.available() {
-				value = name + " (not set: trestle keys set " + name + ")"
-			}
-			rows = append(rows, [2]string{"Key", value})
-		}
-	}
-	rows = append(rows, [2]string{"Spending", homeSpending(setup)})
-	last := "none recorded yet"
-	if review, ok := readLastReview(repo.directory); ok {
-		last = review.Status
-		if review.Status == "findings" {
-			last = fmt.Sprintf("%d confirmed finding%s", review.Findings, initPlural(review.Findings))
-		} else if review.Status == "no_candidates" {
-			last = "no confirmed findings"
-		}
-		if at, err := time.Parse(time.RFC3339, review.RecordedAt); err == nil {
-			last += " · " + at.UTC().Format("2 Jan 15:04 UTC")
-		}
-		last += " · " + initShort(review.Base) + " → " + initShort(review.Head)
-	}
-	return append(rows, [2]string{"Last run", last})
-}
-
-// homeSpending is this month's recorded spending for the setup's keys, as
-// `trestle usage` reports it, from the local usage folder only.
-func homeSpending(setup initSetup) string {
-	provider := initSpendingProvider(setup.provider.key)
-	if !setup.remote || provider == "" {
-		return "not tracked: these models cost nothing per request"
-	}
-	store, err := usageStore()
-	if err != nil {
-		return "unknown: the usage folder cannot be found"
-	}
-	now := spendingNow()
-	start, end := spending.PeriodMonth.Bounds(now)
-	parts := []string{}
-	for _, name := range setup.credentials {
-		scope, err := spending.NewScope(provider, name)
-		if err != nil {
-			continue
-		}
-		if limit, found, err := store.Limit(scope); err == nil && found {
-			if status, err := store.CurrentStatus(limit, now); err == nil {
-				parts = append(parts, status.Brief())
-				continue
-			}
-		}
-		spent, err := store.Spent(scope, start, end)
-		if err != nil {
-			parts = append(parts, "unknown: "+err.Error())
-			continue
-		}
-		parts = append(parts, spent.Unlimited(spending.PeriodMonth))
-	}
-	if len(parts) == 0 {
-		return "none recorded"
-	}
-	return strings.Join(parts, "; ") + " (an upper-bound estimate, not a bill)"
 }

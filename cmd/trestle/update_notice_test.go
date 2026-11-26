@@ -163,7 +163,7 @@ func TestHomeShowsTheUpdateNoticeAndAction(t *testing.T) {
 	}
 	initAssertWidth(t, out)
 	for _, want := range []string{
-		"Update available: 0.2.0 (you have 0.1.0). Run trestle update.",
+		"Update … available: 0.2.0 (you have 0.1.0) -> trestle update",
 		"5) Read the guides docs/getting-started.md",
 		"6) Update Open Trestle trestle update",
 		"Choose 1-6, or Enter to quit:",
@@ -172,7 +172,7 @@ func TestHomeShowsTheUpdateNoticeAndAction(t *testing.T) {
 			t.Fatalf("home screen lacks %q:\n%s", want, out)
 		}
 	}
-	if strings.Index(out, "Update available") > strings.Index(out, "1) Review the latest change") {
+	if strings.Index(out, "available: 0.2.0") > strings.Index(out, "1) Review the latest change") {
 		t.Fatalf("the notice is not above the actions:\n%s", out)
 	}
 	// Two steps: trestle, then 6, installs it after the usual question.

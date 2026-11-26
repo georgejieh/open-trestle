@@ -103,6 +103,8 @@ type remoteBootstrapResult struct {
 	// request sets provider.zdr, not_required_by_open_trestle otherwise. It
 	// states what Open Trestle requires, never what a provider retains.
 	DataRetention string `json:"data_retention,omitempty"`
+	// checks names the check of each message, in the same order.
+	checks []string
 }
 
 var remoteBootstrapStringFlags = []string{"provider", "specialists", "tenant", "repository", "checkout", "base", "head", "repository-authority", "repository-namespace", "repository-name", "generation-model", "verification-model", "generation-credential-environment", "verification-credential-environment", "endpoint", "declared-by", "valid-from", "valid-until", "reviewed-at", "evidence-retrieved-at", "generation-provider-slug", "verification-provider-slug", "generation-upstream-evidence", "verification-upstream-evidence", "generation-slug-evidence", "verification-slug-evidence", "generation-model-evidence", "verification-model-evidence", "broker-evidence", "account-evidence"}
@@ -326,11 +328,11 @@ func runRemoteSetupBootstrap(ctx context.Context, args []string, stdout, stderr 
 func checkRemoteSetupBootstrap(ctx context.Context, manifest remoteBootstrapManifest, inventory runtimeconfig.RouteInventory, policy runtimeconfig.RuntimePolicy, now time.Time) remoteBootstrapResult {
 	result := remoteBootstrapResult{Contract: remoteBootstrapResultContract, Version: 1, Provider: manifest.Provider, Inventory: manifest.Inventory, Policy: manifest.Policy, Pending: []string{}, Refused: []string{}, Messages: []string{}, ReviewCommand: manifest.ReviewCommand, Limitations: remoteBootstrapLimitations(manifest.Provider, policy), DataRetention: remoteDataRetention(policy)}
 	pending := func(key, message string) {
-		result.Pending = append(result.Pending, key)
+		result.Pending, result.checks = append(result.Pending, key), append(result.checks, key)
 		result.Messages = append(result.Messages, message)
 	}
 	refused := func(key, message string) {
-		result.Refused = append(result.Refused, key)
+		result.Refused, result.checks = append(result.Refused, key), append(result.checks, key)
 		result.Messages = append(result.Messages, message)
 	}
 	current := true

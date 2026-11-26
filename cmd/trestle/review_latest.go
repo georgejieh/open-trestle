@@ -420,7 +420,7 @@ func runLatestReview(ctx context.Context, args []string, stdout, stderr io.Write
 	}
 	repo, err := loadRepositorySetup(ctx, checkout, dir)
 	if err != nil {
-		return commandFail(stderr, 4, "review", fmt.Sprintf("the setup in %s cannot be used (%s). Nothing was sent.", initDisplayPath(dir), err), "trestle init")
+		return commandFail(stderr, 4, "review", fmt.Sprintf("the setup in %s cannot be used (%s). Nothing was sent.", initDisplayPath(dir), err), "trestle doctor", "trestle init")
 	}
 	if !sameCheckout(repo.templateCheckout, checkout) {
 		return commandFail(stderr, 2, "review", fmt.Sprintf("the setup in %s is for %s, not this repository. Nothing was sent.", initDisplayPath(dir), initDisplayPath(repo.templateCheckout)), "cd "+updateShellLine([]string{repo.templateCheckout})+" && trestle review", "trestle init")

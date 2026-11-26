@@ -639,11 +639,36 @@ In a repository without a setup, the only action is `trestle init`. Without a
 terminal on both sides, or with `NO_COLOR` set or `TERM=dumb`, `trestle` prints
 the usage text and exits `2`, as before.
 
+A row that needs action starts with `✗` or `…` and has the command that fixes
+it beneath it, inside the card:
+
+```text
+│ Key         ✗ OPEN_TRESTLE_PROVIDER_OPENROUTER (not set) │
+│             -> trestle keys set                          │
+│             OPEN_TRESTLE_PROVIDER_OPENROUTER             │
+```
+
 On the packaged install, the home screen also adds a last action, "Update Open
-Trestle", which runs `trestle update`. When a newer version is available, it
-also shows a line above the actions. That line comes from the home screen's only
+Trestle", which runs `trestle update`. When a newer version is available, the
+card's last row is `Update`, marked `…`. It comes from the home screen's only
 network request, the release list GET, made at most once a day (see
-[updating](#updating)).
+[updating](#updating)). `trestle status` prints the same card without the
+actions, and plain `Label:  value` lines in a script; see
+[commands](commands.md#trestle-status).
+
+### Check your setup
+
+`trestle doctor` checks the install, this repository and its setup, the key,
+the spending limit, the repository checks and the cached update notice. It
+changes nothing and sends no source. Each problem has the command that fixes
+it, and the last line is `All checks passed.` or a numbered list:
+
+```sh
+trestle doctor          # exits 1 when something needs fixing
+trestle doctor --live   # also reads the provider's model list with the key
+```
+
+See [commands](commands.md#trestle-doctor).
 
 Run `trestle init` again in the same repository to re-check the setup. `trestle
 init`, `trestle review` and the home screen use the most recently saved setup

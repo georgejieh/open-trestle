@@ -36,7 +36,8 @@ func initAssertWidth(t *testing.T, text string) {
 		for _, part := range initPromptEnd.Split(line, -1) {
 			word := strings.TrimRight(strings.TrimSpace(part), ".,;:)")
 			link := !strings.Contains(word, " ") && (strings.HasPrefix(word, "docs/") || strings.Contains(word, "://"))
-			if initVisible(part) > initWidth && !initCommandLine(part) && !strings.Contains(part, "`") && !link {
+			command := strings.TrimPrefix(strings.TrimSpace(initANSI.ReplaceAllString(part, "")), "-> ")
+			if initVisible(part) > initWidth && !initCommandLine(command) && !strings.Contains(part, "`") && !link {
 				t.Fatalf("line wider than %d columns: %q", initWidth, part)
 			}
 		}
