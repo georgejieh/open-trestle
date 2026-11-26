@@ -260,8 +260,8 @@ func packagedProfileSpecs() ([]ProfileSpec, error) {
 			RequiredFeatures: structuredOutput, Tiers: reviewTiers,
 		},
 		{
-			ID: ProfileDriftAuditor, Version: 1, Priority: 40, ModelCall: ModelCallRequired,
-			Purpose:          "Diffs declared change intent (description and linked docs) against code, and docs against code, reporting drift.",
+			ID: ProfileDriftAuditor, Version: 2, Priority: 40, ModelCall: ModelCallRequired,
+			Purpose:          "Diffs declared intent (description, linked docs and project intent documents) against code, and docs against code, reporting drift, work outside the declared scope, and code the change leaves behind.",
 			Activation:       Activation{Conditions: []Condition{ConditionDocsAndCodeChanged, ConditionIntentDeclared}},
 			RequiredFeatures: structuredOutput, Tiers: compactTiers,
 		},

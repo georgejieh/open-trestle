@@ -37,7 +37,7 @@ A new setup (`trestle init`, or `trestle setup bootstrap init`) saves `--special
 - `--profile` does not accept `test_author`, because its test proposals do not fit the defect-claim candidate contract.
 - There is no daemon fan-out. Automatic selection exists only in the direct `local-git model-review` path. The daemon never runs more than one generation per review run.
 - There is no per-profile route assignment. A `--profile` or `--specialists` run uses the one runtime-policy pair of generation and verification routes for every member. For `--specialists auto`, `Plan` needs an assignments document, so the command synthesizes a minimal one. It maps every tier to the policy's generation route (its pin, else its first preferred route, else the first inventory route), and every verifier tier to its verification route. The command does not read an assignments file from the operator and has no total token cap, so `budget_cap_exceeded` does not occur there. The plan's tiers, token budgets and route choice are informational.
-- Recorded change features carry only the counts of changed head lines (deleted lines count as zero). They declare change intent when the generation context of the general review carried the commit messages of the range (presence only, never the text; see [commit messages as stated intent](local-model-review.md#commit-messages-as-stated-intent)). The intent condition of `drift_auditor` therefore activates under `auto` on a change with commits. No linked documents or pull-request description are read. `style_conformance` activates under `auto` when the base tree declares a style that governs a changed language. Difficulty tiers are informational.
+- Recorded change features carry only the counts of changed head lines (deleted lines count as zero). They declare change intent when the generation context of the general review carried the commit messages of the range (presence only, never the text; see [commit messages as stated intent](local-model-review.md#commit-messages-as-stated-intent)). They also list, as linked docs, the [project intent documents](local-model-review.md#project-intent-documents) that context carried (paths only). The intent condition of `drift_auditor` therefore activates under `auto` on a change with commits or with a project intent document in the base tree. No pull-request description is read. `style_conformance` activates under `auto` when the base tree declares a style that governs a changed language. Difficulty tiers are informational.
 - `trestle profiles plan` reads a features file. It does not derive features from a Git change by itself.
 
 ### What the plan does not bypass
@@ -72,17 +72,19 @@ Every profile has the same fixed authority. It is part of the catalog JSON and c
 | `frontend` | required | HTML, CSS, JavaScript, TypeScript, Vue, Svelte | 70 |
 | `knowledge_graph` | gap only | source files; a model is needed only when a changed source language has no deterministic analyzer (Go has one) or the analyzer reported a gap | 60 |
 | `test_author` | required | source files | 50 |
-| `drift_auditor` | required | a declared description or linked docs, or docs and code changing together | 40 |
+| `drift_auditor` | required | a declared description or linked docs (including project intent documents), or docs and code changing together | 40 |
 | `style_conformance` | required | a declared style intent that governs a changed language | 20 |
 
 The `bug_hunter` (version 2) and `frontend` (version 2) skills each end their checklist with a short list of **nuance traps**: APIs that are easy to use almost correctly and deserve extra scrutiny. `bug_hunter` names Go goroutine and channel leaks, `defer` in a loop, loop-variable capture before Go 1.22, `time.Sleep` and library `panic`, and Python mutable defaults and bare `except:`. `frontend` names React `useEffect` and imperative timers. Both point the model at the lines that the packet's deterministic `pattern_hygiene` evidence cites (see [pattern hygiene](local-model-review.md#pattern-hygiene)). Both also ask that a candidate about a new suppression or workaround comment name the root cause.
 
+The `drift_auditor` skill (version 2) compares the change with the commit messages and project intent documents. Besides intent versus code and docs versus code, it looks for **scope** (behaviour no stated intent asks for, work against a stated non-goal or constraint, a subsystem much larger than the stated need) and **residue** (code the change makes dead, a second implementation of something the context already has, new use of an API the context marks deprecated, an abstraction with one caller and no stated reason, comments that narrate the change). Each candidate quotes the intent line or cites the code lines it rests on.
+
 ### Catalog and profile versions
 
-The catalog is version 1. Five profiles are at profile version 2 and the other four are at version 1:
+The catalog is version 1. Six profiles are at profile version 2 and the other three are at version 1:
 
-- Version 2: `security_probe`, `bug_hunter`, `frontend`, `knowledge_graph` and `style_conformance`.
-- Version 1: `orchestrator`, `backend`, `test_author` and `drift_auditor`.
+- Version 2: `security_probe`, `bug_hunter`, `frontend`, `knowledge_graph`, `style_conformance` and `drift_auditor`.
+- Version 1: `orchestrator`, `backend` and `test_author`.
 
 A profile version bump changes the catalog identity, and with it the identity of every plan that includes the profile.
 

@@ -535,7 +535,7 @@ When the model review did not finish, the result keeps its failure lines and add
 
 ### Review context
 
-The model sees, under one budget and in this order: the changed hunks and removed lines, the repository instruction files, the stated intent, and then context from the [repository index](repository-index.md):
+The model sees, under one budget and in this order: the changed hunks and removed lines, the repository instruction files and project intent documents, the stated intent, and then context from the [repository index](repository-index.md):
 
 1. the whole definition that encloses each changed hunk;
 2. callers and other uses of the changed definitions;
@@ -546,7 +546,7 @@ The byte budget comes from the smallest context window of the configured routes.
 
 The index proposes line ranges only. The text comes from the review's own verified head snapshot and is secret-scanned with the rest of the request before any remote egress. When the review ran the repository's own tests and linters in the sandbox (see [repository checks](repository-checks.md)), the generation context also carries their outcomes as `check_runs`, and the verifier receives the same object.
 
-Non-Go hunks that are valid UTF-8 are sent as changed hunks, and semantic analysis is recorded as unsupported for them. Lock files, vendored files, minified files and binary files are omitted with a named reason. The command also adds the root `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md` and `.trestle/review-instructions.md` of the base tree as bounded advisory context, only when the head holds a byte-identical copy. A change to one of these files is reviewed as a changed hunk instead. These files are repository data and cannot override the review instructions (see the [prompt-injection boundary](prompt-injection-boundary.md)). The exact rules are in [context assembly](runtime.md#context-assembly).
+Non-Go hunks that are valid UTF-8 are sent as changed hunks, and semantic analysis is recorded as unsupported for them. Lock files, vendored files, minified files and binary files are omitted with a named reason. The command also adds the root `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md` and `.trestle/review-instructions.md` of the base tree as bounded advisory context, only when the head holds a byte-identical copy. A change to one of these files is reviewed as a changed hunk instead. The same rule adds up to three [project intent documents](#project-intent-documents). These files are repository data and cannot override the review instructions (see the [prompt-injection boundary](prompt-injection-boundary.md)). The exact rules are in [context assembly](runtime.md#context-assembly).
 
 ### Walkthrough
 
@@ -595,7 +595,26 @@ A direct review reads the commit messages of its range, `base..head`, from the s
 
 The messages enter the generation context as its `stated_intent` object, oldest first, labelled `author_stated_unverified`, within fixed bounds on commits and bytes. A message that is not UTF-8 text keeps no text. Each message carries `risk_flags` from the same content rules as every source, and both models receive it after secret scanning. See the [prompt-injection boundary](prompt-injection-boundary.md#stated-intent).
 
-The finder may compare the change with the stated intent and propose a mismatch as an ordinary candidate (category `correctness`). The verifier checks such a claim against both the intent and the evidence. Under `--specialists auto`, the `drift_auditor` profile activates on a change with commits. An investigation run carries no stated intent.
+The finder may compare the change with the stated intent and propose a mismatch as an ordinary candidate (category `correctness`). The verifier checks such a claim against both the intent and the evidence. Under `--specialists auto`, the `drift_auditor` profile activates on a change with commits or with a [project intent document](#project-intent-documents). An investigation run carries no stated intent.
+
+### Project intent documents
+
+A project intent document states what the project is for: its goals, non-goals and constraints. The review reads the first three of these files that exist in the base tree, in this order:
+
+1. `.trestle/scope.md`
+2. `.specify/memory/constitution.md`
+3. `.kiro/steering/product.md`
+4. `openspec/project.md`
+5. `agent-os/product/mission.md`
+6. `.taskmaster/docs/prd.txt`
+7. `memory-bank/projectbrief.md`
+8. `PRD.md`
+9. `docs/PRD.md`
+10. `docs/prd.md`
+
+These are common locations for project intent documents. To give a repository one without another tool, write its goals and non-goals in `.trestle/scope.md`.
+
+A document is used only when the head holds an identical copy, like the instruction files; an edit to it is reviewed as a changed hunk. It reaches both models as a `repository_context` source at its own path, 8 KiB per document and 16 KiB across the three, a budget separate from the instruction files. The finder may compare the change with it as with the commit messages: work the document does not ask for, work that contradicts a stated non-goal, and code the change leaves behind. A candidate quotes the line it relies on and is located on the changed code. The document's text is data, never instructions. Under `--specialists auto`, a document that was used activates `drift_auditor`; the change features record its path, not its text. A document that was not supplied is counted in `instruction_context_omitted` with the instruction files.
 
 ### Pattern hygiene
 
@@ -716,4 +735,4 @@ JSON adds `style_recommendations`, with `language`, `changed_files` and `recomme
 
 A recommendation is advice only. It is not a finding and does not change `status`, `ci_disposition`, the exit code or `comprehensive_clearance`. SARIF carries it at run level only.
 
-Other optional counts report advisory accounting of the repository context without changing `status` or `ci_disposition`: `instruction_context_omitted` (base-tree instruction files that were not supplied), `repository_context_anchor_candidates_omitted` (model candidates dropped because they were located in an instruction file and not in reviewed code), and `agent_configuration_sources` and `instruction_like_sources` (generation context sources flagged as repository AI material or instruction-like text). All are absent when zero.
+Other optional counts report advisory accounting of the repository context without changing `status` or `ci_disposition`: `instruction_context_omitted` (base-tree instruction files and project intent documents that were not supplied), `repository_context_anchor_candidates_omitted` (model candidates dropped because they were located in an instruction file or intent document and not in reviewed code), and `agent_configuration_sources` and `instruction_like_sources` (generation context sources flagged as repository AI material or instruction-like text). All are absent when zero.

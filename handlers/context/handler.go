@@ -248,15 +248,15 @@ func (h *Handler) Validate() error {
 
 // contextAssemblyHandlerVersion versions the route-granting context handler.
 // It assembles version 11 generation contexts: the text fallback for non-Go
-// changed text, root repository instruction files from the base snapshot
-// (used only when the head is byte-identical) as repository_context sources,
-// deterministic pattern hygiene, the stated intent when a change intent source
-// is bound, index context from a bound IndexContextSource fitted to a budget
-// with a context manifest, and check run outcomes when they are bound. A plan
-// that recorded another identity is not executed by this handler, so a run
-// that straddles an upgrade fails closed instead of rebuilding different
-// packet bytes.
-const contextAssemblyHandlerVersion = 10
+// changed text, root repository instruction files and project intent documents
+// from the base snapshot (used only when the head is byte-identical) as
+// repository_context sources, deterministic pattern hygiene, the stated intent
+// when a change intent source is bound, index context from a bound
+// IndexContextSource fitted to a budget with a context manifest, and check run
+// outcomes when they are bound. A plan that recorded another identity is not
+// executed by this handler, so a run that straddles an upgrade fails closed
+// instead of rebuilding different packet bytes.
+const contextAssemblyHandlerVersion = 11
 
 // deriveHandlerIdentity omits the specialist, intent-source, index-source,
 // budget and check-runs fields when none is bound.
@@ -683,10 +683,11 @@ func (h *Handler) assembleAt(ctx context.Context, request controlplane.TaskExecu
 			return abstainZeroSelection()
 		}
 	}
-	// Instruction files are added only after the abstention decisions so they can
-	// never turn an all-omitted or zero-selection change into a reviewable
-	// packet. They come from the base tree and are kept only when they fit after
-	// every changed source, so they never become selection omissions.
+	// Instruction files and intent documents are added only after the abstention
+	// decisions so they can never turn an all-omitted or zero-selection change
+	// into a reviewable packet. They come from the base tree and are kept only
+	// when they fit after every changed source, so they never become selection
+	// omissions.
 	withInstructions, omissions, instructionFailure := appendRepositoryInstructionCandidates(base.Files(), contents, memoryScope, candidates, omissions)
 	if instructionFailure != 0 {
 		return contextAssembly{}, provider.Request{}, nil, instructionFailure

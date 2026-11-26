@@ -503,7 +503,7 @@ func assertLocalPacketOracle(t *testing.T, fixture localPacketOwnerFixture, stat
 	schemaDigest := sha256.Sum256(wire.OutputSchema)
 	// Pinned version 11 candidate instructions identity (the prose travels only
 	// in the trusted system channel) and candidate batch v2 schema.
-	if wire.InstructionsIdentity != "08dc8b543de309e3ca78b5a226380df1772853f37ffba59d6dc94b3b5e0fba56" || hex.EncodeToString(schemaDigest[:]) != review.ModelCandidateBatchSchemaIdentity {
+	if wire.InstructionsIdentity != "12d667a8bd5eec7e0600f55debd9cac56e15716a8b5d76908ace1e94e244019a" || hex.EncodeToString(schemaDigest[:]) != review.ModelCandidateBatchSchemaIdentity {
 		t.Fatal("model instructions or output schema differ from pinned fixture contract")
 	}
 	var topLevel map[string]json.RawMessage

@@ -15,23 +15,37 @@ import (
 const (
 	maximumInstructionFileBytes  = 8 << 10
 	maximumInstructionTotalBytes = 16 << 10
+	maximumIntentFileBytes       = 8 << 10
+	maximumIntentTotalBytes      = 16 << 10
 )
+
+// baseContextFiles is one fixed list of base-tree files supplied as
+// repository_context, with its own bounds. Intent documents have a budget
+// separate from instruction files so neither crowds out the other.
+type baseContextFiles struct {
+	paths                 []string
+	fileBytes, totalBytes int
+	maxFiles              int
+}
 
 // repositoryInstructionReason prefixes every instruction-file omission reason.
 // Review accounting keys on the prefix to keep instruction context out of
 // changed-source coverage.
 func repositoryInstructionReason(reason string) string { return "repository_instruction_" + reason }
 
-// appendRepositoryInstructionCandidates adds the base tree's instruction files
-// as bounded repository_context sources. A pull request author controls the
-// head tree, so a head edit to an instruction file must never steer review: the
+// appendRepositoryInstructionCandidates adds the base tree's instruction files,
+// then its first project intent documents (up to
+// review.MaxDeclaredIntentDocuments), as bounded repository_context sources.
+// Both follow the same rules and omission reasons. A pull request author
+// controls the head tree, so a head edit to either must never steer review: the
 // edit is already a changed_hunk source and is reviewed as code. A base file is
 // used only when the head holds byte-identical content (equal digest and size),
 // so the source binds identically to the immutable head snapshot that every
 // later readback checks. A base file that the head changed or deleted is
-// recorded as repository_instruction_changed. A file absent from the base,
-// including every file against an empty base, contributes nothing. Sources are
-// repository-controlled data and advisory preferences only: the model contract
+// recorded as repository_instruction_changed, and an intent document past the
+// count bound as repository_instruction_candidate_limit. A file absent from the
+// base, including every file against an empty base, contributes nothing.
+// Sources are repository-controlled data and advisory only: the model contract
 // still treats all source content as untrusted data that cannot override
 // instructions.
 func appendRepositoryInstructionCandidates(base []sourceoutput.FileReference, contents map[string][]byte, scope memorycore.Scope, candidates []review.ContextSource, omissions []review.ContextSourceOmission) ([]review.ContextSource, []review.ContextSourceOmission, controlplane.RunFailure) {
@@ -43,39 +57,45 @@ func appendRepositoryInstructionCandidates(base []sourceoutput.FileReference, co
 		omissions = append(omissions, omission)
 		return 0
 	}
-	instructionPaths := review.RepositoryInstructionPaths()
-	baseFiles := make(map[string]sourceoutput.FileReference, len(instructionPaths))
+	baseFiles := make(map[string]sourceoutput.FileReference, len(base))
 	for _, reference := range base {
 		baseFiles[reference.Path()] = reference
 	}
-	used := 0
-	for _, filePath := range instructionPaths {
-		baseFile, inBase := baseFiles[filePath]
-		if !inBase || baseFile.SizeBytes() == 0 {
-			continue
-		}
-		content, inHead := contents[filePath]
-		var failure controlplane.RunFailure
-		switch {
-		case !scope.AllowsPath(filePath):
-			failure = omit(filePath, 0, 0, "path_not_authorized")
-		case !inHead || !sameBaseContent(baseFile, filePath, content):
-			failure = omit(filePath, 0, 0, "changed")
-		case !isFallbackText(content):
-			failure = omit(filePath, 0, 0, "unsupported_content")
-		case len(candidates) >= maximumContextCandidates:
-			failure = omit(filePath, 0, 0, "candidate_limit")
-		default:
-			var source review.ContextSource
-			var added bool
-			source, added, failure = instructionSource(filePath, content, min(maximumInstructionFileBytes, maximumInstructionTotalBytes-used), candidates, omit)
-			if added {
-				candidates = append(candidates, source)
-				used += source.SizeBytes()
+	instructionPaths := review.RepositoryInstructionPaths()
+	for _, set := range []baseContextFiles{
+		{paths: instructionPaths, fileBytes: maximumInstructionFileBytes, totalBytes: maximumInstructionTotalBytes, maxFiles: len(instructionPaths)},
+		{paths: review.DeclaredIntentPaths(), fileBytes: maximumIntentFileBytes, totalBytes: maximumIntentTotalBytes, maxFiles: review.MaxDeclaredIntentDocuments},
+	} {
+		used, files := 0, 0
+		for _, filePath := range set.paths {
+			baseFile, inBase := baseFiles[filePath]
+			if !inBase || baseFile.SizeBytes() == 0 {
+				continue
 			}
-		}
-		if failure != 0 {
-			return nil, nil, failure
+			content, inHead := contents[filePath]
+			var failure controlplane.RunFailure
+			switch {
+			case !scope.AllowsPath(filePath):
+				failure = omit(filePath, 0, 0, "path_not_authorized")
+			case !inHead || !sameBaseContent(baseFile, filePath, content):
+				failure = omit(filePath, 0, 0, "changed")
+			case !isFallbackText(content):
+				failure = omit(filePath, 0, 0, "unsupported_content")
+			case len(candidates) >= maximumContextCandidates || files >= set.maxFiles:
+				failure = omit(filePath, 0, 0, "candidate_limit")
+			default:
+				var source review.ContextSource
+				var added bool
+				source, added, failure = instructionSource(filePath, content, min(set.fileBytes, set.totalBytes-used), candidates, omit)
+				if added {
+					candidates = append(candidates, source)
+					used += source.SizeBytes()
+					files++
+				}
+			}
+			if failure != 0 {
+				return nil, nil, failure
+			}
 		}
 	}
 	return candidates, omissions, 0

@@ -25,18 +25,17 @@ func contextAssemblyIdentityPreimage(t *testing.T, version int, authorizer, sani
 	return hex.EncodeToString(digest[:])
 }
 
-// The version 11 context (the optional check_runs object and its contract
-// sentence) alters the packet bytes this handler builds, so its identity moves
-// to version 10, as the version 10 context moved it to version 9 and the
-// earlier context changes moved it through versions 8, 7 and 6. A plan that
-// recorded an earlier identity is not served by this handler.
-func TestContextAssemblyHandlerIdentityIsVersionTen(t *testing.T) {
+// Project intent documents alter the packet bytes this handler builds, so its
+// identity moves to version 11, as the check_runs object moved it to version
+// 10 and the earlier context changes moved it through versions 9 to 6. A plan
+// that recorded an earlier identity is not served by this handler.
+func TestContextAssemblyHandlerIdentityIsVersionEleven(t *testing.T) {
 	authorizer, sanitizer := strings.Repeat("5", 64), contextTestSanitizer{}.Identity()
 	current := deriveHandlerIdentity(authorizer, sanitizer, review.ContextSpecialist{}, "", "", review.ContextBudget{}, "")
-	if current != contextAssemblyIdentityPreimage(t, 10, authorizer, sanitizer) {
-		t.Fatal("route-granting context handler identity is not the version 10 preimage")
+	if current != contextAssemblyIdentityPreimage(t, 11, authorizer, sanitizer) {
+		t.Fatal("route-granting context handler identity is not the version 11 preimage")
 	}
-	for _, earlier := range []int{5, 6, 7, 8, 9} {
+	for _, earlier := range []int{5, 6, 7, 8, 9, 10} {
 		if current == contextAssemblyIdentityPreimage(t, earlier, authorizer, sanitizer) {
 			t.Fatalf("context handler identity did not change with its packet bytes (version %d)", earlier)
 		}

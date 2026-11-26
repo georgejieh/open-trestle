@@ -12,7 +12,7 @@ import (
 )
 
 // goldenPlanIdentity pins broadChange planned with fullAssignments against the packaged catalog.
-const goldenPlanIdentity = "d124e7f00298b2c3e9d39f890bcaa2a1c623757e60789920d6602e5e2e708768"
+const goldenPlanIdentity = "2992b7e181df7854d034fcbe7480e627edf534945264cc9f763b4f82262b6486"
 
 func goChangeWithTest(addedLines uint32) ChangeFeaturesSpec {
 	return ChangeFeaturesSpec{Files: []ChangedFileSpec{
@@ -65,6 +65,11 @@ func TestProfileActivation(t *testing.T) {
 		{
 			name: "declared description activates drift",
 			spec: ChangeFeaturesSpec{Files: goChangeWithTest(3).Files, Intent: IntentSpec{DescriptionPresent: true}},
+			want: map[ProfileID]EntryStatus{ProfileDriftAuditor: EntryPlanned},
+		},
+		{
+			name: "intent document alone activates drift",
+			spec: ChangeFeaturesSpec{Files: goChangeWithTest(3).Files, Intent: IntentSpec{LinkedDocPaths: []string{".trestle/scope.md"}}},
 			want: map[ProfileID]EntryStatus{ProfileDriftAuditor: EntryPlanned},
 		},
 		{
