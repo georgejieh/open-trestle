@@ -10,6 +10,7 @@ can tell a missing feature from a mistake. See the
 | Capability | Linux amd64 (packaged install) | Linux, development build | Windows |
 | --- | --- | --- | --- |
 | Packaged install | Yes, [unsigned](install.md) | No | No |
+| [Install script](install.md#install-with-one-command), unsigned pre-release | Yes | Yes | Yes |
 | `go build` of `trestle` (reviews refused, no scan helper) | Yes | Yes | Compiles |
 | Development build with the scan helper | Yes | Yes | Yes |
 | Review with a model server on this machine | Yes | Yes | Yes |
@@ -52,7 +53,8 @@ python3 tools/package_secret_scanner.py --development DIR`. See
 `trestle update` is refused off Linux amd64. It updates only the packaged install,
 the one with a receipt at
 `/usr/local/share/open-trestle/distribution/receipt.json`, and it says so without
-changing anything elsewhere. See [updates](updates.md).
+changing anything elsewhere. In an install made by the install scripts it prints
+the install command to run again instead. See [updates](updates.md).
 
 ## Paths
 
@@ -96,6 +98,6 @@ installer. See [CONTRIBUTING](../CONTRIBUTING.md).
 
 ## For the first release
 
-The release needs a native package or installer for Windows, and
-`trestle update` there. Until those exist, this page lists what works on
-Windows.
+The release needs signed archives, and `trestle update` for installs that the
+install scripts make, on Linux and Windows. Until then, running the install
+script again is how such an install is updated.

@@ -394,7 +394,8 @@ func editDistance(a, b string) int {
 }
 
 // writeVersion prints the version in one line: the packaged install's version
-// when this is its trestle, and the source revision when the build records it.
+// when this is its trestle, a release archive's version when the build has
+// one, and the source revision when the build records it.
 func writeVersion(w io.Writer) {
 	revision := "no source revision recorded"
 	if value := buildinfo.Revision(); value != "" {
@@ -402,6 +403,10 @@ func writeVersion(w io.Writer) {
 	}
 	if installed, ok := updatePackageInstalled(); ok && runningInstalledTrestle() {
 		fmt.Fprintf(w, "Open Trestle %s (%s), the packaged Linux amd64 install\n", installed.Version, revision)
+		return
+	}
+	if version := updateArchiveVersion(); version != "" {
+		fmt.Fprintf(w, "Open Trestle %s (%s)\n", version, revision)
 		return
 	}
 	fmt.Fprintf(w, "Open Trestle development build (%s)\n", revision)

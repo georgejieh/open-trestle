@@ -6,7 +6,7 @@ no release yet, and each page describes what the code does today. The
 
 ## Start
 
-- [Install](install.md): the packaged Linux install, the development build, and what other systems can do today.
+- [Install](install.md): the one-line install scripts, building from source, and the packaged Linux install.
 - [Getting started](getting-started.md): `trestle init` and your first review.
 - [Updating](updates.md): `trestle update`.
 - [Platforms](platforms.md): what works on Linux and Windows, and where macOS stands.

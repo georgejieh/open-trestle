@@ -148,6 +148,7 @@ available. See [repository checks](repository-checks.md#could-not-run).
 | Message | Fix |
 | --- | --- |
 | `Open Trestle is not installed as a package on this machine` | `trestle update` updates only the packaged Linux amd64 install. See [install](install.md). |
+| `this is Open Trestle VERSION from a release archive` | Run the install command it prints again; it installs the newest release. See [install](install.md#update). |
 | `this build cannot verify releases` | The build pins no release key. Install the packaged release, or use `--from FILE` or the local update folder. |
 | `installing needs your confirmation` | Run `trestle update` in a terminal, or pass `--yes`. Nothing was installed. |
 | A local folder `must be private (mode 0700, not 0755)` | `chmod 700 ~/.local/share/open-trestle/updates`. |

@@ -88,8 +88,8 @@ What works today, on Linux and Windows (macOS is not supported; see [platforms](
 - Remote providers (OpenRouter, Ollama Cloud and OpenCode Go) and local model
   servers (Ollama, llama.cpp, vLLM, LM Studio and other OpenAI-compatible
   servers) are supported. Every request except an investigation request (local only) is scanned for
-  secrets twice by the secret scan helper before it is sent. A development build with the helper runs on
-  Linux and Windows; the packaged install is Linux amd64 only.
+  secrets twice by the secret scan helper before it is sent. It runs on Linux
+  and Windows (amd64 releases; arm64 from source).
 - You can set a spending limit for each API key. Open Trestle warns you as you
   approach it and stops sending requests when you reach it. Its totals are
   estimates, so your provider's own limits remain the real safeguard.
@@ -102,25 +102,28 @@ What is not built yet:
 - A desktop app.
 - The [GitHub Actions example](examples/github-actions/README.md) has been
   tested offline but has not yet run on GitHub.
-- A signed release or download. You build Open Trestle from source. The first
-  release is meant to install like any other application: you download an
-  installer for your system, run the setup wizard and review your own
-  repository.
+- A signed release. The install scripts download unsigned pre-releases; a
+  checksum shows only that a download matches the release.
 
 The [roadmap](docs/roadmap.md) lists what is next.
 
 ## Getting started
 
-You need Git, Go 1.26.11 and Python 3, on Linux or Windows. Build a
-development build, which includes the secret scan helper:
+Install Open Trestle for your account. On Linux (amd64):
 
 ```sh
-python3 tools/package_secret_scanner.py --development DIR
+curl -fsSL https://georgejieh.dev/open-trestle/install.sh | bash
 ```
 
-Run `DIR/bin/trestle` by its path. A plain `go build` pins no helper and refuses
-every review. On Linux amd64 you can build and install the packaged archive
-instead. The [install](docs/install.md) guide walks through both options.
+On Windows (amd64), in PowerShell:
+
+```powershell
+irm https://georgejieh.dev/open-trestle/install.ps1 | iex
+```
+
+The first releases are unsigned pre-releases. The [install](docs/install.md)
+guide says what the scripts do, and how to build from source instead (Go
+1.26.11 and Python 3).
 
 Then, inside the Git repository you want to review, with your changes committed
 on a branch:

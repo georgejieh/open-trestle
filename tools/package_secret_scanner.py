@@ -37,6 +37,7 @@ GUEST_NAME = "open-trestle-scan-guest.wasm"
 HELPER_PATH = "libexec/open-trestle/" + HELPER_NAME
 HELPER_PIN = "github.com/georgejieh/open-trestle/internal/secretscan.expectedHelperSHA256"
 BUILDINFO_PACKAGE = "github.com/georgejieh/open-trestle/internal/buildinfo"
+RELEASE_VERSION = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?")
 GUEST_BUILD_FLAGS = ("-trimpath", "-buildvcs=false", "-ldflags=-s -w -buildid=")
 RELEASE_SOURCE_PATHS = {"scripts/model_catalog.py": "tools/model_catalog.py"}
 EXECUTABLE_PATHS = frozenset({"trestle", "trestled", HELPER_PATH})
@@ -567,7 +568,7 @@ def source_binding(repository: Path) -> dict[str, str]:
     }
 
 
-def verify_root_provenance(payload: str, program: str, binding: dict[str, str]) -> None:
+def verify_root_provenance(payload: str, program: str, binding: dict[str, str], version: str | None = None) -> None:
     """Require the built executable to report the exact protected source inputs."""
     try:
         document = json.loads(payload)
@@ -579,6 +580,8 @@ def verify_root_provenance(payload: str, program: str, binding: dict[str, str]) 
         "source_revision": binding["source_revision"],
         "source_tree": binding["source_tree"],
     }
+    if version is not None:
+        expected["version"] = version
     if (
         not isinstance(document, dict)
         or type(document.get("schema_version")) is not int
@@ -588,14 +591,16 @@ def verify_root_provenance(payload: str, program: str, binding: dict[str, str]) 
         raise ValueError(f"{program} source provenance mismatch")
 
 
-def verify_packaged_provenance(repository: Path, staging: Path, binding: dict[str, str]) -> None:
+def verify_packaged_provenance(
+    repository: Path, staging: Path, binding: dict[str, str], version: str | None = None, goos: str = "linux",
+) -> None:
     """Inspect both product entry points without loading daemon runtime configuration."""
     for name in ("trestle", "trestled"):
         payload = _run(
-            [str(staging / name), "build-info"], cwd=repository,
+            [str(staging / _executable_name(name, goos)), "build-info"], cwd=repository,
             environment={"HOME": "/nonexistent", "LANG": "C", "PATH": "/usr/bin:/bin", "TZ": "UTC"},
         )
-        verify_root_provenance(payload, name, binding)
+        verify_root_provenance(payload, name, binding, version)
 
 
 def build_root_binaries(
@@ -605,6 +610,7 @@ def build_root_binaries(
     helper_sha256: str,
     go_tmp: Path,
     binding: dict[str, str] | None = None,
+    version: str | None = None,
 ) -> dict[str, Path]:
     """Build trestle and trestled for target with the helper digest pinned."""
     flags = f"-s -w -buildid= -X {HELPER_PIN}={helper_sha256}"
@@ -613,6 +619,10 @@ def build_root_binaries(
             f" -X {BUILDINFO_PACKAGE}.sourceRevision={binding['source_revision']}"
             f" -X {BUILDINFO_PACKAGE}.sourceTree={binding['source_tree']}"
         )
+    if version is not None:
+        if binding is None or not RELEASE_VERSION.fullmatch(version):
+            raise ValueError("a release build needs a SemVer version and clean committed source")
+        flags += f" -X {BUILDINFO_PACKAGE}.version={version}"
     binaries: dict[str, Path] = {}
     for name in ("trestle", "trestled"):
         binary = output / _executable_name(name, target[0])
@@ -705,14 +715,21 @@ def package(repository: Path, output: Path) -> None:
     validate_staging(output, _expected_staging_files(repository), expected_source_digests)
 
 
-def build_development(repository: Path, output: Path, target: tuple[str, str] | None) -> None:
+def build_development(
+    repository: Path, output: Path, target: tuple[str, str] | None, version: str | None = None,
+) -> None:
     """Build trestle, trestled and the scan helper for target from the working tree.
 
     The outputs are output/bin/trestle, output/bin/trestled and
     output/libexec/open-trestle/open-trestle-scan-helper (with .exe for
-    Windows). They are not bound to committed source.
+    Windows). With version, this is a release build: the source must be clean
+    and committed, and both programs report the version and the source.
+    Otherwise they are not bound to committed source.
     """
     repository = repository.resolve()
+    if version is not None and not RELEASE_VERSION.fullmatch(version):
+        raise ValueError("release version must be SemVer without a leading v")
+    binding = source_binding(repository) if version is not None else None
     output = output.resolve()
     if output.is_symlink() or output.exists() and not output.is_dir():
         raise ValueError("development output must be a directory")
@@ -723,7 +740,8 @@ def build_development(repository: Path, output: Path, target: tuple[str, str] | 
     with tempfile.TemporaryDirectory(prefix=".open-trestle-development-", dir=output.parent) as directory:
         temporary = Path(directory)
         go_tmp = temporary / "go-tmp"
-        target = target or _host_target(repository, go_tmp)
+        host = _host_target(repository, go_tmp) if target is None or binding is not None else None
+        target = target or host
         helper, guest = build_helper(repository, temporary / "helper", target, go_tmp)
         helper_bytes = helper.read_bytes()
         helper_sha256 = _sha256(helper)
@@ -732,7 +750,7 @@ def build_development(repository: Path, output: Path, target: tuple[str, str] | 
         helper_info = _run(["go", "version", "-m", str(helper)], cwd=repository, environment=_go_environment(go_tmp))
         verify_go_toolchain(helper_info, "scan helper")
         verify_build_settings(helper_info, HELPER_PACKAGE, target)
-        binaries = build_root_binaries(repository, temporary, target, helper_sha256, go_tmp)
+        binaries = build_root_binaries(repository, temporary, target, helper_sha256, go_tmp, binding, version)
         placements = [(helper, output / "libexec/open-trestle" / helper.name)]
         placements += [(binary, output / "bin" / binary.name) for binary in binaries.values()]
         for source, destination in placements:
@@ -740,6 +758,11 @@ def build_development(repository: Path, output: Path, target: tuple[str, str] | 
             if os.name != "nt":
                 source.chmod(0o555)
             os.replace(source, destination)
+    if binding is not None:
+        if target == host:
+            verify_packaged_provenance(repository, output / "bin", binding, version, target[0])
+        if source_binding(repository) != binding:
+            raise ValueError("source changed during the release build")
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -752,6 +775,8 @@ def _parser() -> argparse.ArgumentParser:
                        help="build pinned development binaries from the working tree")
     parser.add_argument("--target", metavar="GOOS/GOARCH",
                         help="development target; the host target by default")
+    parser.add_argument("--release-version", metavar="VERSION",
+                        help="with --development: build clean committed source that reports VERSION")
     return parser
 
 
@@ -760,11 +785,13 @@ def main(argv: list[str] | None = None) -> int:
     arguments = parser.parse_args(argv)
     if arguments.target and not arguments.development:
         parser.error("--target requires --development")
+    if arguments.release_version and not arguments.development:
+        parser.error("--release-version requires --development")
     repository = Path(__file__).resolve().parent.parent
     try:
         if arguments.development:
             target = parse_target(arguments.target) if arguments.target else None
-            build_development(repository, Path(arguments.development), target)
+            build_development(repository, Path(arguments.development), target, arguments.release_version)
         elif arguments.verify:
             binding = source_binding(repository)
             validate_staging(

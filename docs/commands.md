@@ -302,7 +302,8 @@ Prints the repository profile of a commit (default `HEAD`) of the checkout in th
 
 `trestle version` and `trestle --version` print one line: `Open Trestle 0.1.0
 (source revision 3f2a9c1d0e4b), the packaged Linux amd64 install` for the
-packaged install's `trestle`, and `Open Trestle development build (source
+packaged install's `trestle`, `Open Trestle 0.1.0 (source revision ...)` for
+a release archive install, and `Open Trestle development build (source
 revision ...)` for any other build. `trestle build-info` is the JSON form.
 
 ### `trestle build-info`

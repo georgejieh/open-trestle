@@ -1,5 +1,18 @@
 # Updates
 
+To update an install made by the [install scripts](install.md#install-with-one-command),
+run the install command again. It installs the newest release in place of the
+one you have and keeps your setup. In such an install, `trestle update` changes
+nothing and prints that command:
+
+```text
+trestle update: this is Open Trestle 0.1.0-alpha.1 from a release archive, and trestle update updates only the packaged Linux amd64 install. To update, run the installer again:
+  curl -fsSL https://georgejieh.dev/open-trestle/install.sh | bash
+```
+
+On Windows it prints `irm https://georgejieh.dev/open-trestle/install.ps1 | iex`.
+It exits with status 1. The rest of this page is about the packaged install.
+
 `trestle update` installs a newer build of the packaged Linux amd64 install in
 one step. It finds the newer version, shows it to you, asks for confirmation,
 runs that build's own upgrade with `sudo`, and reports the result:
@@ -287,10 +300,11 @@ The notice works as follows.
 
 ## What is not signed yet
 
-Nothing has been released, and no release key exists. Until the release phase
-adds a key to `internal/update/release_keys.txt` and publishes signed releases,
-every build refuses the release channel, and only the local folder and `--from`
-work, unsigned. The SHA-256 sidecar alone authenticates nothing. Release
+No release key exists, and the pre-releases that the release workflow publishes
+are unsigned: they carry no `.sig`, so they do not qualify for the release
+channel. Until the release phase adds a key to `internal/update/release_keys.txt`
+and publishes signed releases, every build refuses the release channel, and only
+the local folder and `--from` work, unsigned. The SHA-256 sidecar alone authenticates nothing. Release
 provenance, SBOM attestation and signer identity beyond the pinned key are not
 yet published.
 
@@ -314,6 +328,7 @@ sidecar matches, and that its manifest version is the tag without the `v`. It
 does not replace an existing `.sig`. A release then uploads the archive, the
 sidecar and the `.sig` as three assets of the tag's release.
 
-Adding the key to `release_keys.txt`, keeping the private key, and wiring this
-into a release workflow are release-phase steps that need the maintainer's
-approval and secrets. No workflow or key is part of this repository yet.
+Adding the key to `release_keys.txt`, keeping the private key, and adding a
+signing step to `.github/workflows/release.yml` are release-phase steps that
+need the maintainer's approval and secrets. The workflow has no signing step,
+and no key is part of this repository yet.

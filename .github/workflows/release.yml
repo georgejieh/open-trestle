@@ -1,0 +1,140 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to release, such as v0.1.0-alpha.1
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  GOWORK: "off"
+  GOTOOLCHAIN: go1.26.11
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+
+jobs:
+  build:
+    name: Build release archives
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check the tag
+        run: |
+          printf '%s\n' "$RELEASE_TAG" | grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$'
+          echo "RELEASE_VERSION=${RELEASE_TAG#v}" >> "$GITHUB_ENV"
+      - name: Check out the tag
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
+          persist-credentials: false
+      - name: Verify tracked public boundary
+        run: python3 -B tools/verify_public_tree.py --mode clean-checkout
+      - name: Set up Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version-file: .node-version
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Verify module sums
+        run: |
+          go mod verify
+          (cd workers/secret-scanner && go mod verify)
+          (cd workers/secret-scanner/guest && go mod verify)
+          (cd tools/govulncheck && go mod verify)
+      - name: Run tests and vet
+        run: |
+          umask 022
+          go test -p=1 -timeout=30m ./...
+          go vet ./...
+          (cd workers/secret-scanner && go test -timeout=15m ./... && go vet ./...)
+          (cd workers/secret-scanner/guest && go test -timeout=15m ./...)
+          python3 -m unittest discover -s tools -p "test_*.py"
+      - name: Build and verify release staging
+        run: |
+          python3 tools/package_secret_scanner.py --output .container
+          python3 tools/package_secret_scanner.py --verify .container
+      - name: Run passive dependency vulnerability gate
+        run: python3 tools/vulnerability_gate.py --staging .container
+      - name: Build the Linux amd64 package
+        run: |
+          mkdir -p "$RUNNER_TEMP/dist"
+          python3 tools/linux_distribution.py \
+            --staging .container \
+            --version "$RELEASE_VERSION" \
+            --revision "$(git rev-parse HEAD)" \
+            --created "$(date -u -d "$(git show -s --format=%cI HEAD)" +%Y-%m-%dT%H:%M:%SZ)" \
+            --output "$RUNNER_TEMP/dist/open-trestle-linux-amd64.pyz"
+          "$RUNNER_TEMP/dist/open-trestle-linux-amd64.pyz" verify-archive
+      - name: Build the release archives and SHA256SUMS
+        run: |
+          python3 tools/release_archives.py --version "$RELEASE_VERSION" --output "$RUNNER_TEMP/dist"
+          (cd "$RUNNER_TEMP/dist" && sha256sum -c SHA256SUMS && cat SHA256SUMS)
+      - name: Check the Linux archive installs
+        run: |
+          mkdir -p "$RUNNER_TEMP/mirror"
+          ln -s "$RUNNER_TEMP/dist" "$RUNNER_TEMP/mirror/v$RELEASE_VERSION"
+          OPEN_TRESTLE_BASE_URL="file://$RUNNER_TEMP/mirror" \
+            OPEN_TRESTLE_VERSION="$RELEASE_VERSION" \
+            OPEN_TRESTLE_INSTALL_ROOT="$RUNNER_TEMP/install" \
+            OPEN_TRESTLE_BIN_DIR="$RUNNER_TEMP/install-bin" \
+            bash install.sh
+          "$RUNNER_TEMP/install-bin/trestle" build-info
+      - name: Upload the release files
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: release-files
+          path: ${{ runner.temp }}/dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish the release
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download the release files
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: release-files
+          path: dist
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          (cd dist && sha256sum -c SHA256SUMS)
+          prerelease=""
+          case "$RELEASE_TAG" in *-*) prerelease="--prerelease" ;; esac
+          cat > notes.md <<'EOF'
+          This release is unsigned. The SHA-256 sums in `SHA256SUMS` show only that a download matches the files of this release; they do not show who built them.
+
+          Install for your account, without administrator rights:
+
+          ```sh
+          curl -fsSL https://georgejieh.dev/open-trestle/install.sh | bash
+          ```
+
+          ```powershell
+          irm https://georgejieh.dev/open-trestle/install.ps1 | iex
+          ```
+
+          Then run `trestle init` inside the Git repository you want reviewed. See [install](https://github.com/georgejieh/open-trestle/blob/main/docs/install.md) and the [changelog](https://github.com/georgejieh/open-trestle/blob/main/CHANGELOG.md).
+          EOF
+          gh release create "$RELEASE_TAG" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --title "Open Trestle $RELEASE_TAG" \
+            --notes-file notes.md \
+            $prerelease

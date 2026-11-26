@@ -103,4 +103,11 @@ func TestVersionIsOneLine(t *testing.T) {
 			t.Fatalf("trestle %s: exit=%d %q %q", argument, code, stdout.String(), stderr.String())
 		}
 	}
+	previous := updateArchiveVersion
+	updateArchiveVersion = func() string { return "0.1.0-alpha.1" }
+	t.Cleanup(func() { updateArchiveVersion = previous })
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"version"}, &stdout, &stderr); code != 0 || stdout.String() != "Open Trestle 0.1.0-alpha.1 (no source revision recorded)\n" {
+		t.Fatalf("release archive build: exit=%d %q %q", code, stdout.String(), stderr.String())
+	}
 }
