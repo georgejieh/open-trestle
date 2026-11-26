@@ -165,7 +165,7 @@ case; see [environment variables and files](environment-and-files.md#paths).
 ## Check the install
 
 ```sh
-trestle build-info
+trestle --version
 trestle --help
 ```
 

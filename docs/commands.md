@@ -3,16 +3,68 @@
 This page lists every `trestle` command and its flags, grouped as `trestle --help`
 groups them. Use it to look up a flag; for a first walkthrough, start with [getting started](getting-started.md).
 
-`trestle --help`, `trestle -h` and `trestle help` print the usage to standard
-output and exit `0`. A command line that Open Trestle does not recognise, and a
-bare `trestle` without a terminal, print the same usage to standard error and
-exit `2`. Each command also prints its own usage when its arguments are wrong.
+`trestle --help`, `trestle -h` and `trestle help` print a short overview to
+standard output and exit `0`: a "Start here" block, then each group with one
+line per command. `trestle COMMAND --help` prints that command's full usage. A
+bare `trestle` without a terminal, and a known command with wrong arguments,
+print the overview to standard error and exit `2`. An unknown command prints
+three lines to standard error and exits `2`:
+
+```text
+trestle: "reveiw" is not a trestle command.
+Did you mean: review?
+Run trestle --help to see all commands.
+```
+
+The second line appears only when a command name is close. Each command also
+prints its own usage when its arguments are wrong.
 Exit codes are in [exit codes](exit-codes.md), and variables and paths are in
 [environment variables and files](environment-and-files.md).
+
+When standard output is a terminal, `trestle keys`, `trestle usage`,
+`trestle checks` and `trestle update --check` print a heading, one row per item
+with a mark (labels lined up), and the next command after `->`, wrapped at 60
+columns. Without a terminal they print the same plain text as before, for
+scripts. The marks and colors are listed in
+[terminal symbols and colors](#terminal-symbols-and-colors).
 
 `--flag=value` and `--flag value` both work, except for `profiles` and
 `local-git`, which take each flag and its value as two separate words. `init`, `review`, `update` and
 `usage` reject a flag that you give twice.
+
+### Terminal symbols and colors
+
+Every screen uses the same marks, and each state has its mark, so color is
+never the only signal:
+
+| Mark | With `TERM=dumb` | Color | Meaning |
+| --- | --- | --- | --- |
+| `✓` | `[ok]` | green | Done, found, or within its limit. |
+| `…` | `[..]` | amber | Needs attention, or waiting. |
+| `✗` | `[x]` | red | Needs a fix, refused, or at its limit. |
+| `–` | `[--]` | dim | Optional, or not set up. |
+| `->` | `->` | dim | The command to run next. |
+
+Titles are bold blue, questions blue, frames and the bridge mark slate, and
+hints dim. Other text keeps the terminal's own color, so it reads on light and
+dark themes. Lines are at most 60 columns wide; a command to copy is never
+wrapped, even when it is longer.
+
+Color is used only when standard output is a terminal. `NO_COLOR` (set to any
+value) turns color off and keeps the marks. `TERM=dumb` turns color off and
+switches the marks and frames to the ASCII forms above. `trestle init
+--no-input` prints no color either. Without a terminal, output is plain text for
+scripts.
+
+A refusal names the command, says what happened and what did or did not
+change, and gives the command to run next on its own line:
+
+```text
+trestle review: this repository has no Open Trestle setup yet (looked in ~/.local/state/open-trestle/app-1a2b3c4d). Nothing was sent.
+  -> trestle init
+```
+
+Exit codes are in [exit codes](exit-codes.md).
 
 ## Everyday
 
@@ -34,7 +86,7 @@ Reviews the latest committed change with the setup that `trestle init` made.
 | `--directory PATH` | The setup folder, when it is not the one `trestle init` proposes. |
 | `--format text\|json\|sarif\|markdown` | Result format. Default: the setup's. |
 | `--all` | List every finding, not only confirmed high and medium ones. |
-| `--verbose` | Add internal fields to the text output. |
+| `--verbose` | Add internal fields to the text output. On a terminal, print the full text document instead of the [short view](local-model-review.md#the-result-on-a-terminal). |
 | `--timeout DURATION` | Time limit for the review. |
 | `--profile ID` | Run one [specialist profile](agent-profiles.md). |
 | `--specialists auto\|none\|ID[,ID...]` | Run the general review plus selected specialists. |
@@ -68,6 +120,11 @@ Shows the spending recorded in this period against each key's limit. See
 | `trestle usage` | Show each limited key's state. |
 | `trestle usage set --credential-env NAME --limit USD` | Set a limit. Also takes `--period week\|month\|year`, `--alert 80,100` and `--provider ID`. |
 | `trestle usage clear --credential-env NAME` | Remove a limit. Also takes `--provider ID`. |
+
+On a terminal, each limited key's mark and color follow its percentage of the
+limit: `✓` and dim below 50%, `✓` from 50%, `…` in amber from the first alert
+percentage (80% by default), and `✗` in red at 100% or more. The percentage is
+always printed.
 
 ### `trestle profiles`
 
@@ -240,6 +297,14 @@ Builds and queries the [repository index](repository-index.md) of the checkout i
 ### `trestle profile`
 
 Prints the repository profile of a commit (default `HEAD`) of the checkout in the current directory: its languages and their shares, the test frameworks and layout, the checks its CI enforces, grouped by class, and the checks that are only configured. A check counts as enforced when a GitHub Actions step that runs on pushes or pull requests, and is not disabled or allowed to fail, runs it. Other CI systems and linter configuration alone are listed as configured. Configuration files are read as data from the verified Git object store and never run. A review reads the checks of its base commit. Flags: `--commit REF`, `--directory PATH`, `--json`.
+
+### `trestle version`
+
+`trestle version` and `trestle --version` print one line: `Open Trestle 0.1.0
+(source revision 3f2a9c1d0e4b), the packaged Linux amd64 install` for the
+packaged install's `trestle`, `Open Trestle 0.1.0 (source revision ...)` for
+a release archive install, and `Open Trestle development build (source
+revision ...)` for any other build. `trestle build-info` is the JSON form.
 
 ### `trestle build-info`
 

@@ -79,7 +79,10 @@ The first review inside `trestle init` uses these codes, not the table for
 | `trestle usage`, `set`, `clear` | `0`; `2` for a bad flag or value; `1` when the usage folder cannot be found or used. |
 | `trestle` | In a terminal: `0` after you quit or outside a Git repository, and a chosen action returns its own code. Without a terminal: `2`, with the usage on standard error. |
 | `--help`, `-h`, `help` | `0`, usage on standard output. |
-| An unknown command | `2`, usage on standard error. |
+| `trestle COMMAND --help` | `0`, that command's usage on standard output. |
+| `--version`, `version` | `0`, one line on standard output. |
+| An unknown command | `2`, a three-line error on standard error with the nearest command when one is close. |
+| A known command with wrong arguments | `2`, usage on standard error. |
 
 ## Checks, index and profile
 

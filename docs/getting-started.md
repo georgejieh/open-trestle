@@ -464,7 +464,13 @@ To review with the general review only, give `trestle init --specialists none`
 once. The spending warning counts every review the command may run. See
 [specialist review set](local-model-review.md#specialist-review-set-opt-in).
 
-The result starts with the status and the reviews that ran. Then comes a
+On a terminal, `trestle review` prints a short view: the verdict and exit
+status first, then the findings, then a line on what was checked. See
+[the result on a terminal](local-model-review.md#the-result-on-a-terminal).
+`trestle review --verbose`, and any output that is not a terminal, print the
+full text document described here.
+
+The text document starts with the status and the reviews that ran. Then comes a
 walkthrough of what was checked across all of them, followed by the confirmed
 findings, most important first, each with the reviews that confirmed it. This
 example comes from the offline test fixture, with the general review and two

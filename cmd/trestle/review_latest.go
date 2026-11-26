@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -405,8 +406,7 @@ func runLatestReview(ctx context.Context, args []string, stdout, stderr io.Write
 	}
 	checkout, err := findRepositoryCheckout(ctx)
 	if err != nil {
-		fmt.Fprintln(stderr, "trestle review: this folder is not inside a Git checkout (or git is not installed). Change into your repository and run trestle review again. To review a fixture file, run trestle review <path>.")
-		return 2
+		return commandFail(stderr, 2, "review", "this folder is not inside a Git checkout, or git is not installed. Nothing was sent.", "cd REPOSITORY && trestle review", "trestle review <path>   (a fixture file)")
 	}
 	dir := discoverSetupDirectory(ctx, checkout)
 	if options.directory != "" {
@@ -416,17 +416,14 @@ func runLatestReview(ctx context.Context, args []string, stdout, stderr io.Write
 		}
 	}
 	if !setupExists(dir) {
-		fmt.Fprintf(stderr, "trestle review: this repository has no Open Trestle setup yet (looked in %s). Run trestle init here first: it asks a few questions and can run the first review.\n", initDisplayPath(dir))
-		return 3
+		return commandFail(stderr, 3, "review", fmt.Sprintf("this repository has no Open Trestle setup yet (looked in %s). Nothing was sent.", initDisplayPath(dir)), "trestle init")
 	}
 	repo, err := loadRepositorySetup(ctx, checkout, dir)
 	if err != nil {
-		fmt.Fprintf(stderr, "trestle review: the setup in %s cannot be used (%s). Nothing was sent. Run trestle init to check it.\n", initDisplayPath(dir), err)
-		return 4
+		return commandFail(stderr, 4, "review", fmt.Sprintf("the setup in %s cannot be used (%s). Nothing was sent.", initDisplayPath(dir), err), "trestle init")
 	}
 	if !sameCheckout(repo.templateCheckout, checkout) {
-		fmt.Fprintf(stderr, "trestle review: the setup in %s is for %s, not this repository. Run trestle review there, or trestle init here.\n", initDisplayPath(dir), initDisplayPath(repo.templateCheckout))
-		return 2
+		return commandFail(stderr, 2, "review", fmt.Sprintf("the setup in %s is for %s, not this repository. Nothing was sent.", initDisplayPath(dir), initDisplayPath(repo.templateCheckout)), "cd "+updateShellLine([]string{repo.templateCheckout})+" && trestle review", "trestle init")
 	}
 	printer := latestReviewPrinter(ctx, stderr, checkout)
 	code, ran := reviewLatestChange(ctx, printer, repo, options, stdout, stderr)
@@ -480,10 +477,28 @@ func reviewLatestChange(ctx context.Context, w *initWizard, repo repositorySetup
 		return 2, false
 	}
 	w.say("  Running the review. This can take several minutes; press Ctrl-C to stop.")
+	// On a terminal a person reads the view, which starts with the verdict;
+	// --verbose and every other output keep the text document.
+	viewed := !options.verbose && latestReviewFormat(command) == "text" && initTerminal(stdout)
+	var document bytes.Buffer
+	out := stdout
+	if viewed {
+		out = &document
+	}
 	var outcome modelReviewOutcome
-	code = runLocalGitModelReviewObserved(ctx, command[3:], stdout, stderr, func(result modelReviewOutcome) { outcome = result })
+	code = runLocalGitModelReviewObserved(ctx, command[3:], out, stderr, func(result modelReviewOutcome) { outcome = result })
+	if viewed {
+		if outcome.view == nil {
+			_, _ = stdout.Write(document.Bytes())
+		} else {
+			outcome.view.render(newOutPrinter(ctx, stdout), code, localreview.RenderOptions{All: options.all})
+		}
+	}
 	if outcome.status != "" {
 		recordLastReview(ctx, repo.directory, lastReview{Status: outcome.status, Findings: outcome.findings, Base: source.base, Head: source.head})
+		if viewed && outcome.view != nil {
+			return code, true
+		}
 		if outcome.regressions > 0 {
 			w.say("  %s The repository's own tests show %d regression%s: tests that passed on base fail on head. The result lists them under check regressions.", w.bad, outcome.regressions, initPlural(outcome.regressions))
 		}
@@ -493,6 +508,16 @@ func reviewLatestChange(ctx context.Context, w *initWizard, repo repositorySetup
 		}
 	}
 	return code, true
+}
+
+// latestReviewFormat is the output format of a review command line.
+func latestReviewFormat(command []string) string {
+	for i := 3; i+1 < len(command); i++ {
+		if command[i] == "--format" {
+			return command[i+1]
+		}
+	}
+	return "json"
 }
 
 // latestOutcomeLine says what a finished review means, in the words the

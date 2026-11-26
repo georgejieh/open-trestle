@@ -132,24 +132,34 @@ func TestUsageNamesTheEverydayCommands(t *testing.T) {
 	writeUsage(&usage)
 	text := usage.String()
 	for _, want := range []string{
-		"usage: trestle init ",
-		"usage: trestle   (in a terminal: this repository's status and next actions)\n",
-		"usage: trestle review [--format text|json|sarif|markdown] [--all]",
-		"       trestle review <path>   (review a local fixture file)\n",
-		"usage: trestle keys [list]",
-		"       trestle keys set OPEN_TRESTLE_PROVIDER_NAME",
-		"       trestle keys remove OPEN_TRESTLE_PROVIDER_NAME",
-		"usage: trestle usage ",
-		"usage: trestle update [--check] [--yes]",
-		"usage: trestle local-git submit-review --objects-root PATH",
+		"  trestle init      Set up this repository, then review\n",
+		"  trestle           Status and next actions (in a terminal)\n",
+		"  review            Review the latest change or a fixture\n",
+		"  keys              See, save and remove API keys\n",
+		"  usage             Spending against each API key's limit\n",
+		"  update            Install a newer verified build\n",
+		"  local-git         The direct review for CI, and Git tools\n",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("usage lacks %q:\n%s", want, text)
 		}
 	}
-	for _, everyday := range []string{"trestle review [", "trestle update ["} {
-		if strings.Index(text, everyday) > strings.Index(text, "trestle validate-fixture") {
-			t.Fatalf("%s is not near the top of the usage text", everyday)
+	if strings.Index(text, "  review ") > strings.Index(text, "  validate-fixture ") {
+		t.Fatal("review is not near the top of the usage text")
+	}
+	// Each command's own help keeps every form and flag.
+	for command, want := range map[string][]string{
+		"review":    {"usage: trestle review [--format text|json|sarif|markdown] [--all]", "       trestle review <path>   (review a local fixture file)\n"},
+		"keys":      {"usage: trestle keys [list]", "       trestle keys set OPEN_TRESTLE_PROVIDER_NAME", "       trestle keys remove OPEN_TRESTLE_PROVIDER_NAME"},
+		"update":    {"usage: trestle update [--check] [--yes]"},
+		"local-git": {"usage: trestle local-git model-review ", "usage: trestle local-git submit-review --objects-root PATH"},
+	} {
+		var stdout, stderr bytes.Buffer
+		code := run([]string{command, "--help"}, &stdout, &stderr)
+		for _, line := range want {
+			if code != 0 || !strings.Contains(stdout.String(), line) {
+				t.Fatalf("trestle %s --help: exit=%d lacks %q:\n%s", command, code, line, stdout.String())
+			}
 		}
 	}
 }

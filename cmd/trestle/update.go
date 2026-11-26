@@ -190,7 +190,8 @@ func runUpdate(ctx context.Context, args []string, stdin io.Reader, stdout, stde
 	}
 	if !found {
 		if options.check {
-			fmt.Fprintf(stdout, "Open Trestle %s is up to date.\n", installed.Version)
+			checked := newOutPrinter(ctx, stdout)
+			checked.note(checked.ok, fmt.Sprintf("Open Trestle %s is up to date.", installed.Version))
 		} else {
 			w.say("  %s Open Trestle %s is up to date.", w.ok, installed.Version)
 		}
@@ -202,7 +203,12 @@ func runUpdate(ctx context.Context, args []string, stdin io.Reader, stdout, stde
 				return fail(1, "%s: %v.", candidate.release.Tag, err)
 			}
 		}
-		fmt.Fprintf(stdout, "Update available: %s (you have %s), %s. Install it with: trestle update\n", candidate.version, installed.Version, candidate.source())
+		if checked := newOutPrinter(ctx, stdout); checked.terminal {
+			checked.note(checked.wait, fmt.Sprintf("Update available: %s (you have %s), %s.", candidate.version, installed.Version, candidate.source()))
+			checked.next("trestle update")
+		} else {
+			fmt.Fprintf(stdout, "Update available: %s (you have %s), %s. Install it with: trestle update\n", candidate.version, installed.Version, candidate.source())
+		}
 		return updateExitAvailable
 	}
 	return installUpdate(ctx, w, client, ring, installed, candidate, options, stdin, stdout, stderr, fail)

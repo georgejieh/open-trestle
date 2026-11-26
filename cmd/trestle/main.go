@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -84,6 +85,16 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 		writeUsage(stdout)
 		return 0
 	}
+	if len(args) == 1 && (args[0] == "--version" || args[0] == "version") {
+		writeVersion(stdout)
+		return 0
+	}
+	if len(args) == 2 && (args[1] == "--help" || args[1] == "-h") {
+		if command, ok := trestleCommandNamed(args[0]); ok {
+			command.usage(stdout)
+			return 0
+		}
+	}
 	if len(args) > 0 && args[0] == "build-info" {
 		if len(args) != 1 {
 			fmt.Fprintln(stderr, "usage: trestle build-info")
@@ -158,6 +169,14 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 			return runCI(args[2], stdout, stderr)
 		case "--format=sarif":
 			return runSARIF(args[2], stdout, stderr)
+		}
+	}
+	// A first word that is no command gets a short refusal; a known command
+	// with the wrong arguments, and no arguments at all, get the overview.
+	if len(args) > 0 && args[0] != "help" {
+		if _, known := trestleCommandNamed(args[0]); !known {
+			writeUnknownCommand(stderr, args[0])
+			return 2
 		}
 	}
 	if len(args) != 2 {
@@ -238,53 +257,168 @@ func runReview(fixturePath string, stdout, stderr io.Writer) int {
 	return exitCode
 }
 
-// writeUsage prints every command's usage, grouped by who uses it. It is the
-// text of `trestle --help` on standard output and of a refused command line on
-// standard error. The first line stays a usage line: the packaged install's
-// smoke probe requires standard error to start with "usage: trestle ".
-func writeUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: trestle <command> [flags]")
-	fmt.Fprintln(w, "Open Trestle reviews a code change with models you choose. New here: run trestle init inside a Git repository.")
-	fmt.Fprintln(w, "Guides: docs/README.md · "+homeDocs)
+// trestleCommand is a top-level command: what it does, in a few words, and
+// its full usage.
+type trestleCommand struct {
+	name, what string
+	usage      func(io.Writer)
+}
 
-	writeUsageGroup(w, "Everyday")
-	fmt.Fprintln(w, "usage: trestle   (in a terminal: this repository's status and next actions)")
-	writeLatestReviewUsage(w)
-	writeUpdateUsage(w)
-	writeUsageUsage(w)
-	writeProfilesUsage(w)
+// trestleCommandGroups are the commands grouped by who uses them, as
+// `trestle --help` and docs/commands.md list them.
+var trestleCommandGroups = []struct {
+	name     string
+	commands []trestleCommand
+}{
+	{"Everyday", []trestleCommand{
+		{"review", "Review the latest change or a fixture", writeLatestReviewUsage},
+		{"update", "Install a newer verified build", writeUpdateUsage},
+		{"usage", "Spending against each API key's limit", writeUsageUsage},
+		{"profiles", "The specialist review profiles", writeProfilesUsage},
+	}},
+	{"Setup and keys", []trestleCommand{
+		{"init", "Guided setup and the first review", writeInitUsage},
+		{"keys", "See, save and remove API keys", writeKeysUsage},
+		{"checks", "Run the repository's tests in a sandbox", writeChecksUsage},
+	}},
+	{"Integrations", []trestleCommand{
+		{"local-git", "The direct review for CI, and Git tools", writeLocalGitUsage},
+		{"runs", "Submit, follow and cancel daemon runs", writeRunsUsage},
+		{"mcp", "Serve reviews to an MCP client", writeMCPUsage},
+		{"lsp", "Serve findings to an editor", writeLSPUsage},
+	}},
+	{"Operators", []trestleCommand{
+		{"setup", "Protected configuration and backups", writeSetupUsage},
+		{"config", "Validate and bind route configuration", writeConfigUsage},
+		{"admin", "The daemon's runtime status", writeAdminUsage},
+		{"index", "The repository index", writeIndexUsage},
+		{"profile", "Languages, tests and CI checks", writeProfileUsage},
+		{"version", "The version, in one line", func(w io.Writer) { fmt.Fprintln(w, "usage: trestle version   (or trestle --version)") }},
+		{"build-info", "The build's source identity, as JSON", func(w io.Writer) { fmt.Fprintln(w, "usage: trestle build-info") }},
+	}},
+	{"Evaluation", []trestleCommand{
+		{"evaluate", "Evaluate captured reviews", writeEvaluateUsage},
+		{"validate-fixture", "Check a review fixture file", func(w io.Writer) { fmt.Fprintln(w, "usage: trestle validate-fixture <path>") }},
+		{"ci", "Review a fixture file as JSON or SARIF", func(w io.Writer) {
+			fmt.Fprintln(w, "usage: trestle ci --format=json <path>")
+			fmt.Fprintln(w, "       trestle ci --format=sarif <path>")
+		}},
+	}},
+}
 
-	writeUsageGroup(w, "Setup and keys")
-	fmt.Fprintln(w, "usage: trestle init [--no-input] [answer flags]   (start here: guided setup and first review; see docs/getting-started.md)")
-	writeKeysUsage(w)
-	writeChecksUsage(w)
-
-	writeUsageGroup(w, "Integrations")
+func writeLocalGitUsage(w io.Writer) {
 	writeLocalGitModelReviewUsage(w)
-	writeRunsUsage(w)
-	writeMCPUsage(w)
-	writeLSPUsage(w)
 	writeLocalGitSubmitReviewUsage(w)
-
-	writeUsageGroup(w, "Operators")
-	writeSetupUsage(w)
-	writeConfigUsage(w)
-	writeAdminUsage(w)
 	writeLocalGitInspectUsage(w)
 	writeLocalGitChangeUsage(w)
 	writeLocalGitReviewUsage(w)
 	writeLocalGitRetainedMemoryInputUsage(w)
-	writeIndexUsage(w)
-	writeProfileUsage(w)
-	fmt.Fprintln(w, "usage: trestle build-info")
-
-	writeUsageGroup(w, "Evaluation")
-	writeEvaluateUsage(w)
-	fmt.Fprintln(w, "usage: trestle validate-fixture <path>")
-	fmt.Fprintln(w, "       trestle ci --format=json <path>")
-	fmt.Fprintln(w, "       trestle ci --format=sarif <path>")
 }
 
-func writeUsageGroup(w io.Writer, name string) {
-	fmt.Fprintf(w, "\n%s:\n", name)
+// trestleCommandNamed finds a top-level command.
+func trestleCommandNamed(name string) (trestleCommand, bool) {
+	for _, group := range trestleCommandGroups {
+		for _, command := range group.commands {
+			if command.name == name {
+				return command, true
+			}
+		}
+	}
+	return trestleCommand{}, false
+}
+
+// writeUsage is the overview of `trestle --help` on standard output and of a
+// bare `trestle` without a terminal on standard error. The first line stays a
+// usage line: the packaged install's smoke probe requires standard error to
+// start with "usage: trestle ".
+func writeUsage(w io.Writer) {
+	fmt.Fprintln(w, "usage: trestle <command> [flags]")
+	fmt.Fprintln(w, "Open Trestle reviews a code change with models you choose.")
+	fmt.Fprintln(w, "Guides: docs/README.md · "+homeDocs)
+	fmt.Fprintln(w, "\nStart here:")
+	fmt.Fprintln(w, "  trestle init      Set up this repository, then review")
+	fmt.Fprintln(w, "  trestle review    Review the latest committed change")
+	fmt.Fprintln(w, "  trestle           Status and next actions (in a terminal)")
+	for _, group := range trestleCommandGroups {
+		fmt.Fprintf(w, "\n%s:\n", group.name)
+		for _, command := range group.commands {
+			fmt.Fprintf(w, "  %-18s%s\n", command.name, command.what)
+		}
+	}
+	fmt.Fprintln(w, "\nRun trestle <command> --help for flags.")
+}
+
+// writeUnknownCommand refuses a first word that is no command, with the
+// nearest command name when one is close.
+func writeUnknownCommand(w io.Writer, name string) {
+	fmt.Fprintf(w, "trestle: %q is not a trestle command.\n", name)
+	if suggestion := nearestCommand(name); suggestion != "" {
+		fmt.Fprintf(w, "Did you mean: %s?\n", suggestion)
+	}
+	fmt.Fprintln(w, "Run trestle --help to see all commands.")
+}
+
+// nearestCommand is the closest command name within one edit for every three
+// characters of name (at least one), or "" when none is.
+func nearestCommand(name string) string {
+	best, bestDistance := "", max(1, len(name)/3)+1
+	for _, group := range trestleCommandGroups {
+		for _, command := range group.commands {
+			if distance := editDistance(strings.ToLower(name), command.name); distance < bestDistance {
+				best, bestDistance = command.name, distance
+			}
+		}
+	}
+	return best
+}
+
+// editDistance is the Levenshtein distance between a and b, in bytes.
+func editDistance(a, b string) int {
+	previous := make([]int, len(b)+1)
+	for j := range previous {
+		previous[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		current := make([]int, len(b)+1)
+		current[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			current[j] = min(previous[j]+1, current[j-1]+1, previous[j-1]+cost)
+		}
+		previous = current
+	}
+	return previous[len(b)]
+}
+
+// writeVersion prints the version in one line: the packaged install's version
+// when this is its trestle, a release archive's version when the build has
+// one, and the source revision when the build records it.
+func writeVersion(w io.Writer) {
+	revision := "no source revision recorded"
+	if value := buildinfo.Revision(); value != "" {
+		revision = "source revision " + initShort(value)
+	}
+	if installed, ok := updatePackageInstalled(); ok && runningInstalledTrestle() {
+		fmt.Fprintf(w, "Open Trestle %s (%s), the packaged Linux amd64 install\n", installed.Version, revision)
+		return
+	}
+	if version := updateArchiveVersion(); version != "" {
+		fmt.Fprintf(w, "Open Trestle %s (%s)\n", version, revision)
+		return
+	}
+	fmt.Fprintf(w, "Open Trestle development build (%s)\n", revision)
+}
+
+// runningInstalledTrestle reports whether this program is the packaged
+// install's trestle.
+func runningInstalledTrestle() bool {
+	executable, err := os.Executable()
+	if err != nil {
+		return false
+	}
+	resolved, err := filepath.EvalSymlinks(executable)
+	return err == nil && sameCheckout(resolved, updateTrestlePath)
 }

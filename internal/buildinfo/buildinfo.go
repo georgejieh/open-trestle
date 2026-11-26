@@ -49,6 +49,15 @@ func Version() string {
 	return version
 }
 
+// Revision is the embedded source revision, or "" when the build is not bound
+// to its source.
+func Revision() string {
+	if !validObjectID(sourceRevision) {
+		return ""
+	}
+	return sourceRevision
+}
+
 // Write emits build identity, not publisher authenticity or release approval.
 func Write(output io.Writer, program string) error {
 	bound := sourceRevision != "" || sourceTree != ""

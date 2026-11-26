@@ -187,7 +187,7 @@ func TestReviewExplainsWhatIsMissingBeforeSendingAnything(t *testing.T) {
 		checkout := latestChangeCheckout(t)
 		t.Setenv("HOME", t.TempDir())
 		code, stdout, stderr := runReviewCommand(t, checkout)
-		if code != 3 || stdout != "" || !strings.Contains(stderr, "no Open Trestle setup yet") || !strings.Contains(stderr, "Run trestle init here first") {
+		if code != 3 || stdout != "" || !strings.Contains(stderr, "no Open Trestle setup yet") || !strings.Contains(stderr, "Nothing was sent.\n  -> trestle init\n") {
 			t.Fatalf("exit=%d\n%s", code, stderr)
 		}
 	})

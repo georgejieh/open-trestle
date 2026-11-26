@@ -102,6 +102,19 @@ API keys (the environment first, then the keys saved in ~/.config/open-trestle/c
 Change one: trestle keys set NAME · delete a saved one: trestle keys remove NAME
 ```
 
+That is the text without a terminal, for scripts. On a terminal each variable
+is a row with a mark (`✓` a key is found, `✗` none), and the commands follow:
+
+```text
+API keys
+  The environment first, then the keys saved in
+  ~/.config/open-trestle/credentials.
+  ✗ OPEN_TRESTLE_PROVIDER_OPENCODE_GO  not set
+  ✓ OPEN_TRESTLE_PROVIDER_OPENROUTER   saved · ends in …a41e
+  -> trestle keys set NAME
+  -> trestle keys remove NAME
+```
+
 Hidden input shows nothing while you type or paste. After Enter it shows the
 key's length and last four characters, and asks again when the same text was
 pasted twice.

@@ -281,6 +281,8 @@ type modelReviewOutcome struct {
 	// regressions counts the tests the repository's own checks proved
 	// broken.
 	regressions int
+	// view is the result as a person reads it on a terminal.
+	view *reviewView
 	// unfinished names each reviewer of a set that ran but did not finish,
 	// with its failure.
 	unfinished []string
@@ -295,7 +297,7 @@ func observeModelResult(observe func(modelReviewOutcome), result localreview.Res
 		return
 	}
 	if report, err := result.Report(); err == nil {
-		outcome := modelReviewOutcome{status: report.Status, findings: len(report.Findings), advisory: report.Status == "findings" && report.CIDisposition == "inconclusive"}
+		outcome := modelReviewOutcome{status: report.Status, findings: len(report.Findings), advisory: report.Status == "findings" && report.CIDisposition == "inconclusive", view: singleReviewView(report)}
 		if report.CheckRegressions != nil {
 			outcome.regressions = report.CheckRegressions.Count
 		}
