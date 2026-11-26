@@ -165,6 +165,24 @@ Spending recorded by Open Trestle (usage folder ~/.local/state/open-trestle/usag
 Spending figures are Open Trestle's upper-bound estimate at the highest pinned price, not a bill; the limit is best effort, and your provider's own limit is the guarantee.
 ```
 
+That is the text without a terminal, for scripts. On a terminal each key is a
+row whose mark and color follow its percentage of the limit: `✓` (dim below
+50%), `…` in amber from the first alert percentage, and `✗` in red at 100% or
+more. A key without a limit has `–`:
+
+```text
+Spending recorded by Open Trestle
+  Usage folder ~/.local/state/open-trestle/usage.
+  ✓ OPEN_TRESTLE_PROVIDER_OPENROUTER (openrouter)
+    $0.60 of your $10.00 monthly limit this month (6%),
+    alerts at 80% and 100%
+    OpenRouter reports $0.08 used this month of this key's
+    $50.00 monthly limit.
+  Spending figures are Open Trestle's upper-bound estimate
+  at the highest pinned price, not a bill; the limit is best
+  effort, and your provider's own limit is the guarantee.
+```
+
 A review whose usage was not reported is noted as counted at its reservation.
 Running `trestle init` again in a configured repository shows the same state.
 

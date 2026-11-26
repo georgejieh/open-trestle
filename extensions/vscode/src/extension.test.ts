@@ -157,12 +157,13 @@ describe("review command", () => {
   it("keeps the findings and shows the last line when there is no result", async () => {
     await review("", [
       "looking",
-      "trestle review: Run trestle init here first.",
+      "trestle review: this repository has no Open Trestle setup yet. Nothing was sent.",
+      "  -> trestle init",
     ]);
     expect(h.collection.clear).not.toHaveBeenCalled();
     expect(h.collection.set).not.toHaveBeenCalled();
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      "trestle review: Run trestle init here first.",
+      "trestle review: this repository has no Open Trestle setup yet. Nothing was sent.",
       "Show Output",
       "Set Up Repository",
     );

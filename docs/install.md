@@ -89,7 +89,7 @@ keys and usage records stay where they are; see
 ## Check the install
 
 ```sh
-trestle build-info
+trestle --version
 trestle --help
 ```
 

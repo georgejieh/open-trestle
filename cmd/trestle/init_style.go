@@ -45,7 +45,8 @@ const (
 type initTone int
 
 const (
-	initToneHeading initTone = iota // cobalt, bold: titles and the active step
+	initToneBody    initTone = iota // the terminal's own color
+	initToneHeading                 // cobalt, bold: titles and the active step
 	initTonePrompt                  // cobalt: questions
 	initToneRule                    // slate: rules, frames and the mark
 	initToneSuccess                 // lichen: ✓
@@ -96,12 +97,13 @@ func newInitStyle(out io.Writer, noInput bool) initStyle {
 
 // paint wraps text in the tone's color, or returns it unchanged without color.
 func (s initStyle) paint(tone initTone, text string) string {
-	if s.palette == initPlain || text == "" {
+	codes, colored := initToneCodes[tone]
+	if s.palette == initPlain || text == "" || !colored {
 		return text
 	}
-	code := initToneCodes[tone][1]
+	code := codes[1]
 	if s.palette == initColorTrue {
-		code = initToneCodes[tone][0]
+		code = codes[0]
 	}
 	return "\x1b[" + code + "m" + text + "\x1b[0m"
 }
