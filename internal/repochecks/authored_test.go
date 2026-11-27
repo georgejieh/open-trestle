@@ -190,8 +190,8 @@ func TestEndToEndModelWrittenGoCheck(t *testing.T) {
 		Checks: []Authored{{Framework: "go_test", Dir: "calc", Content: goCheck}},
 	})
 	result := report.Results[0]
-	if strings.Contains(result.Reason, "not installed on this machine") {
-		t.Skip(result.Reason)
+	if cannotRunHere(result.Reason) {
+		t.Skipf("the check could not run here: %s", result.Reason)
 	}
 	if result.Status != AuthoredRegression || !slices.Equal(result.Tests, []string{"example.com/calc/calc.TestTrestleAdd"}) {
 		t.Fatalf("result %+v", result)

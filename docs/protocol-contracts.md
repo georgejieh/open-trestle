@@ -91,7 +91,7 @@ The `run` member of the API response v1 envelope is the canonical receipt v1, v2
 
 The run-progress response v1 is a separate read-only HTTP envelope with exactly `contract`, `schema_version`, `request_id`, `run` and `progress`. It references the canonical receipt v1, v2 or v3. Its four axes are `change`, `deterministic`, `context` and `verification`. Each axis has a bounded state, an optional immutable artifact identity and only its declared count fields.
 
-The schema inventory contains 110 documents. The native client also validates the scope, the completed-task binding, the output identities other than context, the count equations and the checked-versus-applicable bounds. Schema validation cannot establish artifact lineage or consistency with the receipt head.
+The schema inventory contains 111 documents. The native client also validates the scope, the completed-task binding, the output identities other than context, the count equations and the checked-versus-applicable bounds. Schema validation cannot establish artifact lineage or consistency with the receipt head.
 
 The delivery-refusal response v1 is another read-only envelope, with exactly `contract`, `schema_version`, `request_id` and `refusal`. The `refusal` member is the canonical `open-trestle/webhook-delivery-refusal` v1 record. It describes an accepted webhook delivery that intake refused instead of opening its run. It holds the tenant, repository, source, deduplication key, delivery and planner identities, the reason token and the refusal time. It carries no delivery content. Errors use the api-response envelope.
 

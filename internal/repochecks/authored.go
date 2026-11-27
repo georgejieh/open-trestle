@@ -115,11 +115,23 @@ func runAuthoredWith(ctx context.Context, input AuthoredInput, machine host) Aut
 		base, _, baseProblem := runSide(ctx, run, spec, check, trees, trees.base)
 		head, _, headProblem := runSide(ctx, run, spec, check, trees, trees.head)
 		if result.Status, result.Tests = classifyAuthored(base, head, baseProblem, headProblem); result.Status == "" {
-			result.Reason = "it did not show a regression"
+			result.Reason = discardReason(baseProblem, headProblem)
 		}
 		report.Results = append(report.Results, result)
 	}
 	return report
+}
+
+// discardReason says why a check was not kept: the problem that stopped a
+// run, or that its runs showed no regression.
+func discardReason(baseProblem, headProblem *problem) string {
+	switch {
+	case headProblem != nil:
+		return headProblem.reason("head")
+	case baseProblem != nil && !baseProblem.noResults:
+		return baseProblem.reason("base")
+	}
+	return "it did not show a regression"
 }
 
 // classifyAuthored keeps a check whose head runs both failed the same tests:
