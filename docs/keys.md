@@ -103,14 +103,16 @@ Change one: trestle keys set NAME · delete a saved one: trestle keys remove NAM
 ```
 
 That is the text without a terminal, for scripts. On a terminal each variable
-is a row with a mark (`✓` a key is found, `✗` none), and the commands follow:
+is a row with a mark (`✓` a key is found, `✗` none) and its state beneath, and the commands follow:
 
 ```text
 API keys
   The environment first, then the keys saved in
   ~/.config/open-trestle/credentials.
-  ✗ OPEN_TRESTLE_PROVIDER_OPENCODE_GO  not set
-  ✓ OPEN_TRESTLE_PROVIDER_OPENROUTER   saved · ends in …a41e
+  ✗ OPEN_TRESTLE_PROVIDER_OPENCODE_GO
+    not set
+  ✓ OPEN_TRESTLE_PROVIDER_OPENROUTER
+    saved · ends in …a41e
   -> trestle keys set NAME
   -> trestle keys remove NAME
 ```

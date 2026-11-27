@@ -127,7 +127,7 @@ func TestCommandOutputOnATerminal(t *testing.T) {
 	}{
 		{"colors", "xterm-256color", false, []string{
 			"\x1b[1;38;5;25mAPI keys\x1b[0m\n",
-			"  \x1b[38;5;65m✓\x1b[0m OPEN_TRESTLE_PROVIDER_REMOTE_TEST  from the environment\n",
+			"  \x1b[38;5;65m✓\x1b[0m OPEN_TRESTLE_PROVIDER_REMOTE_TEST\n    from the environment · ",
 			"\x1b[2m  -> trestle keys set NAME\x1b[0m\n",
 			"  \x1b[38;5;94m…\x1b[0m OPEN_TRESTLE_PROVIDER_OPENROUTER (openrouter)\n",
 			"\x1b[38;5;94m    $9.00 of your $10.00 monthly limit this month (90%),\x1b[0m\n",
@@ -135,13 +135,13 @@ func TestCommandOutputOnATerminal(t *testing.T) {
 		}},
 		{"NO_COLOR", "xterm-256color", true, []string{
 			"API keys\n",
-			"  ✓ OPEN_TRESTLE_PROVIDER_REMOTE_TEST  from the environment\n",
+			"  ✓ OPEN_TRESTLE_PROVIDER_REMOTE_TEST\n    from the environment · ",
 			"  -> trestle keys remove NAME\n",
 			"  … OPEN_TRESTLE_PROVIDER_OPENROUTER (openrouter)\n",
 			"    $9.00 of your $10.00 monthly limit this month (90%),\n",
 		}},
 		{"TERM=dumb", "dumb", false, []string{
-			"  [ok] OPEN_TRESTLE_PROVIDER_REMOTE_TEST  from the\n",
+			"  [ok] OPEN_TRESTLE_PROVIDER_REMOTE_TEST\n    from the environment · ",
 			"  [..] OPEN_TRESTLE_PROVIDER_OPENROUTER (openrouter)\n",
 			"  [--] OPEN_TRESTLE_PROVIDER_REMOTE_TEST (ollama-cloud)\n",
 		}},

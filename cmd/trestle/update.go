@@ -309,17 +309,31 @@ func installUpdate(ctx context.Context, w *initWizard, client update.Client, rin
 			fmt.Fprintf(stderr, "trestle update: the temporary folder %s could not be removed; delete it yourself.\n", workspace.Dir())
 		}
 	}()
+	// On a terminal a spinner with the elapsed time stands in for the plain
+	// line, and stops before anything else is written.
+	progress := reviewProgressOf(ctx)
+	if progress == nil {
+		progress = startReviewProgress(stderr)
+		defer progress.stop()
+	}
 	var prepared update.Prepared
 	if candidate.kind == "release" {
-		w.say("  %s Downloading %s and checking it.", w.wait, updateSize(candidate.release.Archive.Size))
+		downloading := "Downloading " + updateSize(candidate.release.Archive.Size) + " and checking it"
+		if progress != nil && progress.live {
+			progress.begin(downloading, true)
+		} else {
+			w.say("  %s %s.", w.wait, downloading)
+		}
 		prepared, err = update.PrepareRelease(ctx, client, ring, candidate.release, workspace, updateArchiveTimeout)
 	} else {
 		prepared, err = update.PrepareLocal(candidate.build, ring, workspace)
 	}
 	if err != nil {
+		progress.stop()
 		w.say("  %s %s. Nothing was installed.", w.bad, updateSentence(err))
 		return 1
 	}
+	progress.end()
 	copied := prepared.Copy
 	if copied.Version.Compare(candidate.version) != 0 || copied.Version.Compare(installed.Version) <= 0 {
 		w.say("  %s Refused: the copy is version %s, not the %s that was shown. Nothing was installed.", w.bad, copied.Version, candidate.version)
@@ -330,10 +344,13 @@ func installUpdate(ctx context.Context, w *initWizard, client update.Client, rin
 		w.say("  %s %s. Nothing was installed.", w.bad, updateSentence(err))
 		return 1
 	}
+	progress.begin("Running the archive's own verify-archive", true)
 	if err := updateVerifyArchive(ctx, copied.Archive); err != nil {
+		progress.stop()
 		w.say("  %s Refused: the archive's own verify-archive failed (%v). Nothing was installed.", w.bad, err)
 		return 1
 	}
+	progress.end()
 	switch {
 	case prepared.Signed:
 		w.say("  %s Verified the copy: signed with release key %s, with the signed SHA-256 and size, and its own verify-archive passed.", w.ok, prepared.Key.ID)

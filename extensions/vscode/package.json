@@ -24,7 +24,8 @@
   "activationEvents": [
     "onCommand:openTrestle.reviewBranch",
     "onCommand:openTrestle.clearFindings",
-    "onCommand:openTrestle.setUp"
+    "onCommand:openTrestle.setUp",
+    "onCommand:openTrestle.checkSetup"
   ],
   "contributes": {
     "commands": [
@@ -41,6 +42,11 @@
       {
         "command": "openTrestle.setUp",
         "title": "Set Up Repository",
+        "category": "Open Trestle"
+      },
+      {
+        "command": "openTrestle.checkSetup",
+        "title": "Check Setup",
         "category": "Open Trestle"
       }
     ],

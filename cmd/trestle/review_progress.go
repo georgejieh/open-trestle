@@ -47,6 +47,11 @@ type reviewProgress struct {
 	total, done int
 	concurrent  bool
 
+	// started is when the first stage began; completed is set once the last
+	// stage starts, so stop closes a finished run with its total time.
+	started   time.Time
+	completed bool
+
 	frame   int
 	drawn   bool
 	stopped bool
@@ -122,8 +127,9 @@ func (p *reviewProgress) run() {
 	}
 }
 
-// stop clears the line and ends the ticker. It is safe to call more than
-// once; later calls to the other methods do nothing.
+// stop clears the line, writes the total time of a finished review and ends
+// the ticker. It is safe to call more than once; later calls to the other
+// methods do nothing.
 func (p *reviewProgress) stop() {
 	if p == nil {
 		return
@@ -135,6 +141,9 @@ func (p *reviewProgress) stop() {
 	}
 	p.stopped, p.label = true, ""
 	p.clearLocked()
+	if p.completed {
+		fmt.Fprintf(p.out, "Review took %s.\n", progressElapsed(p.now().Sub(p.started)))
+	}
 	p.mu.Unlock()
 	if p.quit != nil {
 		close(p.quit)
@@ -172,6 +181,9 @@ func (p *reviewProgress) beginLocked(label string, announced bool) {
 	}
 	p.endLocked()
 	p.label, p.since = label, p.now()
+	if p.started.IsZero() {
+		p.started = p.since
+	}
 	if !p.live {
 		if !announced {
 			fmt.Fprintln(p.out, p.textLocked())
@@ -350,6 +362,7 @@ func (p *reviewProgress) finish() {
 	defer p.mu.Unlock()
 	p.endLocked()
 	p.name, p.total = "", 0
+	p.completed = true
 	p.beginLocked("Finishing", false)
 }
 

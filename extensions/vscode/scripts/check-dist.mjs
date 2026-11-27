@@ -23,7 +23,7 @@ const commands = (manifest.contributes?.commands ?? [])
   .join(",");
 if (
   commands !==
-  "openTrestle.clearFindings,openTrestle.reviewBranch,openTrestle.setUp"
+  "openTrestle.checkSetup,openTrestle.clearFindings,openTrestle.reviewBranch,openTrestle.setUp"
 )
   throw new Error(`unexpected commands: ${commands}`);
 if (Object.keys(manifest.dependencies ?? {}).length !== 0)
