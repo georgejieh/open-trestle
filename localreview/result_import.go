@@ -97,7 +97,7 @@ func parseCompletedResult(encoded []byte, observe bool) (Result, error) {
 	if err != nil || head.Identity() != wire.Head {
 		return Result{}, ErrInvalidResult
 	}
-	status, ci := localReadinessDisposition(uint32(set.VerifiedCount()), set.SourceOmittedCount(), uint32(set.InconclusiveCount()), uint32(set.CandidateCount()))
+	status, ci := localReadinessDisposition(uint32(set.VerifiedCount()), set.SourceOmittedCount(), uint32(set.InconclusiveCount()))
 	// The CI disposition must be the one the recorded findings re-derive: the
 	// readiness disposition, or inconclusive for a version 6 result whose
 	// verified findings are all low severity (expectedImportedCI). Any other
