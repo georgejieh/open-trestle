@@ -514,8 +514,9 @@ each review's status, and the list of limitations.
   so. A review is `ci: blocked`
   (exit `4`) only when it has a medium, high or critical finding that the
   change introduced or whose origin is unproven.
-- `no_candidates`: Nothing was found and confirmed. This does not mean the
-  change is correct.
+- `no_candidates`: Nothing was found and confirmed: the finder proposed
+  nothing, or the checker rejected everything it proposed. This does not mean
+  the change is correct.
 - `incomplete`: Part of the change was not covered. See the coverage and
   omission lines.
 - `refused`, `failed` or `canceled`: There is no usable result, and the wizard

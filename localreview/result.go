@@ -822,7 +822,7 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 		if state.Status() != controlplane.ReviewRunSucceeded {
 			return Result{}, ErrInvalidResult
 		}
-		w.Status, w.CI = localReadinessDisposition(uint32(set.VerifiedCount()), set.SourceOmittedCount(), uint32(set.InconclusiveCount()), uint32(set.CandidateCount()))
+		w.Status, w.CI = localReadinessDisposition(uint32(set.VerifiedCount()), set.SourceOmittedCount(), uint32(set.InconclusiveCount()))
 		// A direct run anchors findings to the changed declarations of its
 		// semantic-impact profile, and the profile decides whether a finding
 		// on unchanged lines can be pre-existing; an investigation run has no
@@ -883,17 +883,19 @@ func (s *Session) FailureResult() Result {
 	result.wire.Limitations = append(result.wire.Limitations, "execution_state_unavailable", "unknown_final_usage")
 	return result
 }
-func localReadinessDisposition(verified, omitted, inconclusive, candidates uint32) (string, string) {
-	if verified > 0 {
+
+// localReadinessDisposition is the status and CI disposition of a completed
+// review. A review whose every candidate the checker rejected covered the
+// change as fully as one with no candidate, so both are no_candidates;
+// incomplete is for omitted source and inconclusive verdicts.
+func localReadinessDisposition(verified, omitted, inconclusive uint32) (string, string) {
+	switch {
+	case verified > 0:
 		return "findings", "blocked"
-	}
-	if omitted > 0 || inconclusive > 0 {
+	case omitted > 0 || inconclusive > 0:
 		return "incomplete", "inconclusive"
 	}
-	if candidates == 0 {
-		return "no_candidates", "inconclusive"
-	}
-	return "incomplete", "inconclusive"
+	return "no_candidates", "inconclusive"
 }
 
 func (r Result) CIDisposition() string {

@@ -271,7 +271,7 @@ Route planning counts the same `response_format` bytes, which are deterministic 
 
 Such an authorizer binds `input_transport: local_structured_output` into its identity, and such an investigation binds the transports of its roles into the route owner and pipeline profile identities. The estimate is conservative byte accounting, not exact tokenization, so set a justified reservation that fits the approved context capacity of the route. No budget is increased after authorization.
 
-The command does not assume that a server supports these schema keywords. A request that the server does not support fails through the existing transport and response checks, with no simplified schema, retry or fallback. The checks on candidate coverage, evidence, usage, tool calls and authorization are unchanged.
+The command does not assume that a server supports these schema keywords. When a server rejects a request that carries the schema (HTTP 400 or 422), the command sends the request once more without `response_format`. It does not simplify the schema. The checks on candidate coverage, evidence, usage, tool calls and authorization are unchanged.
 
 ## Local Responses configuration bootstrap
 
@@ -396,7 +396,7 @@ The status and CI disposition of the set follow from the members:
 | Otherwise a member did not complete, no such finding | most serious member status | `failed` gives `error`, `refused` gives `blocked`, otherwise `inconclusive` | 1, 4 or 3 |
 | Every member completed, an introduced medium, high or critical merged finding | `findings` | `blocked` | 4 |
 | Every member completed, every merged finding low severity or [pre-existing](#pre-existing-findings) | `findings` | `inconclusive` | 3 |
-| Every member completed with no candidates | `no_candidates` | `inconclusive` | 3 |
+| Every member completed with no candidates, or with every candidate rejected | `no_candidates` | `inconclusive` | 3 |
 | Every member completed, otherwise | `incomplete` | `inconclusive` | 3 |
 
 An incomplete set never demotes the verified high or critical finding of a completed member. A set with a failed specialist keeps `complete: false` and lists that member's failure, and `trestle review` names it on standard error (`Not finished: backend (failed: internal (task verification): model_output_invalid)`). A check regression makes any set `blocked` without changing its status.

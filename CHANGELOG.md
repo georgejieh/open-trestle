@@ -28,6 +28,11 @@ All notable changes to released versions of Open Trestle will be documented in t
 
 - `trestle init` also looks for a llama.cpp server on port 9931, the server's current default, as
   well as on 8080.
+- A review is no longer refused with `provider_request_rejected` when the checker model accepts
+  structured output but not the review's output schema. A request rejected with HTTP 400 or 422
+  is sent once more without `response_format`.
+- A review in which the checker rejected every proposed problem now ends as `no_candidates`
+  instead of `incomplete`. `incomplete` remains for omitted source and inconclusive verdicts.
 - A specialist review no longer lists one defect once per reviewer. Findings at one place that
   different reviewers worded differently now merge, and the other wordings stay listed under
   `also reported as:`. See

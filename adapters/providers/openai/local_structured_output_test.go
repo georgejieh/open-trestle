@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	modelhandler "github.com/georgejieh/open-trestle/handlers/model"
 	"github.com/georgejieh/open-trestle/internal/provider"
 	"github.com/georgejieh/open-trestle/internal/review"
 )
@@ -230,6 +231,50 @@ func TestLocalStructuredOutputFalsePreservesLocalIdentityPreimages(t *testing.T)
 		digest = sha256.Sum256(wrapper)
 		if enabled.ConfigurationIdentity() != hex.EncodeToString(digest[:]) {
 			t.Fatal("true identity wrapper differs")
+		}
+	}
+}
+
+type schemaRefusingTransport struct{ bodies [][]byte }
+
+func (r *schemaRefusingTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	body, _ := io.ReadAll(request.Body)
+	r.bodies = append(r.bodies, body)
+	return &http.Response{StatusCode: http.StatusBadRequest, Body: io.NopCloser(strings.NewReader(`{"error":"schema"}`)), Header: http.Header{}}, nil
+}
+
+// A server that rejects the request with the output schema is asked once
+// more without it, and a request that never carried a schema is not resent.
+func TestRejectedStructuredRequestIsSentOnceMoreWithoutTheSchema(t *testing.T) {
+	for _, structured := range []bool{true, false} {
+		config := localStructuredConfig(t)
+		config.LocalStructuredOutput = structured
+		transport := &schemaRefusingTransport{}
+		config.HTTPClient = &http.Client{Transport: transport}
+		config.HTTPClientIdentity = strings.Repeat("b", 64)
+		a, err := New(config)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request := testModelRequest(t)
+		declared, err := provider.NewModelCostBudget(1, 100, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		budget, err := review.ModelRequestBudgetForTransport(request, declared, review.ModelRequestTransportLocalStructuredOutput)
+		if err != nil {
+			t.Fatal(err)
+		}
+		result := a.executeWithDispatchProof(context.Background(), testRoute(t, "model", ""), 100, request, "", modelhandler.SanitizedDispatchProof{}, budget)
+		if result.Failure() != gateway.RouteFailureRequestRejected || result.ReplaySafety() != gateway.RouteReplayNoSideEffect {
+			t.Fatalf("structured=%v: failure %v", structured, result.Failure())
+		}
+		want := 1
+		if structured {
+			want = 2
+		}
+		if len(transport.bodies) != want || bytes.Contains(transport.bodies[0], []byte(`"response_format"`)) != structured || bytes.Contains(transport.bodies[want-1], []byte(`"response_format"`)) != (structured && want == 1) {
+			t.Fatalf("structured=%v: %d requests", structured, len(transport.bodies))
 		}
 	}
 }

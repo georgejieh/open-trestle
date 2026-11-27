@@ -574,31 +574,50 @@ func (a *Adapter) executeWithDispatchProof(
 		requestContext, cancel = context.WithTimeout(ctx, DefaultClientRequestTimeout(maxOutputTokens))
 		defer cancel()
 	}
-	request, err := a.newRequest(requestContext, credentials, modelSelector(route), maxOutputTokens, instructions, payload, structured)
-	if err != nil {
-		return failed(gateway.RouteFailureInvalidResponse, gateway.RouteReplayNotDispatched, 0)
-	}
-	if !a.serviceProfileMatches(route) || a.requestProfile != "" && (!a.serviceProofMatches(proof, reviewScopeIdentity, providerRequest.Identity()) || receiptIdentity != proof.ReceiptIdentity()) {
-		return failed(gateway.RouteFailurePolicyDenied, gateway.RouteReplayNotDispatched, 0)
-	}
-	if a.requestProfile == RequestProfileOpenCodeConsoleChatV1 && a.setOpenCodeConsoleHeaders(request, proof, reviewScopeIdentity, providerRequest.Identity()) != nil {
-		return failed(gateway.RouteFailurePolicyDenied, gateway.RouteReplayNotDispatched, 0)
-	}
-	if a.requestProfile == RequestProfileOpenCodeGoChatV1 && a.setOpenCodeGoHeaders(request, proof, reviewScopeIdentity, providerRequest.Identity()) != nil {
-		return failed(gateway.RouteFailurePolicyDenied, gateway.RouteReplayNotDispatched, 0)
-	}
-	response, err := a.httpClient.Do(request)
-	if err != nil {
-		failure := gateway.RouteFailureTransport
-		if errors.Is(err, context.DeadlineExceeded) {
-			failure = gateway.RouteFailureTimeout
-		} else if ctx.Err() != nil {
-			failure = gateway.RouteFailureCancelled
+	// send builds and sends the request, with or without the output schema.
+	send := func(structured bool) (*http.Response, *gateway.RouteDispatchResult) {
+		stopped := func(failure gateway.RouteFailureClass, replay gateway.RouteReplaySafety) (*http.Response, *gateway.RouteDispatchResult) {
+			result := failed(failure, replay, 0)
+			return nil, &result
 		}
-		return failed(failure, gateway.RouteReplayOutcomeUnknown, 0)
+		request, err := a.newRequest(requestContext, credentials, modelSelector(route), maxOutputTokens, instructions, payload, structured)
+		if err != nil {
+			return stopped(gateway.RouteFailureInvalidResponse, gateway.RouteReplayNotDispatched)
+		}
+		if !a.serviceProfileMatches(route) || a.requestProfile != "" && (!a.serviceProofMatches(proof, reviewScopeIdentity, providerRequest.Identity()) || receiptIdentity != proof.ReceiptIdentity()) {
+			return stopped(gateway.RouteFailurePolicyDenied, gateway.RouteReplayNotDispatched)
+		}
+		if a.requestProfile == RequestProfileOpenCodeConsoleChatV1 && a.setOpenCodeConsoleHeaders(request, proof, reviewScopeIdentity, providerRequest.Identity()) != nil {
+			return stopped(gateway.RouteFailurePolicyDenied, gateway.RouteReplayNotDispatched)
+		}
+		if a.requestProfile == RequestProfileOpenCodeGoChatV1 && a.setOpenCodeGoHeaders(request, proof, reviewScopeIdentity, providerRequest.Identity()) != nil {
+			return stopped(gateway.RouteFailurePolicyDenied, gateway.RouteReplayNotDispatched)
+		}
+		response, err := a.httpClient.Do(request)
+		if err != nil {
+			failure := gateway.RouteFailureTransport
+			if errors.Is(err, context.DeadlineExceeded) {
+				failure = gateway.RouteFailureTimeout
+			} else if ctx.Err() != nil {
+				failure = gateway.RouteFailureCancelled
+			}
+			return stopped(failure, gateway.RouteReplayOutcomeUnknown)
+		}
+		if response == nil {
+			return stopped(gateway.RouteFailureTransport, gateway.RouteReplayOutcomeUnknown)
+		}
+		return response, nil
 	}
-	if response == nil {
-		return failed(gateway.RouteFailureTransport, gateway.RouteReplayOutcomeUnknown, 0)
+	response, stopped := send(structured)
+	// A model can accept structured output and still refuse this schema. A
+	// rejected request had no effect, so it is sent once more without the
+	// schema; the answer is validated the same way either way.
+	if stopped == nil && structured && (response.StatusCode == http.StatusBadRequest || response.StatusCode == http.StatusUnprocessableEntity) {
+		drainAndClose(response.Body)
+		response, stopped = send(false)
+	}
+	if stopped != nil {
+		return *stopped
 	}
 	if response.StatusCode != http.StatusOK {
 		return classifyHTTPFailure(response)
