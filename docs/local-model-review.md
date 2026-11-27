@@ -416,7 +416,7 @@ The status and CI disposition of the set follow the members:
 | Otherwise a member did not complete, no such finding | most serious member status | `failed` gives `error`, `refused` gives `blocked`, otherwise `inconclusive` | 1, 4 or 3 |
 | Every member completed, an introduced medium, high or critical merged finding | `findings` | `blocked` | 4 |
 | Every member completed, every merged finding low severity or [pre-existing](#pre-existing-findings) | `findings` | `inconclusive` | 3 |
-| Every member completed with no candidates | `no_candidates` | `inconclusive` | 3 |
+| Every member completed with no candidates, or with every candidate rejected | `no_candidates` | `inconclusive` | 3 |
 | Every member completed, otherwise | `incomplete` | `inconclusive` | 3 |
 
 An incomplete set never demotes the verified high or critical finding of a completed member. A set with a failed specialist keeps `complete: false`, lists that member's failure, and `trestle review` names it on stderr (`Not finished: backend (failed: internal (task verification): model_output_invalid)`). A check regression makes any set `blocked` and keeps its status.

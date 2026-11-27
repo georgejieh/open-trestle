@@ -541,8 +541,9 @@ Each part of the result means the following.
   by default, `0` with `--exit-code-policy findings`), and the closing line says
   so. Only a medium, high or critical finding that the change introduced, or whose
   origin is unproven, makes a review `ci: blocked` (exit `4`).
-- `no_candidates`: Nothing was found and confirmed. That does not mean the
-  change is correct.
+- `no_candidates`: Nothing was found and confirmed: the finder proposed
+  nothing, or the checker rejected everything it proposed. That does not mean
+  the change is correct.
 - `incomplete`: Part of the change was not covered. See the coverage and
   omission lines.
 - `refused`, `failed` or `canceled`: There is no usable result. The wizard says
