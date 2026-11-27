@@ -28,6 +28,8 @@ columns. Without a terminal they print the same plain text as before, for
 scripts. The marks and colors are listed in
 [terminal symbols and colors](#terminal-symbols-and-colors).
 
+`trestle keys` puts each variable name on its own row with its state indented beneath, so a long name never widens a column.
+
 `--flag=value` and `--flag value` both work, except for `profiles` and
 `local-git`, which take each flag and its value as two separate words. `init`, `review`, `update` and
 `usage` reject a flag that you give twice.
@@ -81,6 +83,8 @@ repository, it says so and exits `0`. Without a terminal on both sides, or with
 ### `trestle review`
 
 Reviews the latest committed change with the setup that `trestle init` made.
+
+On standard error it shows [progress](local-model-review.md#progress) and ends a finished review with `Reviewed in 2m 14s.`.
 
 | Flag | Meaning |
 | --- | --- |
@@ -136,6 +140,8 @@ checkout or without a usable setup.
 
 Installs a newer, verified build of the packaged Linux install. See
 [updates](updates.md).
+
+On a terminal the download and the archive check show a spinner with the elapsed time on standard error; without one the plain lines are printed.
 
 | Flag | Meaning |
 | --- | --- |

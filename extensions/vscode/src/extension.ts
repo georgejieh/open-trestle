@@ -169,18 +169,20 @@ async function reviewBranch() {
     busy = false;
   }
 }
-function setUp() {
+function inTerminal(name: string, args: string[]) {
   const chosen = target();
   if (!chosen) return;
   vscode.window
     .createTerminal({
-      name: "Open Trestle setup",
+      name,
       shellPath: chosen.executable,
-      shellArgs: ["init"],
+      shellArgs: args,
       cwd: chosen.folder.uri,
     })
     .show();
 }
+const setUp = () => inTerminal("Open Trestle setup", ["init"]);
+const checkSetup = () => inTerminal("Open Trestle check", ["doctor"]);
 export function activate(context: vscode.ExtensionContext) {
   output = vscode.window.createOutputChannel("Open Trestle");
   findings = vscode.languages.createDiagnosticCollection("open-trestle");
@@ -192,6 +194,7 @@ export function activate(context: vscode.ExtensionContext) {
       findings?.clear(),
     ),
     vscode.commands.registerCommand("openTrestle.setUp", setUp),
+    vscode.commands.registerCommand("openTrestle.checkSetup", checkSetup),
   );
 }
 export function deactivate() {

@@ -122,9 +122,10 @@ describe("review command", () => {
     h.scheme = "vscode-vfs";
     await h.commands.get("openTrestle.reviewBranch")!();
     await h.commands.get("openTrestle.setUp")!();
+    await h.commands.get("openTrestle.checkSetup")!();
     expect(startRun).not.toHaveBeenCalled();
     expect(vscode.window.createTerminal).not.toHaveBeenCalled();
-    expect(vscode.window.showErrorMessage).toHaveBeenCalledTimes(3);
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledTimes(4);
   });
   it("runs one review at a time", async () => {
     const first = h.commands.get("openTrestle.reviewBranch")!();
@@ -174,6 +175,15 @@ describe("review command", () => {
       name: "Open Trestle setup",
       shellPath: "trestle",
       shellArgs: ["init"],
+      cwd: { scheme: "file", fsPath: "/repo/sub" },
+    });
+  });
+  it("opens trestle doctor in a terminal without a shell string", async () => {
+    await h.commands.get("openTrestle.checkSetup")!();
+    expect(vscode.window.createTerminal).toHaveBeenCalledWith({
+      name: "Open Trestle check",
+      shellPath: "trestle",
+      shellArgs: ["doctor"],
       cwd: { scheme: "file", fsPath: "/repo/sub" },
     });
   });
