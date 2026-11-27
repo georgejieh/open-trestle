@@ -291,7 +291,7 @@ Route planning counts the same `response_format` bytes, which are deterministic 
 
 Such an authorizer binds `input_transport: local_structured_output` into its identity. Such an investigation binds the transports of its roles into the route owner and pipeline profile identities. This estimate is conservative byte accounting, not exact tokenization. Set a justified reservation that fits the approved context capacity of the route. No budget is increased after authorization.
 
-The command does not assume that a server supports these schema keywords. Requests that the server does not support fail through the existing transport and response checks, without a simplified schema, retry or fallback. The checks on candidate coverage, evidence, usage, tool calls and authorization stay unchanged.
+The command does not assume that a server supports these schema keywords. When a server rejects a request that carries the schema (HTTP 400 or 422), the command sends the request once more without `response_format`. It does not simplify the schema. The checks on candidate coverage, evidence, usage, tool calls and authorization stay unchanged.
 
 ## Local Responses configuration bootstrap
 
