@@ -623,6 +623,9 @@ func RenderResultMarkdown(writer io.Writer, r Result, options RenderOptions) err
 	if len(report.Ranked) > 0 || report.Status == "findings" {
 		buffer.WriteString(FindingsMarkdown(report.Ranked, options, nil))
 	}
+	if report.ModelWrittenChecks != nil {
+		buffer.WriteString("\n" + ModelWrittenChecksMarkdown(report.ModelWrittenChecks, FindingName(report.Findings)))
+	}
 	buffer.WriteString(MarkdownFooter)
 	if buffer.Len() > MaxResultTextBytes {
 		return ErrInvalidResult

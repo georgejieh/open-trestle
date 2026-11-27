@@ -50,8 +50,8 @@ func TestModelRequestsCarryReadableOutputContracts(t *testing.T) {
 		resultField    string
 	}{
 		{"candidate", generationRequest, "../../schemas/review/model-candidate-batch-v2.schema.json", ModelCandidateBatchSchemaIdentity, "candidates"},
-		{"durable verification", durableRequest, "../../schemas/review/model-verification-batch-v1.schema.json", ModelVerificationBatchSchemaIdentity, "verdicts"},
-		{"verification", verificationRequest, "../../schemas/review/model-verification-batch-v1.schema.json", ModelVerificationBatchSchemaIdentity, "verdicts"},
+		{"durable verification", durableRequest, "../../schemas/review/model-verification-batch-v2.schema.json", ModelVerificationBatchSchemaIdentity, "verdicts"},
+		{"verification", verificationRequest, "../../schemas/review/model-verification-batch-v2.schema.json", ModelVerificationBatchSchemaIdentity, "verdicts"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var wire map[string]json.RawMessage
@@ -273,7 +273,7 @@ func TestModelRequestContractVersionsAndTaskInstructions(t *testing.T) {
 	var instructions []string
 	for index, request := range []provider.Request{candidateRequest, verifierRequest} {
 		fields := modelContractFields(t, request.Payload())
-		if want := []string{"11", "10"}[index]; string(fields["schema_version"]) != want {
+		if want := []string{"11", "11"}[index]; string(fields["schema_version"]) != want {
 			t.Errorf("readable contract must have context schema version %s", want)
 		}
 		text, err := TrustedModelRequestInstructions(request.Payload())
@@ -333,7 +333,7 @@ func TestModelRequestValidatorsRejectRehashedContractChanges(t *testing.T) {
 		validate    func([]byte) error
 		otherSchema string
 	}{
-		{"candidate", request.Payload(), validateGeneration, "../../schemas/review/model-verification-batch-v1.schema.json"},
+		{"candidate", request.Payload(), validateGeneration, "../../schemas/review/model-verification-batch-v2.schema.json"},
 		{"verifier", verification.Payload(), validateVerification, "../../schemas/review/model-candidate-batch-v1.schema.json"},
 	} {
 		t.Run(target.name, func(t *testing.T) {

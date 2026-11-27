@@ -201,6 +201,9 @@ type Report struct {
 	// CheckRegressions are the tests the repository's own checks proved
 	// broken, or nil. They are not findings, and they block CI.
 	CheckRegressions *CheckRegressions
+	// ModelWrittenChecks are the checker's kept tests, or nil. They never
+	// change the status or the CI disposition.
+	ModelWrittenChecks *ModelWrittenChecks
 }
 
 // Report projects the result for an exporter such as SARIF. It fails for an
@@ -241,6 +244,7 @@ func (r Result) Report() (Report, error) {
 		report.Walkthrough = r.wire.Walkthrough.clone()
 	}
 	report.CheckRegressions = r.wire.CheckRegressions.clone()
+	report.ModelWrittenChecks = r.wire.ModelWrittenChecks.clone()
 	set := r.diagnostics
 	if set.Identity() != "" {
 		report.HeadRevision, report.DiagnosticSet = set.HeadRevision(), set.Identity()

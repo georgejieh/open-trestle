@@ -22,6 +22,8 @@ type reviewView struct {
 	selected    int
 	unfinished  []reviewViewMember
 	regressions *localreview.CheckRegressions
+	// modelChecks are the checker's kept tests, shown under their findings.
+	modelChecks *localreview.ModelWrittenChecks
 	finished    bool
 	walkthrough *localreview.Walkthrough
 	ranked      []localreview.MergedFinding
@@ -37,7 +39,7 @@ type reviewViewMember struct {
 }
 
 func singleReviewView(report localreview.Report) *reviewView {
-	view := &reviewView{status: report.Status, ci: report.CIDisposition, regressions: report.CheckRegressions, finished: report.RunStatus == "succeeded", walkthrough: report.Walkthrough, ranked: report.Ranked}
+	view := &reviewView{status: report.Status, ci: report.CIDisposition, regressions: report.CheckRegressions, modelChecks: report.ModelWrittenChecks, finished: report.RunStatus == "succeeded", walkthrough: report.Walkthrough, ranked: report.Ranked}
 	if !view.finished && report.Failure != "" {
 		view.failure, view.hint = localreview.FailureLine(report.Failure, report.FailureTask, report.FailureDetail), report.FailureHint
 	}
@@ -49,7 +51,7 @@ func singleReviewView(report localreview.Report) *reviewView {
 }
 
 func setReviewView(set modelReviewSetWire) *reviewView {
-	view := &reviewView{status: set.Status, ci: set.CI, selected: set.Summary.MembersSelected, regressions: set.CheckRegressions, finished: set.Complete, ranked: set.rankedGroups(), set: true}
+	view := &reviewView{status: set.Status, ci: set.CI, selected: set.Summary.MembersSelected, regressions: set.CheckRegressions, modelChecks: set.ModelWrittenChecks, finished: set.Complete, ranked: set.rankedGroups(), set: true}
 	if set.Walkthrough != nil {
 		view.walkthrough = &set.Walkthrough.Walkthrough
 	}
@@ -211,6 +213,16 @@ func (v *reviewView) renderFinding(p outPrinter, group localreview.MergedFinding
 	if finding.Fix != "" {
 		say("Fix: "+reviewViewText(finding.Fix), initToneBody)
 	}
+	if v.modelChecks != nil {
+		for _, check := range v.modelChecks.Kept {
+			named := func(contributor localreview.FindingContributor) bool {
+				return contributor.Identity == check.FindingIdentity
+			}
+			if finding.Identity == check.FindingIdentity || slices.ContainsFunc(group.Contributors, named) {
+				say("Test: "+reviewViewText(check.Path)+" shows it ("+modelCheckViewText[check.Status]+"; written by the checker, so it does not change CI)", initToneBody)
+			}
+		}
+	}
 	if group.UnprovenOrigin() {
 		say("Origin: unproven: on unchanged lines the change may affect, so it blocks like a new finding.", initToneDim)
 	}
@@ -247,4 +259,10 @@ func (v *reviewView) checked() []string {
 		parts = append(parts, fmt.Sprintf("%d source item%s left out", v.omitted, initPlural(int(v.omitted))))
 	}
 	return parts
+}
+
+// modelCheckViewText says briefly what a kept model-written check showed.
+var modelCheckViewText = map[string]string{
+	localreview.ModelCheckRegression:  "passes on base, fails on head",
+	localreview.ModelCheckFailsOnHead: "fails on head, does not build on base",
 }

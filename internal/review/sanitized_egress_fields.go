@@ -23,10 +23,10 @@ import (
 // numbers, so they add no scanned field. Each check_runs run name, reason,
 // regression ID, new-failure ID and stopped-running ID is repository text,
 // scanned as check_run_text; its source, authority, commit IDs, scope,
-// states and counts are host-derived.
+// states, counts and test_authoring are host-derived.
 const (
-	generationSanitizableWireShapeIdentity   = "83799952c5ceaf3cdf9949c4cd4b5c876f2f8efd8050795c1ea7683c0c7df9c8"
-	verificationSanitizableWireShapeIdentity = "e44e027d955433d371fa81cbc2ed5ac2178acb05ab387cb97b3f275f8794a22f"
+	generationSanitizableWireShapeIdentity   = "b7da330d404480c3f698216468ff53e37ab49a90a6cb4776cfaefc4e24b123a4"
+	verificationSanitizableWireShapeIdentity = "216289868521c39e16c256b2fe7322ed065fe006ec4ca853436256c87113fc6f"
 )
 
 func wireShapeIdentity(root reflect.Type) string {

@@ -249,7 +249,7 @@ func TestResponsesWireCarriesExactReadableReviewContracts(t *testing.T) {
 		schemaPath, identity string
 	}{
 		{"candidate", generationRequest, "../../../schemas/review/model-candidate-batch-v2.schema.json", review.ModelCandidateBatchSchemaIdentity},
-		{"verifier", verificationRequest, "../../../schemas/review/model-verification-batch-v1.schema.json", review.ModelVerificationBatchSchemaIdentity},
+		{"verifier", verificationRequest, "../../../schemas/review/model-verification-batch-v2.schema.json", review.ModelVerificationBatchSchemaIdentity},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			instructions, err := review.TrustedModelRequestInstructions(tc.request.Payload())

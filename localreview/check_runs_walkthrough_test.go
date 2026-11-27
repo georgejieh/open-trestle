@@ -43,7 +43,7 @@ func TestDirectReviewCarriesCheckRunsToTheModelsAndTheWalkthrough(t *testing.T) 
 		t.Fatal("the review sent no generation or verification request")
 	}
 	generation, verification := captures[0].Packet, verifications[0].Packet
-	if generation.Version != 11 || verification.Version != 10 || !bytes.Contains(generation.CheckRuns, []byte(`"source":"sandboxed_check_runs"`)) || !bytes.Equal(generation.CheckRuns, verification.CheckRuns) {
+	if generation.Version != 11 || verification.Version != 11 || !bytes.Contains(generation.CheckRuns, []byte(`"source":"sandboxed_check_runs"`)) || !bytes.Equal(generation.CheckRuns, verification.CheckRuns) {
 		t.Fatalf("check_runs: generation v%d %s, verification v%d %s", generation.Version, generation.CheckRuns, verification.Version, verification.CheckRuns)
 	}
 	walk := result.wire.Walkthrough

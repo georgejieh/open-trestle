@@ -397,6 +397,7 @@ The JSON output is `open-trestle/local-git-model-review-set` schema version 1. I
 - `members`: one entry per member (`general`, then the profile IDs) with its status, CI disposition, run status, failure, identities, usage and cost, verification counts, limitations and [`token_usage`](#token-usage).
 - `walkthrough`: the [walkthrough](#walkthrough) of the general member.
 - `check_regressions`: the [check regressions](#check-regressions) of the change, once for the set.
+- `model_written_checks`: the [model-written checks](#model-written-checks) of all members, once for the set.
 - `findings`: the merged verified findings in [rank order](#rank). Each has its `rank`, the location of the representative and every contributor with its own finding identity, severity and range. Only members whose run succeeded contribute. Merging uses the [duplicate rule](#duplicates), so findings that a person would merge can stay apart (`deduplication_is_heuristic`).
 - `summary`, `bounds`, `limitations` and `comprehensive_clearance: false`.
 - `style_recommendations` and related fields: the [style advice](#style-recommendations) of the general review, once for the set.
@@ -532,6 +533,16 @@ check regression: go test ./calc: example.com/calc.TestDivide
 ```
 
 When the model review did not finish, the result keeps its failure lines and adds `check regressions: the model review did not finish; these come from the repository's own tests alone`. `trestle review` also prints the count on standard error.
+
+### Model-written checks
+
+With `--model-checks`, the result lists the tests the checker wrote that the sandbox kept (see [model-written checks](repository-checks.md#model-written-checks)):
+
+```json
+"model_written_checks": {"source": "model_written_check", "kept": [{"finding_identity": "…", "status": "regression", "framework": "go_test", "path": "calc/trestle_check_1_test.go", "content": "package calc\n…", "tests": ["example.com/calc.TestTrestleDivide"]}], "discarded": 1}
+```
+
+`finding_identity` is the diagnostic finding the test demonstrates; in a review set it is the member's finding, as `contributors` name it. `status` is `regression` or `fails_on_head`, `tests` are the test IDs that failed on head, and `discarded` counts every other check the checker wrote. The block never changes `status`, `ci_disposition` or the exit code. Text and Markdown name the finding and the test's path and point to the JSON for the text; the terminal view shows one line per kept test under its finding. SARIF does not carry it.
 
 ### Review context
 

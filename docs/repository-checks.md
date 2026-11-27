@@ -45,6 +45,23 @@ Both models receive the outcomes as the `check_runs` object: each check's name, 
 
 The regressions do not depend on the models. The review reports each one as a [check regression](local-model-review.md#check-regressions) with source `repository_check`, naming the check and the test, in every output format, and the result is `blocked` (exit 4 unless `--exit-code-policy always-zero`). That holds when the models found nothing and when the model review failed; the output then says that the model review did not finish. New failing tests, new linter diagnostics and tests that stopped running stay hints for the models.
 
+## Model-written checks
+
+With `--model-checks`, the checker also writes a test for each of up to 3 verified findings, in the style of the repository's own tests, and the review keeps a test only when it shows the regression.
+
+```sh
+trestle review --model-checks
+trestle local-git model-review ... --repository-checks --model-checks
+```
+
+- It needs the repository checks: `trestle review --model-checks` refuses to send anything when they are off for the review, and `--model-checks` with `--no-checks`, or without `--repository-checks` on the direct command, is a usage error. It is not saved in the setup.
+- The checker is asked only for the frameworks whose checks ran on head: `go_test`, `pytest` and `unittest`. It returns a framework and the file text, never a path. An answer whose check is invalid, too large or extra keeps its verdict; the check is dropped and counted.
+- The host writes the file next to its finding, as `trestle_check_<n>_test.go` or `test_trestle_check_<n>.py`, into fresh base and head trees, and runs only that file's tests twice on each side in the same sandbox, within 5 minutes for all of them.
+- Before it runs, a file of at most 12 KiB is checked. A Go test must use the folder's package or its `_test` package and has no build constraints, `TestMain`, `init`, `//go:embed`, `//go:linkname` or cgo, and imports none of `os`, `os/exec`, `io/ioutil`, `io/fs`, `path/filepath`, `text/template`, `html/template`, `embed`, `go/...`, `runtime/...`, `debug/...`, `unsafe`, `syscall`, `plugin` or `net/...`. A Python test may not name `open`, `__file__`, `inspect`, `subprocess`, `os`, `socket`, `importlib`, `pathlib`, `pytest_plugins` or `conftest`.
+- A test that passes in both base runs and fails in both head runs is kept as `regression`. One that does not build on base but builds and fails in both head runs is kept as `fails_on_head`. Every other test is discarded and only counted.
+
+The result lists kept tests in `model_written_checks` (see [local model review](local-model-review.md#model-written-checks)). They never change the status, the CI disposition or the exit code, because the model wrote the test and so controls what it reports. Nothing is saved to your working tree.
+
 ## What the sandbox allows
 
 | | Linux | Windows |

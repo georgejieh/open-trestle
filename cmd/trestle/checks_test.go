@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -132,6 +133,43 @@ func TestModelReviewAcceptsRepositoryChecksOnce(t *testing.T) {
 	}
 	if _, _, _, _, err := parseLocalModelReview(append(args, "--investigation-policy", "/policy.json")); err == nil {
 		t.Fatal("repository checks were accepted for an investigation session")
+	}
+}
+
+// --model-checks needs the repository checks, on both commands.
+func TestModelChecksNeedRepositoryChecks(t *testing.T) {
+	args := newLocalModelFixture(t, localModelFixtureOptions{}).args[2:]
+	options, _, _, _, err := parseLocalModelReview(append(append([]string{}, args...), "--repository-checks", "--model-checks"))
+	if err != nil || !options.modelChecks || !options.repositoryChecks {
+		t.Fatalf("options %+v, err %v", options.modelChecks, err)
+	}
+	if _, _, _, _, err := parseLocalModelReview(append(append([]string{}, args...), "--model-checks")); !errors.Is(err, errModelChecksNeedChecks) {
+		t.Fatalf("--model-checks alone: %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+	if code := runLocalGitModelReview(context.Background(), append(append([]string{}, args...), "--model-checks"), &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "--model-checks needs the repository checks: pass --repository-checks too") {
+		t.Fatalf("code %d: %s", code, stderr.String())
+	}
+	stderr.Reset()
+	if _, code, done := parseLatestReviewFlags([]string{"--model-checks", "--no-checks"}, &stdout, &stderr); !done || code != 2 || !strings.Contains(stderr.String(), "--model-checks needs the repository checks") {
+		t.Fatalf("code %d done %v: %s", code, done, stderr.String())
+	}
+	if options, _, done := parseLatestReviewFlags([]string{"--model-checks", "--checks"}, &stdout, &stderr); done || !options.modelChecks {
+		t.Fatalf("--model-checks --checks refused: %s", stderr.String())
+	}
+	if command := latestReviewCommand([]string{"--format", "text"}, "a", "b", latestReviewOptions{modelChecks: true}); slices.Contains(command, "--model-checks") {
+		t.Fatal("the saved command took --model-checks before consent was decided")
+	}
+}
+
+// Without consent, trestle review --model-checks sends nothing.
+func TestReviewModelChecksWithoutConsentSendsNothing(t *testing.T) {
+	checkout := checksChangeCheckout(t)
+	latestChangeSetup(t, checkout)
+	transport := latestFixtureTransport(t)
+	code, _, stderr := runReviewCommand(t, checkout, "--model-checks")
+	if code != 2 || len(transport.payloads) != 0 || !initHas(stderr, "--model-checks needs the repository checks, which are off for this review. Nothing was sent.") {
+		t.Fatalf("exit=%d requests=%d\nstderr:\n%s", code, len(transport.payloads), stderr)
 	}
 }
 

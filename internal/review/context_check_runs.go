@@ -5,17 +5,19 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 )
 
 // Check runs are an optional object of a version 11 generation context and a
-// version 10 verification context: the outcomes of the reviewed repository's
+// version 11 verification context: the outcomes of the reviewed repository's
 // own tests and linters, which the host ran in an isolated sandbox on the
 // base and the head of the change, tests twice each and linters once. The
 // host reads exit status and runner output; run names, reasons and test IDs
-// come from the repository and are data, never instructions.
+// come from the repository and are data, never instructions. Its optional
+// test_authoring member asks the verifier for model-written checks.
 
 const (
 	maxCheckRuns           = 16
@@ -35,6 +37,19 @@ const (
 	// outcomes exactly, but the repository's own code produced them.
 	checkRunsAuthority = "host_observed_execution"
 )
+
+// Test frameworks a model-written check can use: one per stack whose tests
+// ran on head. MaxAuthoredChecks bounds the checks one verification writes.
+const (
+	TestFrameworkGo       = "go_test"
+	TestFrameworkPytest   = "pytest"
+	TestFrameworkUnittest = "unittest"
+	MaxAuthoredChecks     = 3
+)
+
+func validTestFramework(framework string) bool {
+	return framework == TestFrameworkGo || framework == TestFrameworkPytest || framework == TestFrameworkUnittest
+}
 
 // Check run states.
 const (
@@ -87,6 +102,9 @@ type CheckRuns struct {
 	scope                  string
 	runs                   []CheckRun
 	omitted                int
+	// frameworks, when set, ask the verifier for a test per verified finding
+	// (see WithTestAuthoring).
+	frameworks []string
 }
 
 // NewCheckRuns validates and bounds check outcomes. At most 16 runs are kept
@@ -180,6 +198,25 @@ func (c CheckRuns) HeadCommit() string { return c.headCommit }
 // or CheckRunsChangedOnly.
 func (c CheckRuns) Scope() string { return c.scope }
 
+// WithTestAuthoring returns a copy that asks the verifier to write a test for
+// each of at most MaxAuthoredChecks verified findings, in one of frameworks:
+// the test frameworks whose checks ran on head. The request travels as the
+// object's test_authoring member.
+func (c CheckRuns) WithTestAuthoring(frameworks []string) (CheckRuns, error) {
+	sorted := slices.Clone(frameworks)
+	slices.Sort(sorted)
+	sorted = slices.Compact(sorted)
+	if c.IsZero() || len(c.frameworks) > 0 || len(sorted) == 0 || slices.ContainsFunc(sorted, func(framework string) bool { return !validTestFramework(framework) }) {
+		return CheckRuns{}, ErrInvalidCheckRuns
+	}
+	c.runs = c.Runs()
+	c.frameworks = sorted
+	return c, nil
+}
+
+// TestFrameworks are the frameworks of a test authoring request, or nil.
+func (c CheckRuns) TestFrameworks() []string { return slices.Clone(c.frameworks) }
+
 // RunsOmitted counts the runs past the listing bound.
 func (c CheckRuns) RunsOmitted() int { return c.omitted }
 
@@ -218,6 +255,9 @@ func (c CheckRuns) wire() *checkRunsWire {
 	for index, run := range c.runs {
 		wire.Runs[index] = run.wire()
 	}
+	if len(c.frameworks) > 0 {
+		wire.TestAuthoring = &testAuthoringWire{Max: MaxAuthoredChecks, Frameworks: slices.Clone(c.frameworks)}
+	}
 	return wire
 }
 
@@ -242,6 +282,9 @@ func checkRunsFromWire(wire *checkRunsWire) CheckRuns {
 			StoppedRunning: run.StoppedRunning, StoppedRunningOmitted: run.StoppedRunningOmitted,
 		}.clone()
 	}
+	if wire.TestAuthoring != nil {
+		value.frameworks = slices.Clone(wire.TestAuthoring.Frameworks)
+	}
 	return value
 }
 
@@ -253,6 +296,28 @@ type checkRunsWire struct {
 	Scope        string         `json:"scope"`
 	Runs         []checkRunWire `json:"runs"`
 	RunsOmitted  int            `json:"runs_omitted,omitempty"`
+	// TestAuthoring carries only host-derived tokens and a number.
+	TestAuthoring *testAuthoringWire `json:"test_authoring,omitempty"`
+}
+
+type testAuthoringWire struct {
+	Max        int      `json:"max"`
+	Frameworks []string `json:"frameworks"`
+}
+
+func validTestAuthoringWire(wire *testAuthoringWire) bool {
+	if wire == nil {
+		return true
+	}
+	if wire.Max != MaxAuthoredChecks || len(wire.Frameworks) == 0 || len(wire.Frameworks) > 3 {
+		return false
+	}
+	for index, framework := range wire.Frameworks {
+		if !validTestFramework(framework) || index > 0 && wire.Frameworks[index-1] >= framework {
+			return false
+		}
+	}
+	return true
 }
 
 type checkRunWire struct {
@@ -281,7 +346,7 @@ func validCheckRunsWire(wire *checkRunsWire) bool {
 	}
 	if wire.Source != checkRunsSource || wire.Authority != checkRunsAuthority || !validIntentCommitID(wire.BaseCommitID) || !validIntentCommitID(wire.HeadCommitID) ||
 		len(wire.BaseCommitID) != len(wire.HeadCommitID) || !validCheckRunsScope(wire.Scope) ||
-		wire.Runs == nil || len(wire.Runs) > maxCheckRuns || !validCheckRunCount(wire.RunsOmitted) {
+		wire.Runs == nil || len(wire.Runs) > maxCheckRuns || !validCheckRunCount(wire.RunsOmitted) || !validTestAuthoringWire(wire.TestAuthoring) {
 		return false
 	}
 	listed := 0

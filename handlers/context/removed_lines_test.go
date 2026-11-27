@@ -102,7 +102,7 @@ func TestDeletionOnlyChangeSuppliesTheRemovedBaseLines(t *testing.T) {
 	for _, source := range verifier.Sources {
 		found = found || source.Stage == "removed_lines" && source.SourceID == removed.ReferenceID() && source.StartLine == 4 && source.EndLine == 6 && source.Content == string(removed.Content())
 	}
-	if verifier.SchemaVersion != 10 || !found {
+	if verifier.SchemaVersion != 11 || !found {
 		t.Fatalf("verifier request lacks the removed guard: version=%d", verifier.SchemaVersion)
 	}
 }

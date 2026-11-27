@@ -80,3 +80,14 @@ page lists which of these checks exist today.
 - The models are meant to start from checked results and not from guesses. The
   checker also receives the same code the finder saw, and judges each finding
   against it.
+
+## Model-written checks never change a review's standing
+
+A test the checker writes can make a finding concrete: it passes on the base
+and fails on the head, so a person can run it and see the defect. But the model
+wrote both the claim and the test, and the test's output comes from code the
+model chose. So the host keeps a test only when it builds, gives the same
+answer twice on each side and shows the regression, refuses tests that reach
+for the source tree, processes or the network and could fake that answer, and
+still lets a kept test change nothing about the status, the CI disposition or
+the exit code. Only the repository's own tests can block a change.

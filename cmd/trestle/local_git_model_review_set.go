@@ -444,11 +444,14 @@ type modelReviewSetWire struct {
 	Walkthrough *localreview.SetWalkthrough `json:"walkthrough,omitempty"`
 	// CheckRegressions are the tests the repository's own checks proved
 	// broken; they make the set blocked whatever its members did.
-	CheckRegressions       *localreview.CheckRegressions `json:"check_regressions,omitempty"`
-	Findings               []setFindingWire              `json:"findings"`
-	Bounds                 setBoundsWire                 `json:"bounds"`
-	Limitations            []string                      `json:"limitations"`
-	ComprehensiveClearance bool                          `json:"comprehensive_clearance"`
+	CheckRegressions *localreview.CheckRegressions `json:"check_regressions,omitempty"`
+	// ModelWrittenChecks are the checker's kept tests, once for the set. Their
+	// finding identities are member findings, as contributors name them.
+	ModelWrittenChecks     *localreview.ModelWrittenChecks `json:"model_written_checks,omitempty"`
+	Findings               []setFindingWire                `json:"findings"`
+	Bounds                 setBoundsWire                   `json:"bounds"`
+	Limitations            []string                        `json:"limitations"`
+	ComprehensiveClearance bool                            `json:"comprehensive_clearance"`
 	// StyleAdvice repeats the general member's style advice once for the set,
 	// inline. Its fields are omitted when it has none, so a set without advice
 	// keeps its version 1 bytes.
@@ -581,8 +584,19 @@ func runLocalModelReviewSet(ctx, execution context.Context, options localModelRe
 			}
 		}
 	}
+	var modelChecks *localreview.ModelWrittenChecks
+	if options.modelChecks {
+		var pending []pendingModelCheck
+		dropped := 0
+		for _, member := range members {
+			checks, lost := pendingModelChecks(member.result, member.authored)
+			pending, dropped = append(pending, checks...), dropped+lost+member.authoredDropped
+		}
+		modelChecks = runModelWrittenChecks(ctx, options.objects, inputs.base, inputs.head, pending, dropped, stderr)
+	}
 	progress.finish()
 	set := buildModelReviewSet(selection, members, notLaunched, options, concurrency, sequentialReason)
+	set.ModelWrittenChecks = modelChecks
 	if regressions := localreview.NewCheckRegressions(inputs.checks); regressions != nil {
 		set.CheckRegressions, set.CI = regressions, "blocked"
 	}
@@ -1080,6 +1094,9 @@ func renderModelReviewSetText(set modelReviewSetWire, options localreview.Render
 	for _, line := range localreview.CheckRegressionsText(set.CheckRegressions, set.Complete) {
 		buffer.WriteString(line)
 	}
+	for _, line := range localreview.ModelWrittenChecksText(set.ModelWrittenChecks, set.findingName) {
+		buffer.WriteString(line)
+	}
 	if options.Verbose {
 		writeModelReviewSetDetails(&buffer, set)
 	}
@@ -1215,6 +1232,9 @@ func renderModelReviewSetMarkdown(set modelReviewSetWire, options localreview.Re
 		buffer.WriteString("\n" + localreview.SetWalkthroughMarkdown(set.Walkthrough))
 	}
 	buffer.WriteString(localreview.FindingsMarkdown(set.rankedGroups(), options, setContributors))
+	if set.ModelWrittenChecks != nil {
+		buffer.WriteString("\n" + localreview.ModelWrittenChecksMarkdown(set.ModelWrittenChecks, set.findingName))
+	}
 	if !set.Complete {
 		buffer.WriteString("\nOne or more reviewers did not finish; the findings come only from those that did. This is not a clean result.\n")
 	}
@@ -1303,4 +1323,15 @@ func saturatingAdd16(a, b uint16) uint16 {
 		return ^uint16(0)
 	}
 	return a + b
+}
+
+// findingName names the set finding whose representative or contributor has
+// the member finding identity, for the model-written check lines.
+func (s modelReviewSetWire) findingName(identity string) string {
+	for _, finding := range s.Findings {
+		if finding.FindingIdentity == identity || slices.ContainsFunc(finding.Contributors, func(contributor setContributorWire) bool { return contributor.FindingIdentity == identity }) {
+			return localreview.FindingName([]localreview.ReportFinding{finding.report})(finding.report.Identity)
+		}
+	}
+	return "a finding"
 }

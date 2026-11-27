@@ -394,7 +394,7 @@ func TestInvestigationV4ProjectsExactCurrentVerifierV3(t *testing.T) {
 	request, err := projected.ProviderRequest()
 	v4Check(t, err)
 	v4Check(t, ValidateVerificationModelRequest(request, f.binding.Scope.Identity()))
-	if expected.SchemaVersion != 10 || expected.ToolCalls != "proposals_only" || !reflect.DeepEqual(projected.EvidenceItems(), f.expanded.EvidenceItems()) || len(expected.SourceOmissions) != 1 || expected.Sources[1].Stage != "repository_context" {
+	if expected.SchemaVersion != 11 || expected.ToolCalls != "proposals_only" || !reflect.DeepEqual(projected.EvidenceItems(), f.expanded.EvidenceItems()) || len(expected.SourceOmissions) != 1 || expected.Sources[1].Stage != "repository_context" {
 		t.Fatal("projection inflated source grades/omissions or granted verifier tools")
 	}
 	if _, err := NewInvestigationVerificationRequestContext(final, CandidateBatch{}); err == nil {
