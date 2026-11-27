@@ -84,7 +84,7 @@ repository, it says so and exits `0`. Without a terminal on both sides, or with
 
 Reviews the latest committed change with the setup that `trestle init` made.
 
-On standard error it shows [progress](local-model-review.md#progress) and ends a finished review with `Reviewed in 2m 14s.`.
+On standard error it shows [progress](local-model-review.md#progress) and ends a finished review with `Review took 2m 14s.`.
 
 | Flag | Meaning |
 | --- | --- |

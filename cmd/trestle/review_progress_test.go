@@ -77,7 +77,7 @@ func TestReviewProgressPlainLines(t *testing.T) {
 	p.begin("Finding problems (retrying)", false)
 	p.finish()
 	p.stop()
-	want := "Preparing the review\nFinding problems (retrying)\nFinishing\nReviewed in 1m 00s.\n"
+	want := "Preparing the review\nFinding problems (retrying)\nFinishing\nReview took 1m 00s.\n"
 	if buf.String() != want {
 		t.Fatalf("plain output %q, want %q", buf.String(), want)
 	}
@@ -93,7 +93,7 @@ func TestReviewProgressClosesAFinishedRunWithItsTime(t *testing.T) {
 	p.finish()
 	p.stop()
 	p.stop()
-	if got := buf.String(); !strings.HasSuffix(got, "\x1b[KReviewed in 2m 14s.\n") || strings.Count(got, "Reviewed in") != 1 {
+	if got := buf.String(); !strings.HasSuffix(got, "\x1b[KReview took 2m 14s.\n") || strings.Count(got, "Review took") != 1 {
 		t.Fatalf("closing line %q", got)
 	}
 }
@@ -104,7 +104,7 @@ func TestReviewProgressSaysNothingWithoutAFinishedRun(t *testing.T) {
 	q, plain, _ := testProgress(false, false, 60)
 	q.begin("Finding problems", false)
 	q.stop()
-	if buf.Len() != 0 || strings.Contains(plain.String(), "Reviewed in") {
+	if buf.Len() != 0 || strings.Contains(plain.String(), "Review took") {
 		t.Fatalf("closing line without a finished run: %q %q", buf.String(), plain.String())
 	}
 }

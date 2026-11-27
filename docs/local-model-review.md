@@ -132,7 +132,7 @@ A review can take several minutes, so standard error shows what it is doing. On 
 ⠹ Checking findings · bug_hunter (2 of 4 reviewers) · 1m 12s
 ```
 
-When a review finishes, the progress line is replaced by one closing line with the total time, `Reviewed in 2m 14s.`. A review that stops early prints no closing line.
+When a review reaches its last stage, the progress line is replaced by one closing line with the total time, `Review took 2m 14s.`, whether the result is findings, a refusal or a failure. A review that stops before its last stage prints no closing line.
 
 The stages are indexing the repository, the repository checks, preparing the secret scanner (first use only), preparing the review, finding problems, checking findings, finishing, and a request sent again after a failure or an answer that could not be used, which shows as `(retrying)`. In a specialist review each line names the reviewer and its place, and reviewers that run at once share one line: `Reviewing · 2 of 4 reviewers done · 2m 03s`. There is no percentage, because the time a model takes is not known; the counts are the only bound shown. The repository checks run as one stage, without a count of tests.
 
@@ -143,7 +143,7 @@ Preparing the review
 Finding problems
 Checking findings
 Finishing
-Reviewed in 2m 14s.
+Review took 2m 14s.
 ```
 
 The stages that already print their own notice (indexing, checks, the scanner) print nothing more. The line is cleared before any other message and before the result, so standard output is the result alone, byte for byte, in every format. A line is cut to the width of the terminal, or 60 columns when it is not known.

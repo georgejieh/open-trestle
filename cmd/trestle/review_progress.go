@@ -142,7 +142,7 @@ func (p *reviewProgress) stop() {
 	p.stopped, p.label = true, ""
 	p.clearLocked()
 	if p.completed {
-		fmt.Fprintf(p.out, "Reviewed in %s.\n", progressElapsed(p.now().Sub(p.started)))
+		fmt.Fprintf(p.out, "Review took %s.\n", progressElapsed(p.now().Sub(p.started)))
 	}
 	p.mu.Unlock()
 	if p.quit != nil {
