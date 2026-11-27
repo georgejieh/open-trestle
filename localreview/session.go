@@ -33,6 +33,7 @@ import (
 	"net/http"
 	"os"
 	"reflect"
+	"slices"
 	"sync"
 	"time"
 )
@@ -125,6 +126,32 @@ type Session struct {
 	activeInvestigation              *modelhandler.InvestigationPipeline
 	lastInvestigationResult          Result
 	routeFailures                    *routeFailureObserver
+	authored                         *authoredChecks
+}
+
+// authoredChecks collects the checks the verifier wrote.
+type authoredChecks struct {
+	mu      sync.Mutex
+	checks  []review.AuthoredCheck
+	dropped int
+}
+
+func (a *authoredChecks) record(checks []review.AuthoredCheck, dropped int) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.checks, a.dropped = append(a.checks, checks...), a.dropped+dropped
+}
+
+// AuthoredChecks returns the checks the verifier wrote for its verified
+// findings when the session's check runs asked for them, each naming the
+// verified finding it demonstrates, and the number it dropped.
+func (s *Session) AuthoredChecks() ([]review.AuthoredCheck, int) {
+	if s == nil || s.authored == nil {
+		return nil, 0
+	}
+	s.authored.mu.Lock()
+	defer s.authored.mu.Unlock()
+	return slices.Clone(s.authored.checks), s.authored.dropped
 }
 
 // NewSession transfers root ownership only on success and never starts work.
@@ -300,6 +327,7 @@ func newSession(o SessionOptions, investigationPolicy *review.InvestigationPolic
 		publicationScanner = provider.PublicationContentScanner()
 	}
 	var catalog runtimecatalog.PipelineCatalog
+	var authored *authoredChecks
 	if investigationPolicy == nil {
 		policyGenerationAuthority, err := runtimecatalog.NewGenerationPolicyAuthorizerFromRuntimePolicy(o.Policy, o.Inventory, ledger)
 		if err != nil {
@@ -399,6 +427,10 @@ func newSession(o SessionOptions, investigationPolicy *review.InvestigationPolic
 		if retry != nil {
 			verification = verification.WithAnswerRetry(retry)
 		}
+		if o.CheckRuns != nil && len(o.CheckRuns.TestFrameworks()) > 0 {
+			authored = &authoredChecks{}
+			verification = verification.WithAuthoredChecksObserver(authored.record)
+		}
 		readiness, err := publicationhandler.NewReadinessHandler(store, diagnosticStore, o.Clock, o.Policy.ReviewPolicyIdentity(), o.Policy.Publication(), publicationScanner)
 		if err != nil {
 			return nil, ErrInvalidSession
@@ -423,7 +455,7 @@ func newSession(o SessionOptions, investigationPolicy *review.InvestigationPolic
 	}
 	// This nonce binds a live opened root capability, not a pathname or Git origin.
 	rootID := digest("open-trestle/local-root-session/v1:" + hex.EncodeToString(nonce))
-	session := &Session{options: o, rootID: rootID, adapter: source.Identity(), objectStore: objects, classification: classification, catalog: catalog, store: store, diagnostics: diagnosticStore, ledger: ledger, journal: journal, coordinator: coordinator, finalizer: finalizer, issued: map[string]bool{}, admitted: map[string]bool{}, specialist: specialist, routeFailures: routeFailures}
+	session := &Session{options: o, rootID: rootID, adapter: source.Identity(), objectStore: objects, classification: classification, catalog: catalog, store: store, diagnostics: diagnosticStore, ledger: ledger, journal: journal, coordinator: coordinator, finalizer: finalizer, issued: map[string]bool{}, admitted: map[string]bool{}, specialist: specialist, routeFailures: routeFailures, authored: authored}
 	if investigationPolicy != nil {
 		profile, err := runtimecatalog.NewInvestigationProfileFromRuntimePolicy(o.Policy, o.Inventory, *investigationPolicy, dispatchers.Identity())
 		if err != nil {

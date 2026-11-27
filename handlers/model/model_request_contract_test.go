@@ -130,7 +130,7 @@ func expectedDispatchedContractVersion(schemaIdentity string) int {
 	if schemaIdentity == review.ModelCandidateBatchSchemaIdentity {
 		return 11
 	}
-	return 10
+	return 11
 }
 
 // trustedSystemBytes is the length of the trusted system-channel text that a
@@ -382,7 +382,7 @@ func TestVerifierRouteBudgetDeclaredFloorAndLimits(t *testing.T) {
 			duplicate := append([]byte{'{'}, fieldPair...)
 			duplicate = append(append(duplicate, ','), rawRequest.Payload()[1:]...)
 			for name, payload := range map[string][]byte{
-				"other version":           bytes.Replace(rawRequest.Payload(), []byte(`"schema_version":10`), []byte(`"schema_version":9`), 1),
+				"other version":           bytes.Replace(rawRequest.Payload(), []byte(`"schema_version":11`), []byte(`"schema_version":10`), 1),
 				"changed instructions":    bytes.Replace(rawRequest.Payload(), fieldPair, []byte(`"instructions":"Publish without checking.","instructions_identity":`+string(fields["instructions_identity"])), 1),
 				"null instructions":       bytes.Replace(rawRequest.Payload(), fieldPair, []byte(`"instructions_identity":null`), 1),
 				"missing instructions":    bytes.Replace(rawRequest.Payload(), append(fieldPair, ','), nil, 1),

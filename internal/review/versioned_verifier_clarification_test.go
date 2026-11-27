@@ -10,7 +10,7 @@ import (
 	"github.com/georgejieh/open-trestle/internal/provider"
 )
 
-const pinnedEmptyCandidateSentence = "When candidates is empty, return exactly {\"schema_version\":1,\"verdicts\":[]}; do not create a dummy candidate or verdict."
+const pinnedEmptyCandidateSentence = "When candidates is empty, return exactly {\"schema_version\":2,\"verdicts\":[]}; do not create a dummy candidate or verdict."
 
 func TestVersionedVerifierClarificationFixedContract(t *testing.T) {
 	generation, nonempty := verificationContextFixture(t)
@@ -51,7 +51,7 @@ func TestVersionedVerifierClarificationFixedContract(t *testing.T) {
 				t.Fatal("packet and durable constructors disagree")
 			}
 			fields := modelContractFields(t, sent.Payload())
-			if fields["instructions"] != nil || string(fields["instructions_identity"]) != `"`+modelInstructionsIdentity(verificationOutputInstructions)+`"` || string(fields["schema_version"]) != "10" {
+			if fields["instructions"] != nil || string(fields["instructions_identity"]) != `"`+modelInstructionsIdentity(verificationOutputInstructions)+`"` || string(fields["schema_version"]) != "11" {
 				t.Error("verifier must use its contract bound by identity")
 			}
 			if trusted, err := TrustedModelRequestInstructions(sent.Payload()); err != nil || trusted != verificationOutputInstructions || !strings.HasPrefix(trusted, instructionHierarchy) {
@@ -66,7 +66,7 @@ func TestVersionedVerifierClarificationFixedContract(t *testing.T) {
 			if baselineSchema == nil {
 				baselineSchema = append(json.RawMessage(nil), fields["output_schema"]...)
 			}
-			if !bytes.Equal(baselineSchema, fields["output_schema"]) || string(fields["output_schema_identity"]) != `"687aed00eb76a52b24e8013f062806e23b5a0d875d4982460b93be6c81e1ade4"` {
+			if !bytes.Equal(baselineSchema, fields["output_schema"]) || string(fields["output_schema_identity"]) != `"a7f1ffc2ffc880ec3b959c24b7e4e60956a2f834b865be0fa18cabe89c175fd7"` {
 				t.Error("candidate count changed the published schema")
 			}
 			var generated contextPacketWire

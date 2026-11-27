@@ -201,6 +201,9 @@ type latestReviewOptions struct {
 	// checks and noChecks allow or skip the repository's checks for this
 	// review, whatever the stored answer.
 	checks, noChecks bool
+	// modelChecks asks the checker to write tests and runs them; it needs
+	// the checks.
+	modelChecks bool
 	// stopOnStdinClose cancels the review when standard input reaches end of
 	// file, as Ctrl-C does.
 	stopOnStdinClose bool
@@ -261,7 +264,7 @@ func latestReviewCommand(template []string, base, head string, options latestRev
 }
 
 func writeLatestReviewUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: trestle review [--format text|json|sarif|markdown] [--all] [--verbose] [--timeout DURATION] [--profile ID | --specialists auto|none|ID[,ID...] [--max-specialists N]] [--exit-code-policy default|findings|strict|always-zero] [--base REF] [--head REF] [--checks|--no-checks] [--directory PATH] [--stop-on-stdin-close]")
+	fmt.Fprintln(w, "usage: trestle review [--format text|json|sarif|markdown] [--all] [--verbose] [--timeout DURATION] [--profile ID | --specialists auto|none|ID[,ID...] [--max-specialists N]] [--exit-code-policy default|findings|strict|always-zero] [--base REF] [--head REF] [--checks|--no-checks] [--model-checks] [--directory PATH] [--stop-on-stdin-close]")
 	fmt.Fprintln(w, "       review the latest change (HEAD against its merge base with the default branch) with the setup trestle init made; see docs/getting-started.md")
 	fmt.Fprintln(w, "       trestle review <path>   (review a local fixture file)")
 }
@@ -278,6 +281,7 @@ func parseLatestReviewFlags(args []string, stdout, stderr io.Writer) (latestRevi
 	flags.BoolVar(&options.verbose, "verbose", false, "verbose")
 	flags.BoolVar(&options.checks, "checks", false, "checks")
 	flags.BoolVar(&options.noChecks, "no-checks", false, "no-checks")
+	flags.BoolVar(&options.modelChecks, "model-checks", false, "model-checks")
 	flags.BoolVar(&options.stopOnStdinClose, "stop-on-stdin-close", false, "stop-on-stdin-close")
 	seen := map[string]bool{}
 	for _, argument := range args {
@@ -305,6 +309,10 @@ func parseLatestReviewFlags(args []string, stdout, stderr io.Writer) (latestRevi
 	}
 	if options.checks && options.noChecks {
 		fmt.Fprintln(stderr, "trestle review: give --checks or --no-checks, not both.")
+		return options, 2, true
+	}
+	if options.modelChecks && options.noChecks {
+		fmt.Fprintln(stderr, "trestle review: --model-checks needs the repository checks, so it cannot be combined with --no-checks.")
 		return options, 2, true
 	}
 	if options.format != "" && options.format != "text" && options.format != "json" && options.format != "sarif" && options.format != "markdown" {
@@ -466,6 +474,12 @@ func reviewLatestChange(ctx context.Context, w *initWizard, repo repositorySetup
 	}
 	if reviewChecksAllowed(ctx, w, repo.directory, options, input) {
 		command = append(command, "--repository-checks")
+		if options.modelChecks {
+			command = append(command, "--model-checks")
+		}
+	} else if options.modelChecks {
+		w.say("  %s --model-checks needs the repository checks, which are off for this review. Nothing was sent. Pass --checks too, or run trestle checks on.", w.bad)
+		return 2, false
 	}
 	if _, _, _, _, err := parseLocalModelReview(command[3:]); err != nil {
 		var unknown errUnknownModelReviewProfile

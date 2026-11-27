@@ -230,9 +230,14 @@ type verificationVerdictDocument struct {
 	Severity    string   `json:"severity"`
 	Rationale   string   `json:"rationale"`
 	EvidenceIDs []string `json:"evidence_ids"`
+	// Check is read only by VerificationAuthoredChecks, which drops an
+	// invalid one, so its content never refuses the verdict.
+	Check json.RawMessage `json:"check,omitempty"`
 }
 
-// ValidateVerificationDocumentSyntax enforces the public model-verification-batch-v1 schema syntax.
+// ValidateVerificationDocumentSyntax enforces the public
+// model-verification-batch-v2 schema syntax, apart from each verdict's
+// optional check. A version 1 document, which has no check, is accepted too.
 func ValidateVerificationDocumentSyntax(payload []byte) error {
 	if err := rejectDuplicateCandidateJSONKeys(payload); err != nil {
 		if errors.Is(err, ErrDuplicateCandidateDocumentKey) {
@@ -251,9 +256,17 @@ func ValidateVerificationDocumentSyntax(payload []byte) error {
 	if err := json.Unmarshal(root["verdicts"], &rawVerdicts); err != nil || len(rawVerdicts) > maxCandidateFindings {
 		return ErrInvalidVerificationDocumentShape
 	}
+	var version int
+	_ = json.Unmarshal(root["schema_version"], &version)
 	for _, encoded := range rawVerdicts {
 		var verdict map[string]json.RawMessage
-		if err := json.Unmarshal(encoded, &verdict); err != nil || !exactJSONKeys(verdict, "candidate_id", "outcome", "severity", "rationale", "evidence_ids") || firstNonSpace(verdict["evidence_ids"]) != '[' {
+		if err := json.Unmarshal(encoded, &verdict); err != nil {
+			return ErrInvalidVerificationDocumentShape
+		}
+		if _, checked := verdict["check"]; checked && version == 2 {
+			delete(verdict, "check")
+		}
+		if !exactJSONKeys(verdict, "candidate_id", "outcome", "severity", "rationale", "evidence_ids") || firstNonSpace(verdict["evidence_ids"]) != '[' {
 			return ErrInvalidVerificationDocumentShape
 		}
 	}
@@ -263,7 +276,7 @@ func ValidateVerificationDocumentSyntax(payload []byte) error {
 	if err := decoder.Decode(&document); err != nil {
 		return ErrInvalidVerificationDocumentJSON
 	}
-	if document.SchemaVersion != 1 {
+	if document.SchemaVersion != 1 && document.SchemaVersion != 2 {
 		return ErrInvalidVerificationSchemaVersion
 	}
 	for _, verdict := range document.Verdicts {

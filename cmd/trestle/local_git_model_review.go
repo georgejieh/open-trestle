@@ -44,6 +44,9 @@ type localModelReviewOptions struct {
 	// before the model calls (--repository-checks); it is the caller's
 	// consent.
 	repositoryChecks bool
+	// modelChecks asks the checker for tests of its verified findings and runs
+	// them after the review (--model-checks); it needs repositoryChecks.
+	modelChecks bool
 }
 
 // renderOptions are the text and Markdown options the flags select.
@@ -111,14 +114,15 @@ func parseLocalModelReview(args []string) (localModelReviewOptions, evidence.Rep
 	fail := func() (localModelReviewOptions, evidence.RepositoryIdentity, evidence.RevisionIdentity, evidence.RevisionIdentity, error) {
 		return o, evidence.RepositoryIdentity{}, evidence.RevisionIdentity{}, evidence.RevisionIdentity{}, fmt.Errorf("invalid explicit model review intent")
 	}
-	// --all, --verbose and --repository-checks are the flags without a value.
+	// --all, --verbose, --repository-checks and --model-checks are the flags
+	// without a value.
 	// They are recognized only where a flag is expected, so a flag's value is
 	// never taken for one.
-	all, verbose, checks := false, false, false
+	all, verbose, checks, modelChecks := false, false, false, false
 	pairs := make([]string, 0, len(args))
 	for index := 0; index < len(args); {
-		if args[index] == "--all" || args[index] == "--verbose" || args[index] == "--repository-checks" {
-			seen := map[string]*bool{"--all": &all, "--verbose": &verbose, "--repository-checks": &checks}[args[index]]
+		if args[index] == "--all" || args[index] == "--verbose" || args[index] == "--repository-checks" || args[index] == "--model-checks" {
+			seen := map[string]*bool{"--all": &all, "--verbose": &verbose, "--repository-checks": &checks, "--model-checks": &modelChecks}[args[index]]
 			if *seen {
 				return fail()
 			}
@@ -255,7 +259,10 @@ func parseLocalModelReview(args []string) (localModelReviewOptions, evidence.Rep
 	}
 	o = localModelReviewOptions{objects: source.objectsRoot, inventory: values["--route-inventory"], policy: values["--runtime-policy"], tenant: values["--tenant"], repository: values["--repository"], format: format, investigation: values["--investigation-policy"], retainedMemory: values["--retained-memory-input"], egress: egress, objectStoreProfile: objectStoreProfile, timeout: timeout, specialist: specialist, exitPolicy: exitPolicy, specialists: specialists}
 	o.checkout, o.baseSelection, o.headSelection = values["--checkout"], values["--base"], values["--head"]
-	o.all, o.verbose, o.repositoryChecks = all, verbose, checks
+	o.all, o.verbose, o.repositoryChecks, o.modelChecks = all, verbose, checks, modelChecks
+	if modelChecks && !checks {
+		return o, evidence.RepositoryIdentity{}, evidence.RevisionIdentity{}, evidence.RevisionIdentity{}, errModelChecksNeedChecks
+	}
 	// An investigation session takes no repository check outcomes.
 	if checks && o.investigation != "" {
 		return fail()
@@ -265,6 +272,11 @@ func parseLocalModelReview(args []string) (localModelReviewOptions, evidence.Rep
 	}
 	return o, repository, base, head, nil
 }
+
+// errModelChecksNeedChecks is the usage error of --model-checks without the
+// repository checks.
+var errModelChecksNeedChecks = errors.New("--model-checks needs the repository checks: pass --repository-checks too, so the checker writes tests only where the repository's own tests ran")
+
 func runLocalGitModelReview(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	return runLocalGitModelReviewObserved(ctx, args, stdout, stderr, nil)
 }
@@ -313,6 +325,9 @@ func runLocalGitModelReviewObserved(ctx context.Context, args []string, stdout, 
 		var unknownProfile errUnknownModelReviewProfile
 		if errors.As(err, &unknownProfile) {
 			fmt.Fprintln(stderr, unknownProfile.Error())
+		}
+		if errors.Is(err, errModelChecksNeedChecks) {
+			fmt.Fprintln(stderr, err.Error())
 		}
 		writeLocalGitModelReviewUsage(stderr)
 		return 2
@@ -368,12 +383,16 @@ func runLocalGitModelReviewObserved(ctx context.Context, args []string, stdout, 
 	if !ok {
 		return 1
 	}
+	result := localreview.WithCheckRegressions(member.result, checks)
+	if options.modelChecks {
+		pending, dropped := pendingModelChecks(member.result, member.authored)
+		result = localreview.WithModelWrittenChecks(result, runModelWrittenChecks(ctx, options.objects, inputs.base, inputs.head, pending, dropped+member.authoredDropped, stderr))
+	}
 	reviewProgressOf(ctx).finish()
 	if member.partialCheckout {
 		fmt.Fprintln(stderr, partialCheckoutHint)
 	}
 	inputs.spending.finish()
-	result := localreview.WithCheckRegressions(member.result, checks)
 	observeModelResult(observe, result)
 	return writeLocalModelResultWithOptions(options.format, options.exitPolicy, options.renderOptions(), result, stdout, stderr)
 }
@@ -454,7 +473,7 @@ func prepareLocalModelReview(execution context.Context, options *localModelRevie
 		inputs.index = prepareReviewIndex(execution, openReviewIndexSession(execution, *options, base), base, head, stderr)
 	}
 	if options.repositoryChecks && options.objects != "" {
-		inputs.checks = runRepositoryChecks(execution, options.objects, base, head, inputs.index, stderr)
+		inputs.checks = runRepositoryChecks(execution, options.objects, base, head, inputs.index, options.modelChecks, stderr)
 		if execution.Err() != nil {
 			return inputs, "canceled"
 		}
@@ -506,6 +525,10 @@ type localModelReviewMember struct {
 	// styleConfigUnread counts base style configuration files the features
 	// could not carry.
 	styleConfigUnread int
+	// authored are the checks its checker wrote, and authoredDropped those it
+	// dropped.
+	authored        []review.AuthoredCheck
+	authoredDropped int
 }
 
 // runLocalModelReviewMember runs one review session to a terminal result under
@@ -625,6 +648,7 @@ func runLocalModelReviewMember(ctx, execution context.Context, options localMode
 		return unstarted("refused")
 	}
 	result, runErr := session.Run(execution, prepared)
+	member.authored, member.authoredDropped = session.AuthoredChecks()
 	if wantFeatures && runErr == nil && execution.Err() == nil {
 		// Read-only replay of this run's own recorded artifacts; no model call.
 		if features, unread, err := session.ChangeFeatures(execution, prepared); err == nil {
@@ -691,7 +715,8 @@ func writeLocalModelResultWithOptions(format string, policy localreview.ExitPoli
 	return result.ExitCodeFor(policy)
 }
 func writeLocalGitModelReviewUsage(stderr io.Writer) {
-	fmt.Fprintln(stderr, "usage: trestle local-git model-review --objects-root PATH --repository-authority AUTHORITY --repository-namespace SEGMENT[/SEGMENT...] --repository-name NAME --revision-algorithm sha1|sha256 --base-revision-digest HEX --head-revision-digest HEX --tenant ID --repository ID --route-inventory PATH --runtime-policy PATH --egress local-only|policy-approved --timeout DURATION [--object-store loose-only|loose-and-pack-index-v1] [--format json|text|sarif|markdown] [--all] [--verbose] [--repository-checks] [--exit-code-policy default|findings|strict|always-zero] [--investigation-policy PATH | --retained-memory-input PATH] [--profile PROFILE_ID | --specialists auto|none|ID[,ID...] [--max-specialists N]]")
+	fmt.Fprintln(stderr, "usage: trestle local-git model-review --objects-root PATH --repository-authority AUTHORITY --repository-namespace SEGMENT[/SEGMENT...] --repository-name NAME --revision-algorithm sha1|sha256 --base-revision-digest HEX --head-revision-digest HEX --tenant ID --repository ID --route-inventory PATH --runtime-policy PATH --egress local-only|policy-approved --timeout DURATION [--object-store loose-only|loose-and-pack-index-v1] [--format json|text|sarif|markdown] [--all] [--verbose] [--repository-checks [--model-checks]] [--exit-code-policy default|findings|strict|always-zero] [--investigation-policy PATH | --retained-memory-input PATH] [--profile PROFILE_ID | --specialists auto|none|ID[,ID...] [--max-specialists N]]")
 	fmt.Fprintln(stderr, "       checkout source alternative: --checkout PATH --base FULL_REF_OR_COMMIT --head FULL_REF_OR_COMMIT (replaces --objects-root and revision flags)")
 	fmt.Fprintln(stderr, "       --repository-checks runs the repository's own tests for the change in a sandbox first and gives the outcomes to the models; a test regression is reported and blocks even without them; see docs/repository-checks.md")
+	fmt.Fprintln(stderr, "       --model-checks also asks the checker to write a test for each of up to 3 verified findings and keeps those that pass on base and fail on head; they never change the status")
 }

@@ -52,7 +52,7 @@ func TestRecordedInvestigationTurnTransportBytesMeasureTheRequestContract(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	v9Verification := bytes.Replace(rawVerification.Payload(), []byte(`"schema_version":10`), []byte(`"schema_version":9`), 1)
+	v9Verification := bytes.Replace(rawVerification.Payload(), []byte(`"schema_version":11`), []byte(`"schema_version":10`), 1)
 	v5Investigation := bytes.Replace(investigation.Payload(), []byte(`"schema_version":6`), []byte(`"schema_version":5`), 1)
 	cases := []struct {
 		name           string

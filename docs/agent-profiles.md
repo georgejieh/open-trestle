@@ -59,7 +59,7 @@ Every profile has the same fixed authority. It is part of the catalog JSON and c
 - Output is **candidates only**. Candidates need verification on a separate route before they can become findings.
 - A profile has no tool execution, no network access outside gateway dispatch, no publication and no source mutation.
 - A profile does no dynamic validation. `security_probe` is static and read-only. Dynamic validation needs the separate governed-execution authorization described in [architecture](architecture.md#execution), and this layer cannot grant it.
-- `test_author` output is a proposed test artifact. This layer never writes or runs it.
+- `test_author` output is a proposed test artifact. This layer never writes or runs it. Specialist runs (`--specialists`) never select it either. The tests that `--model-checks` runs come from the checker of an ordinary review, not from this profile; see [model-written checks](repository-checks.md#model-written-checks).
 
 ## Profiles
 

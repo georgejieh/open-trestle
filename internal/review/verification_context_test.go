@@ -80,7 +80,7 @@ func TestNewVerificationContextPacketRejectsCrossWiredCandidates(t *testing.T) {
 }
 
 func TestModelVerificationSchemaIdentityMatchesCanonicalPublicSchema(t *testing.T) {
-	encoded, err := os.ReadFile("../../schemas/review/model-verification-batch-v1.schema.json")
+	encoded, err := os.ReadFile("../../schemas/review/model-verification-batch-v2.schema.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +122,7 @@ func TestVerificationContextPacketCountsGenerationOmissions(t *testing.T) {
 	if json.Unmarshal(request.Payload(), &wire) != nil {
 		t.Fatal("decode")
 	}
-	if wire.SchemaVersion != 10 || wire.SourceCoverage.PreselectionOmitted != 7 || wire.SourceCoverage.Omitted != 7 || wire.SourceOmissions[0].Count != 7 {
+	if wire.SchemaVersion != 11 || wire.SourceCoverage.PreselectionOmitted != 7 || wire.SourceCoverage.Omitted != 7 || wire.SourceOmissions[0].Count != 7 {
 		t.Fatalf("wire=%#v", wire)
 	}
 }

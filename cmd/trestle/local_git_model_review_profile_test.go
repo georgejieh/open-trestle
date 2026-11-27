@@ -145,7 +145,7 @@ func TestRunLocalGitModelReviewProfilePlacesSpecialistOnlyInGeneration(t *testin
 	}
 
 	verification := verified[0]
-	if verification.Packet.Version != 10 || verification.Packet.Task != "candidate_verification" || verification.Packet.Specialist != nil || verification.Packet.GenerationContext != generation.ContextID {
+	if verification.Packet.Version != 11 || verification.Packet.Task != "candidate_verification" || verification.Packet.Specialist != nil || verification.Packet.GenerationContext != generation.ContextID {
 		t.Fatal("verification request is not version 9 bound to the specialist generation")
 	}
 	for _, forbidden := range []string{specialist.Instructions(), "Bug hunter profile", specialist.ProfileIdentity(), "operator_packaged_instructions"} {

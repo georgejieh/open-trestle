@@ -1,0 +1,152 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:review:model-verification-batch:v2",
+  "title": "Open Trestle Model Verification Batch v2",
+  "description": "Canonical syntax for untrusted independent-verifier verdicts with an optional model-written check. Admission binds every verdict to a host-issued candidate and exact evidence. A check is read leniently: an invalid one is dropped without affecting its verdict.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "verdicts"
+  ],
+  "$defs": {
+    "reference_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9]",
+      "not": {
+        "pattern": "[^A-Za-z0-9._:-]"
+      }
+    },
+    "candidate_id": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 3,
+      "pattern": "^c([1-9]|1[0-6])$"
+    },
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "framework",
+        "content"
+      ],
+      "properties": {
+        "framework": {
+          "type": "string",
+          "enum": [
+            "go_test",
+            "pytest",
+            "unittest"
+          ]
+        },
+        "content": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 12288
+        }
+      },
+      "description": "Optional untrusted test file for a verified verdict, requested only by check_runs.test_authoring. The host chooses its path, validates it and keeps it only when it passes on base and fails on head."
+    },
+    "verdict": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidate_id",
+        "outcome",
+        "severity",
+        "rationale",
+        "evidence_ids"
+      ],
+      "properties": {
+        "candidate_id": {
+          "$ref": "#/$defs/candidate_id"
+        },
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "verified",
+            "rejected",
+            "inconclusive"
+          ]
+        },
+        "severity": {
+          "type": "string",
+          "enum": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "critical"
+          ]
+        },
+        "rationale": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024,
+          "pattern": "[^\\u0009\\u000a\\u000b\\u000c\\u000d\\u0020]"
+        },
+        "evidence_ids": {
+          "type": "array",
+          "minItems": 0,
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/reference_id"
+          }
+        },
+        "check": {
+          "$ref": "#/$defs/check"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "verified"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "enum": [
+                  "low",
+                  "medium",
+                  "high",
+                  "critical"
+                ]
+              },
+              "evidence_ids": {
+                "minItems": 1
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "severity": {
+                "const": "none"
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 2
+    },
+    "verdicts": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 16,
+      "items": {
+        "$ref": "#/$defs/verdict"
+      }
+    }
+  }
+}

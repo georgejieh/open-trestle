@@ -35,12 +35,17 @@ func endToEnd(t *testing.T, base, head map[string]string, changed []string) []Re
 		t.Fatal("no check was detected")
 	}
 	first := report.Results[0]
-	if !first.Ran && (strings.Contains(first.Reason, "not installed on this machine") || strings.Contains(first.Reason, "user namespaces") ||
-		strings.Contains(first.Reason, "NUL device") || strings.Contains(first.Reason, "read access") || strings.Contains(first.Reason, "AppContainer")) {
+	if !first.Ran && cannotRunHere(first.Reason) {
 		t.Skipf("the check could not run here: %s", first.Reason)
 	}
 	t.Log(report.Summary())
 	return report.Results
+}
+
+// cannotRunHere reports whether reason names a missing sandbox or toolchain.
+func cannotRunHere(reason string) bool {
+	return slices.ContainsFunc([]string{"not installed on this machine", "user namespaces", "NUL device", "read access", "AppContainer"},
+		func(part string) bool { return strings.Contains(reason, part) })
 }
 
 func TestEndToEndGoRegression(t *testing.T) {

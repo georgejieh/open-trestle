@@ -60,6 +60,9 @@ type Result struct {
 	Fixed, StillFailing int
 	// Flaky counts tests dropped because two runs of one side disagreed.
 	Flaky int
+	// Framework is the test framework a model-written check can use when
+	// this check's tests ran on both sides, or "".
+	Framework string
 }
 
 // Report is the outcome of every detected check.
@@ -93,14 +96,7 @@ func runWith(ctx context.Context, input Input, machine host) (Report, error) {
 	defer cancel()
 	trees := newTrees(input.BaseTree, input.HeadTree)
 	report := Report{}
-	run := input.Runner
-	input.Runner = func(ctx context.Context, spec checksandbox.Spec) (checksandbox.Result, error) {
-		result, err := run(ctx, spec)
-		if result.Leftover != "" {
-			report.Leftovers = append(report.Leftovers, result.Leftover)
-		}
-		return result, err
-	}
+	input.Runner = collectLeftovers(input.Runner, &report.Leftovers)
 	seeds := &goSeeds{homes: map[string]string{}}
 	defer seeds.close()
 	for _, check := range checks {
@@ -109,24 +105,45 @@ func runWith(ctx context.Context, input Input, machine host) (Report, error) {
 	return report, nil
 }
 
-func runCheck(ctx context.Context, machine host, input Input, check Check, trees trees, seeds *goSeeds) Result {
-	result := Result{Name: check.Name, Stack: check.Stack}
+// collectLeftovers wraps run so each scratch folder a run could not remove
+// is added to leftovers.
+func collectLeftovers(run Runner, leftovers *[]string) Runner {
+	return func(ctx context.Context, spec checksandbox.Spec) (checksandbox.Result, error) {
+		result, err := run(ctx, spec)
+		if result.Leftover != "" {
+			*leftovers = append(*leftovers, result.Leftover)
+		}
+		return result, err
+	}
+}
+
+// sandboxSpec is the sandbox command of check on this host, or why it
+// cannot run.
+func sandboxSpec(ctx context.Context, machine host, limits checksandbox.Limits, check Check, trees trees, seeds *goSeeds) (checksandbox.Spec, string) {
 	if check.Missing != "" {
-		result.Reason = check.Missing
-		return result
+		return checksandbox.Spec{}, check.Missing
 	}
 	program, chain, err := machine.resolve(check)
 	if err != nil {
-		result.Reason = check.Tool + " is not installed on this machine"
-		return result
+		return checksandbox.Spec{}, check.Tool + " is not installed on this machine"
 	}
 	spec := checksandbox.Spec{
 		Dir: filepath.FromSlash(check.Dir), Args: append([]string{program}, platformArgs(check)...),
-		Path: chain.path, ReadOnly: chain.readOnly, Env: chain.env, Report: check.Report, Limits: input.Limits,
+		Path: chain.path, ReadOnly: chain.readOnly, Env: chain.env, Report: check.Report, Limits: limits,
 	}
 	if check.Stack == "go" {
 		// The go command comes first on a Go check's path; see resolve.
 		spec.HomeSeed = seeds.home(ctx, "go", toolchain{path: chain.path[:1], readOnly: chain.readOnly, env: chain.env}, []string{trees.base, trees.head})
+	}
+	return spec, ""
+}
+
+func runCheck(ctx context.Context, machine host, input Input, check Check, trees trees, seeds *goSeeds) Result {
+	result := Result{Name: check.Name, Stack: check.Stack}
+	spec, reason := sandboxSpec(ctx, machine, input.Limits, check, trees, seeds)
+	if reason != "" {
+		result.Reason = reason
+		return result
 	}
 	base, _, problem := runSide(ctx, input.Runner, spec, check, trees, trees.base)
 	if problem != nil {
@@ -144,7 +161,7 @@ func runCheck(ctx context.Context, machine host, input Input, check Check, trees
 		result.Reason = problem.reason("head")
 		return result
 	}
-	result.Ran = true
+	result.Ran, result.Framework = true, testFrameworks[check.Format]
 	compare(&result, [2][2]map[string]Outcome{base, head}, deletedTests(check, input.Scope, trees))
 	// A new diagnostic is shown with its head line.
 	for index, id := range result.NewFailures {
@@ -220,6 +237,9 @@ type problem struct {
 	text        string
 	sided       bool
 	headFailure string
+	// noResults is set when the runner exited with a failure and reported
+	// nothing, as a test that does not build does.
+	noResults bool
 }
 
 // reason is the problem's text, naming the side it happened on when it is
@@ -297,7 +317,7 @@ func runOnce(ctx context.Context, runner Runner, spec checksandbox.Spec, check C
 		return nil, &problem{text: "this Node.js version does not accept the test options the check uses"}
 	}
 	return nil, &problem{text: fmt.Sprintf("the runner exited with status %d and reported no results", outcome.ExitCode), sided: true,
-		headFailure: fmt.Sprintf("exit status %d without results", outcome.ExitCode)}
+		headFailure: fmt.Sprintf("exit status %d without results", outcome.ExitCode), noResults: true}
 }
 
 // exitStatusSuffix marks the result recordExitStatus adds.

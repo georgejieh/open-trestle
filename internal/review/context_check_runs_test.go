@@ -229,12 +229,12 @@ func TestCheckRunsTravelInVersionElevenAndReachTheVerifierUnchanged(t *testing.T
 		t.Fatalf("packet and durable verifier constructors disagree: %v", err)
 	}
 	verifierFields := modelContractFields(t, request.Payload())
-	if string(verifierFields["schema_version"]) != "10" || !bytes.Equal(verifierFields["check_runs"], fields["check_runs"]) {
+	if string(verifierFields["schema_version"]) != "11" || !bytes.Equal(verifierFields["check_runs"], fields["check_runs"]) {
 		t.Fatal("the verifier does not receive the generation's check runs unchanged")
 	}
 	verifierSystem, err := TrustedModelRequestInstructions(request.Payload())
 	if err != nil || verifierSystem != verificationOutputInstructions || !strings.Contains(verifierSystem, checkRunsVerificationSentence) || !strings.Contains(verifierSystem, indexContextVerificationSentence) {
-		t.Fatal("the verifier system channel is not the pinned version 10 contract")
+		t.Fatal("the verifier system channel is not the pinned version 11 contract")
 	}
 	if err := ValidateVerificationModelRequest(request, generation.ReviewScopeIdentity()); err != nil {
 		t.Fatal(err)

@@ -171,7 +171,7 @@ func TestVerifierReceivesIndexSourcesWithoutTheManifest(t *testing.T) {
 	}
 	request, _ := verification.ProviderRequest()
 	fields := modelContractFields(t, request.Payload())
-	if string(fields["schema_version"]) != "10" || fields["context_manifest"] != nil || fields["repository_checks"] != nil {
+	if string(fields["schema_version"]) != "11" || fields["context_manifest"] != nil || fields["repository_checks"] != nil {
 		t.Fatalf("verifier fields: version=%s manifest=%s checks=%s limits=%s", fields["schema_version"], fields["context_manifest"], fields["repository_checks"], fields["limits"])
 	}
 	var wire verificationContextWire

@@ -95,6 +95,7 @@ Reviews the latest committed change with the setup that `trestle init` made.
 | `--max-specialists N` | Cap the specialists a set runs. |
 | `--exit-code-policy default\|findings\|strict\|always-zero` | Map a completed review to an exit status. See [exit codes](exit-codes.md#exit-code-policy). |
 | `--checks`, `--no-checks` | Run, or skip, the [repository checks](repository-checks.md) for this review, whatever the saved answer. |
+| `--model-checks` | Ask the checker to write a test for each of up to 3 verified findings and keep those that pass on base and fail on head. Needs the repository checks; never changes the status. See [model-written checks](repository-checks.md#model-written-checks). |
 | `--stop-on-stdin-close` | Stop the review, as Ctrl-C does, when standard input reaches end of file. For a program that starts the review and cancels it by closing its input. The checks question is not asked. |
 
 You cannot combine `--profile` and `--specialists`. `trestle review PATH`
@@ -274,7 +275,7 @@ flags.
 
 The other flags are `--tenant`, `--repository`, `--route-inventory PATH`, `--runtime-policy
 PATH`, `--egress local-only|policy-approved`, `--timeout DURATION`, `--format
-json|text|sarif|markdown`, `--all`, `--verbose`, `--repository-checks`, `--exit-code-policy`,
+json|text|sarif|markdown`, `--all`, `--verbose`, `--repository-checks` (with `--model-checks`), `--exit-code-policy`,
 `--investigation-policy PATH` or `--retained-memory-input PATH`, and `--profile`
 or `--specialists` with `--max-specialists`.
 

@@ -327,8 +327,8 @@ func TestCategorizedVerifierReceivesNoCategoryOrFix(t *testing.T) {
 	}
 	payload := []byte(durable.Payload())
 	fields := modelContractFields(t, payload)
-	if string(fields["schema_version"]) != "10" || fields["instructions"] != nil || string(fields["instructions_identity"]) != string(mustJSON(modelInstructionsIdentity(verificationOutputInstructions))) || bytes.Contains(payload, []byte("Return the checked value")) || bytes.Contains(payload, []byte(`"category"`)) || bytes.Contains(payload, []byte(`"fix"`)) {
-		t.Fatal("verifier request is not the version 10 contract without category or fix")
+	if string(fields["schema_version"]) != "11" || fields["instructions"] != nil || string(fields["instructions_identity"]) != string(mustJSON(modelInstructionsIdentity(verificationOutputInstructions))) || bytes.Contains(payload, []byte("Return the checked value")) || bytes.Contains(payload, []byte(`"category"`)) || bytes.Contains(payload, []byte(`"fix"`)) {
+		t.Fatal("verifier request is not the version 11 contract without category or fix")
 	}
 	// The candidates are bound by the batch identity and named by short labels.
 	if bytes.Contains(payload, []byte(candidates.Findings()[0].Identity())) || !bytes.Contains(payload, []byte(`"candidate_id":"c1"`)) || !bytes.Contains(payload, []byte(candidates.Identity())) {

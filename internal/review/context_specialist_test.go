@@ -235,7 +235,7 @@ func TestVerificationOfSpecialistContextIsVersionSevenWithoutSpecialist(t *testi
 		t.Fatal(err)
 	}
 	fields := modelContractFields(t, verification.Payload())
-	if string(fields["schema_version"]) != "10" || fields["specialist"] != nil || fields["instructions"] != nil || string(fields["generation_context_identity"]) != `"`+packet.Identity()+`"` {
+	if string(fields["schema_version"]) != "11" || fields["specialist"] != nil || fields["instructions"] != nil || string(fields["generation_context_identity"]) != `"`+packet.Identity()+`"` {
 		t.Fatal("verifier request is not version 9 bound to the specialist generation context")
 	}
 	if bytes.Contains(verification.Payload(), []byte(specialist.Instructions())) || bytes.Contains(verification.Payload(), []byte("Bug hunter profile")) || bytes.Contains(verification.Payload(), []byte(specialist.ProfileIdentity())) {

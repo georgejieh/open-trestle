@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -207,6 +208,19 @@ func TestOpenRouterStructuredVerificationSendsTheOutputSchema(t *testing.T) {
 		}
 		if format := wire.ResponseFormat; format == nil || format.Type != "json_schema" || !format.JSONSchema.Strict || format.JSONSchema.Name != "open_trestle_review" || !bytes.Equal(format.JSONSchema.Schema, schema.Bytes()) {
 			t.Fatalf("response_format = %+v", wire.ResponseFormat)
+		}
+		// The model-written check is optional, so a constrained answer never
+		// has to invent one.
+		var sent struct {
+			Defs struct {
+				Verdict struct {
+					Required   []string                   `json:"required"`
+					Properties map[string]json.RawMessage `json:"properties"`
+				} `json:"verdict"`
+			} `json:"$defs"`
+		}
+		if json.Unmarshal(wire.ResponseFormat.JSONSchema.Schema, &sent) != nil || sent.Defs.Verdict.Properties["check"] == nil || slices.Contains(sent.Defs.Verdict.Required, "check") {
+			t.Fatalf("the verdict schema does not carry an optional check: %+v", sent.Defs.Verdict.Required)
 		}
 	}
 	for name, change := range map[string]func(*Config){

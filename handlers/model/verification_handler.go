@@ -36,6 +36,20 @@ type VerificationHandler struct {
 	// answerRetry, when set, lets a request whose answer was not usable be
 	// sent once more.
 	answerRetry AnswerRetryGate
+	// authoredChecks, when set, receives the checks the verifier wrote.
+	authoredChecks AuthoredChecksObserver
+}
+
+// AuthoredChecksObserver receives the model-written checks of a stored
+// verification and the number of checks it dropped.
+type AuthoredChecksObserver func(checks []review.AuthoredCheck, dropped int)
+
+// WithAuthoredChecksObserver returns a copy of h that tells observe the
+// checks each stored verification wrote.
+func (h *VerificationHandler) WithAuthoredChecksObserver(observe AuthoredChecksObserver) *VerificationHandler {
+	copied := *h
+	copied.authoredChecks = observe
+	return &copied
 }
 
 // WithAnswerRejectionObserver returns a copy of h that tells observe the class
@@ -297,6 +311,9 @@ func (h *VerificationHandler) Execute(ctx context.Context, task controlplane.Tas
 	completion, err := controlplane.NewTaskSuccess(outputArtifact.Identity())
 	if err != nil {
 		return generationFailure(controlplane.RunFailureInternal)
+	}
+	if h.authoredChecks != nil {
+		h.authoredChecks(review.VerificationAuthoredChecks(attempt.result.Response(), verificationContext, generation.Candidates(), findings))
 	}
 	return completion
 }

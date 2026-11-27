@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	// ModelVerificationBatchSchemaIdentity is the SHA-256 identity of canonical model-verification-batch-v1 JSON Schema.
-	ModelVerificationBatchSchemaIdentity = "687aed00eb76a52b24e8013f062806e23b5a0d875d4982460b93be6c81e1ade4"
+	// ModelVerificationBatchSchemaIdentity is the SHA-256 identity of canonical model-verification-batch-v2 JSON Schema.
+	ModelVerificationBatchSchemaIdentity = "a7f1ffc2ffc880ec3b959c24b7e4e60956a2f834b865be0fa18cabe89c175fd7"
 )
 
 var (

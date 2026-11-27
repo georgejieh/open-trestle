@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -21,6 +22,7 @@ import (
 	"github.com/georgejieh/open-trestle/internal/repochecks"
 	"github.com/georgejieh/open-trestle/internal/review"
 	"github.com/georgejieh/open-trestle/internal/scm"
+	"github.com/georgejieh/open-trestle/localreview"
 )
 
 // Consent to run a repository's own tests and linters is stored per setup
@@ -256,8 +258,10 @@ func (w *initWizard) saveChecksAnswer(repository string, allowed bool) {
 // the files that depend on the change; without it, or when it covers only
 // some of them, the result says so. A failure to prepare the trees becomes
 // one check that could not run; it never stops the review. A change that no
-// check applies to is an outcome too, so the walkthrough says so.
-func runRepositoryChecks(ctx context.Context, objectsPath string, base, head evidence.RevisionIdentity, index *reviewIndexContext, stderr io.Writer) *review.CheckRuns {
+// check applies to is an outcome too, so the walkthrough says so. With
+// authoring, the outcomes ask the checker for tests in the frameworks whose
+// checks ran.
+func runRepositoryChecks(ctx context.Context, objectsPath string, base, head evidence.RevisionIdentity, index *reviewIndexContext, authoring bool, stderr io.Writer) *review.CheckRuns {
 	fmt.Fprintln(stderr, "Running this repository's checks for the change in a sandbox (tests twice on each side, linters once)...")
 	progress := reviewProgressOf(ctx)
 	progress.begin("Repository checks", true)
@@ -282,6 +286,19 @@ func runRepositoryChecks(ctx context.Context, objectsPath string, base, head evi
 	if err != nil {
 		fmt.Fprintln(stderr, "The check results could not be bound to the review; the review continues without them.")
 		return nil
+	}
+	if authoring {
+		var frameworks []string
+		for _, result := range report.Results {
+			if result.Framework != "" {
+				frameworks = append(frameworks, result.Framework)
+			}
+		}
+		if asked, err := value.WithTestAuthoring(frameworks); err == nil {
+			value = asked
+		} else {
+			fmt.Fprintln(stderr, "No Go or Python test check ran on head, so the checker is not asked to write tests.")
+		}
 	}
 	return &value
 }
@@ -351,35 +368,117 @@ func namedTests(ids []string) []string {
 }
 
 func repositoryChecksReport(ctx context.Context, objectsPath string, base, head evidence.RevisionIdentity, dependents []string) (repochecks.Report, error) {
+	var report repochecks.Report
+	err := withChangeTrees(ctx, objectsPath, base, head, func(trees [2]string, changed []string) (err error) {
+		report, err = repochecks.Run(ctx, repochecks.Input{BaseTree: trees[0], HeadTree: trees[1], Scope: repochecks.Scope{Changed: changed, Dependents: dependents}, Limits: checksandbox.DefaultLimits(), Budget: repochecks.DefaultBudget})
+		return err
+	})
+	return report, err
+}
+
+// withChangeTrees writes the base and head trees of the change, read from the
+// verified object store, into a new scratch folder, calls use with them and
+// the changed paths, and removes the folder.
+func withChangeTrees(ctx context.Context, objectsPath string, base, head evidence.RevisionIdentity, use func(trees [2]string, changed []string) error) error {
 	objects, err := os.OpenRoot(objectsPath)
 	if err != nil {
-		return repochecks.Report{}, errors.New("the checkout's Git objects cannot be opened")
+		return errors.New("the checkout's Git objects cannot be opened")
 	}
 	defer objects.Close()
 	repository, _ := evidence.NewRepositoryIdentity("local", []string{"checkout"}, "repository")
 	store, err := scm.NewLocalGitObjectStoreWithOptions(scm.LocalGitObjectStoreOptions{ObjectsRoot: objects, Repository: repository, Profile: scm.LocalGitObjectStoreProfileLooseAndPackIndexV1, ObjectAlgorithm: base.Algorithm()})
 	if err != nil {
-		return repochecks.Report{}, errors.New("the checkout's Git objects cannot be read")
+		return errors.New("the checkout's Git objects cannot be read")
 	}
 	defer store.Close(context.WithoutCancel(ctx))
 	changed, err := repochecks.ChangedPaths(ctx, store, base, head)
 	if err != nil {
-		return repochecks.Report{}, errors.New("the changed files cannot be listed")
+		return errors.New("the changed files cannot be listed")
 	}
 	scratch, err := os.MkdirTemp("", checksandbox.TreesFolderPrefix)
 	if err != nil {
-		return repochecks.Report{}, errors.New("a scratch folder cannot be created")
+		return errors.New("a scratch folder cannot be created")
 	}
 	defer os.RemoveAll(scratch)
-	limits := checksandbox.DefaultLimits()
 	trees := [2]string{filepath.Join(scratch, "base"), filepath.Join(scratch, "head")}
 	for index, commit := range []evidence.RevisionIdentity{base, head} {
 		if err := os.Mkdir(trees[index], 0o700); err != nil {
-			return repochecks.Report{}, errors.New("a scratch folder cannot be created")
+			return errors.New("a scratch folder cannot be created")
 		}
-		if err := repochecks.Materialize(ctx, store, commit, trees[index], limits.DiskBytes); err != nil {
-			return repochecks.Report{}, err
+		if err := repochecks.Materialize(ctx, store, commit, trees[index], checksandbox.DefaultLimits().DiskBytes); err != nil {
+			return err
 		}
 	}
-	return repochecks.Run(ctx, repochecks.Input{BaseTree: trees[0], HeadTree: trees[1], Scope: repochecks.Scope{Changed: changed, Dependents: dependents}, Limits: limits, Budget: repochecks.DefaultBudget})
+	return use(trees, changed)
+}
+
+// pendingModelCheck is a model-written check of one reported finding, named
+// by its diagnostic identity, before it runs.
+type pendingModelCheck struct {
+	finding string
+	check   repochecks.Authored
+}
+
+// pendingModelChecks maps the checks a member's checker wrote to the
+// result's findings. A check of a finding the result does not report is
+// counted as dropped.
+func pendingModelChecks(result localreview.Result, authored []review.AuthoredCheck) ([]pendingModelCheck, int) {
+	report, err := result.Report()
+	if err != nil {
+		return nil, len(authored)
+	}
+	var pending []pendingModelCheck
+	dropped := 0
+	for _, check := range authored {
+		index := slices.IndexFunc(report.Findings, func(finding localreview.ReportFinding) bool { return finding.SourceIdentity == check.FindingIdentity })
+		if index < 0 {
+			dropped++
+			continue
+		}
+		finding := report.Findings[index]
+		pending = append(pending, pendingModelCheck{finding: finding.Identity, check: repochecks.Authored{Framework: check.Framework, Dir: path.Dir(finding.Path), Content: check.Content}})
+	}
+	return pending, dropped
+}
+
+// runModelWrittenChecks runs the checks the checker wrote, at most
+// review.MaxAuthoredChecks, on fresh base and head trees and returns the
+// ones that showed a regression, with every other check counted as
+// discarded. It returns nil when the checker wrote none.
+func runModelWrittenChecks(ctx context.Context, objectsPath string, base, head evidence.RevisionIdentity, pending []pendingModelCheck, dropped int, stderr io.Writer) *localreview.ModelWrittenChecks {
+	if len(pending) > review.MaxAuthoredChecks {
+		pending, dropped = pending[:review.MaxAuthoredChecks], dropped+len(pending)-review.MaxAuthoredChecks
+	}
+	if len(pending) == 0 {
+		return localreview.NewModelWrittenChecks(nil, dropped)
+	}
+	fmt.Fprintln(stderr, "Running the tests the checker wrote in a sandbox (each twice on base and on head)...")
+	progress := reviewProgressOf(ctx)
+	progress.begin("Model-written checks", true)
+	checks := make([]repochecks.Authored, len(pending))
+	for index, value := range pending {
+		checks[index] = value.check
+	}
+	var report repochecks.AuthoredReport
+	err := withChangeTrees(ctx, objectsPath, base, head, func(trees [2]string, _ []string) error {
+		report = repochecks.RunAuthored(ctx, repochecks.AuthoredInput{BaseTree: trees[0], HeadTree: trees[1], Checks: checks, Limits: checksandbox.DefaultLimits(), Budget: repochecks.AuthoredBudget})
+		return nil
+	})
+	progress.end()
+	var kept []localreview.ModelWrittenCheck
+	for index, result := range report.Results {
+		if result.Status != "" {
+			kept = append(kept, localreview.ModelWrittenCheck{FindingIdentity: pending[index].finding, Status: result.Status, Framework: checks[index].Framework, Path: result.Path, Content: checks[index].Content, Tests: namedTests(result.Tests)})
+		}
+	}
+	dropped += len(pending) - len(kept)
+	if err != nil {
+		fmt.Fprintf(stderr, "The tests the checker wrote could not run: %s.\n", terminalText(withoutHomeFolder(err.Error()), 500))
+	} else {
+		fmt.Fprintf(stderr, "Model-written checks: %d kept, %d discarded. They do not change the review's status.\n", len(kept), dropped)
+	}
+	for _, leftover := range report.Leftovers {
+		fmt.Fprintf(stderr, "A check's scratch folder could not be removed: %s. A later review removes it, or delete it yourself.\n", terminalText(withoutHomeFolder(leftover), 500))
+	}
+	return localreview.NewModelWrittenChecks(kept, dropped)
 }

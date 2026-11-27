@@ -176,8 +176,8 @@ func (m *rmModelEndpoint) serve(t *testing.T, w http.ResponseWriter, r *http.Req
 	payload := []byte(wire.Input[0].Content[0].Text)
 	var packet rmModelPacket
 	request, requestErr := provider.NewRequest(provider.CapabilityReviewV1, "application/json", payload)
-	if json.Unmarshal(payload, &packet) != nil || requestErr != nil || packet.Task == "candidate_generation" && packet.Version != 11 || packet.Task != "candidate_generation" && packet.Version != 10 {
-		t.Error("model did not receive the actual v11 generation or v10 verification context")
+	if json.Unmarshal(payload, &packet) != nil || requestErr != nil || packet.Task == "candidate_generation" && packet.Version != 11 || packet.Task != "candidate_generation" && packet.Version != 11 {
+		t.Error("model did not receive the actual v11 generation or v11 verification context")
 		http.Error(w, "invalid context", http.StatusBadRequest)
 		return
 	}
@@ -253,9 +253,17 @@ func (m *rmModelEndpoint) serve(t *testing.T, w http.ResponseWriter, r *http.Req
 			if m.mode == "wrong_candidate" {
 				id = strings.Repeat("f", 64)
 			}
-			verdicts = append(verdicts, map[string]any{"candidate_id": id, "outcome": outcome, "severity": severity, "rationale": "The cited caller passes zero to the unguarded integer division.", "evidence_ids": evidenceIDs})
+			verdict := map[string]any{"candidate_id": id, "outcome": outcome, "severity": severity, "rationale": "The cited caller passes zero to the unguarded integer division.", "evidence_ids": evidenceIDs}
+			if m.mode == "check" {
+				verdict["check"] = map[string]any{"framework": "go_test", "content": "package calc\n"}
+			}
+			verdicts = append(verdicts, verdict)
 		}
-		result = map[string]any{"schema_version": 1, "verdicts": verdicts}
+		version := 1
+		if m.mode == "check" {
+			version = 2
+		}
+		result = map[string]any{"schema_version": version, "verdicts": verdicts}
 	}
 	text, err := json.Marshal(result)
 	if err != nil {

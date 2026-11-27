@@ -212,7 +212,7 @@ func TestVerifierReceivesRemovedLinesAtADeletionPoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	verifier := request.Payload()
-	if string(modelContractFields(t, verifier)["schema_version"]) != "10" {
+	if string(modelContractFields(t, verifier)["schema_version"]) != "11" {
 		t.Fatal("verifier request for a removed_lines context is not version 9")
 	}
 	requireRemovedLinesSource(t, "verification", verifier, removed, []string{})

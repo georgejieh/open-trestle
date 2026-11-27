@@ -265,7 +265,7 @@ func TestVerifierReceivesTheGenerationStatedIntentUnchanged(t *testing.T) {
 		t.Fatalf("packet and durable verifier constructors disagree: %v", err)
 	}
 	fields := modelContractFields(t, request.Payload())
-	if string(fields["schema_version"]) != "10" || !bytes.Equal(fields["stated_intent"], modelContractFields(t, generationRequest.Payload())["stated_intent"]) {
+	if string(fields["schema_version"]) != "11" || !bytes.Equal(fields["stated_intent"], modelContractFields(t, generationRequest.Payload())["stated_intent"]) {
 		t.Fatal("the verifier does not receive the generation's stated intent unchanged")
 	}
 	system, err := TrustedModelRequestInstructions(request.Payload())

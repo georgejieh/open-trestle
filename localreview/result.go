@@ -120,6 +120,9 @@ type resultWire struct {
 	// CheckRegressions are the tests the repository's own checks proved
 	// broken (see WithCheckRegressions); they make the result blocked.
 	CheckRegressions *CheckRegressions `json:"check_regressions,omitempty"`
+	// ModelWrittenChecks are the checker's tests the sandbox kept (see
+	// WithModelWrittenChecks); they never change the status or disposition.
+	ModelWrittenChecks *ModelWrittenChecks `json:"model_written_checks,omitempty"`
 	// StyleAdvice is the optional style advice of schema version 5, encoded
 	// inline as the last members.
 	StyleAdvice
@@ -969,6 +972,9 @@ func RenderResultWithOptions(writer io.Writer, r Result, options RenderOptions) 
 		buffer.WriteString(line)
 	}
 	buffer.WriteString(FindingsText(report.Ranked, options, nil))
+	for _, line := range ModelWrittenChecksText(report.ModelWrittenChecks, FindingName(report.Findings)) {
+		buffer.WriteString(line)
+	}
 	if r.diagnostics.VerifiedSetIdentity() != "" {
 		fmt.Fprintf(&buffer, "coverage: candidates=%d verified=%d rejected=%d inconclusive=%d\n", r.diagnostics.CandidateCount(), r.diagnostics.VerifiedCount(), r.diagnostics.RejectedCount(), r.diagnostics.InconclusiveCount())
 	}

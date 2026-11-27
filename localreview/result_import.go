@@ -119,6 +119,11 @@ func parseCompletedResult(encoded []byte, observe bool) (Result, error) {
 	if wire.Status != status || wire.CI != expected && !(observe && wire.CheckRegressions == nil && recordedRelaxation(wire, set.Findings(), ci)) || !wire.UsageKnown && wire.ActualCostMicroUSD != 0 {
 		return Result{}, ErrInvalidResult
 	}
+	if wire.ModelWrittenChecks != nil && (wire.Version != tokenUsageResultVersion || !wire.ModelWrittenChecks.valid(func(id string) bool {
+		return slices.ContainsFunc(set.Findings(), func(finding diagnostics.Finding) bool { return finding.Identity() == id })
+	})) {
+		return Result{}, ErrInvalidResult
+	}
 	if wire.TokenUsage != nil && !validCompletedTokenUsage(*wire.TokenUsage, wire.UsageKnown) {
 		return Result{}, ErrInvalidResult
 	}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"strings"
@@ -173,5 +174,21 @@ func TestReviewViewNamesRegressionsAndUnfinishedReviewers(t *testing.T) {
 		"  Not a complete audit. Details: trestle review --verbose\n"
 	if out.String() != want {
 		t.Fatalf("\n%s\nwant\n%s", out.String(), want)
+	}
+}
+
+// A kept model-written check shows as one line under its finding, also when
+// it names a contributor of a merged set finding.
+func TestReviewViewShowsAModelWrittenCheckUnderItsFinding(t *testing.T) {
+	finding := localreview.ReportFinding{Identity: "representative", Title: "Zero-valued caller now panics", Path: "a.go", StartLine: 2, EndLine: 2}
+	group := localreview.MergedFinding{Finding: finding, Rank: 1, Contributors: []localreview.FindingContributor{{Identity: "representative"}, {Identity: "member"}}}
+	for _, identity := range []string{"representative", "member"} {
+		view := &reviewView{status: "findings", ci: "blocked", finished: true, ranked: []localreview.MergedFinding{group},
+			modelChecks: &localreview.ModelWrittenChecks{Source: localreview.ModelWrittenChecksSource, Kept: []localreview.ModelWrittenCheck{{FindingIdentity: identity, Status: localreview.ModelCheckRegression, Path: "trestle_check_1_test.go"}}}}
+		var out bytes.Buffer
+		view.render(newOutPrinter(context.Background(), &out), 4, localreview.RenderOptions{})
+		if strings.Count(strings.Join(strings.Fields(out.String()), " "), "Test: trestle_check_1_test.go shows it (passes on base, fails on head; written by the checker, so it does not change CI)") != 1 {
+			t.Fatalf("%s:\n%s", identity, out.String())
+		}
 	}
 }
