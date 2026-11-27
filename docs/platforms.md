@@ -3,7 +3,7 @@
 Open Trestle supports Linux and Windows. macOS is not supported; see
 [macOS](#macos). This page says what each system can do now, so that you
 can tell a missing feature from a mistake. See the
-[roadmap](roadmap.md#next-release) for what the release adds.
+[roadmap](roadmap.md#next-release) for what the next release adds.
 
 ## What works today
 
@@ -96,8 +96,8 @@ and set `verified` in `sandbox_darwin.go` to `true`.
 A port also needs the whole test suite run on a Mac, and a package or
 installer. See [CONTRIBUTING](../CONTRIBUTING.md).
 
-## For the first release
+## For a signed release
 
-The release needs signed archives, and `trestle update` for installs that the
+A signed release needs signed archives, and `trestle update` for installs that the
 install scripts make, on Linux and Windows. Until then, running the install
 script again is how such an install is updated.

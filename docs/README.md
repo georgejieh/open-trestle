@@ -1,7 +1,7 @@
 # Documentation
 
 This index groups the documentation by what you want to do. Open Trestle has
-no release yet, and each page describes what the code does today. The
+a first unsigned pre-release, and each page describes what the code does today. The
 [roadmap](roadmap.md) says what is built, what is next and what is out of scope.
 
 ## Start

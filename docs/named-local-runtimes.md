@@ -2,7 +2,7 @@
 
 This page covers four maintained configuration templates for running both review models on your own machine: llama.cpp, Ollama, vLLM and LM Studio. The templates use the protected inventory, the policy binding, the setup checker and the shared OpenAI-compatible Chat adapter.
 
-Choose one template. None of them is a default. LM Studio is the Mac server, and its requirements cover Apple Silicon on macOS 14 or later (not Intel Macs).
+Choose one template. None of them is a default. LM Studio's own requirements cover Apple Silicon on macOS 14 or later (not Intel Macs). Open Trestle itself is not supported on macOS; see [platforms](platforms.md#macos).
 
 `trestle init` does not use these templates. It looks for a server at the default ports (Ollama 11434, LM Studio 1234, llama.cpp 8080, vLLM 8000), offers whatever answers, and writes its own setup folder. Use the templates when you bind and check the configuration by hand.
 
@@ -78,9 +78,9 @@ HF_HUB_OFFLINE=1 VLLM_NO_USAGE_STATS=1 vllm serve /APPROVED/GENERATION --host 12
 HF_HUB_OFFLINE=1 VLLM_NO_USAGE_STATS=1 vllm serve /APPROVED/VERIFICATION --host 127.0.0.1 --port 8001 --served-model-name trestle-verification --max-model-len 32768
 ```
 
-Use one served name per process. vLLM documents that, when you supply several names, the response uses the first one. Aliases are therefore not interchangeable. Chat models need a chat template. Do not enable remote model code or development and weight-update APIs for this path. Before you declare content logging disabled in the route evidence, inspect prompt and content logging and disable it. vLLM is not the Mac server, so use a supported vLLM host and runtime.
+Use one served name per process. vLLM documents that, when you supply several names, the response uses the first one. Aliases are therefore not interchangeable. Chat models need a chat template. Do not enable remote model code or development and weight-update APIs for this path. Before you declare content logging disabled in the route evidence, inspect prompt and content logging and disable it. Use a host and runtime that vLLM supports.
 
-### LM Studio on Mac
+### LM Studio
 
 Use two different local models that are already downloaded (see `lms ls`), not remote devices from LM Link. Run these commands in a local LM Studio instance that you control:
 

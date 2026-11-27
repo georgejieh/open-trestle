@@ -38,7 +38,7 @@ A direct review prepares its context before any model call:
 - With your consent, it runs the repository's own tests in a sandbox (see [repository checks](repository-checks.md)).
 - It runs the built-in rule `static_debug_output` and the Go semantic-impact profile, and computes pattern hygiene and style detection.
 
-Analyzer adapters that policy approves, such as linters and static analysis, are planned (see the [roadmap](roadmap.md)).
+Analyzer adapters that policy approves are planned and have no code. The repository's own linters and type checkers already run as part of the [repository checks](repository-checks.md).
 
 After verification, a direct review runs a deterministic judge stage in the `localreview` package. No model takes part in it. The judge does three things:
 
@@ -63,7 +63,7 @@ Each element carries an evidence grade. Two grades exist today:
 - `structural` covers validated parse results such as declaration differences. It may support verification.
 - `syntactic_candidate` covers the repository index's name-matched uses and related tests of changed definitions. It may only prioritize inspection.
 
-Two further grades are planned design with no implementation. One is compiler or language-server facts from a type-aware adapter, which could support verification. The other is heuristics such as historical co-change, which would only point at review targets and could never create, raise or verify a finding on their own (see the [roadmap](roadmap.md)). Text or regex fallback may find candidates but cannot be presented as semantic analysis. Unsupported languages, generated content, incomplete resolution and adapter failure produce coverage gaps or abstentions.
+Two further grades are planned design with no implementation. One is compiler or language-server facts from a type-aware adapter, which could support verification. The other is heuristics such as historical co-change, which would only point at review targets and could never create, raise or verify a finding on their own. Text or regex fallback may find candidates but cannot be presented as semantic analysis. Unsupported languages, generated content, incomplete resolution and adapter failure produce coverage gaps or abstentions.
 
 The runtime assembles a compact review context packet, addressed by its content, from these inputs:
 
@@ -141,7 +141,7 @@ Open Trestle has three integration paths:
 2. The command path covers local terminals, CI jobs and scripts that use a declared Git state or a local fixture file. Git-hook integration is planned.
 3. The protocol path covers web console, REST, LSP and MCP clients. A gRPC API is planned.
 
-The [roadmap](roadmap.md) lists the planned items. None of them has code in the tree.
+None of these planned items has code in the tree, and none is on the [roadmap](roadmap.md).
 
 An integration counts as supported only after it passes common conformance checks for identity, immutable revision selection, cancellation, retry, deduplication, evidence parity, privacy behavior and safe degradation.
 

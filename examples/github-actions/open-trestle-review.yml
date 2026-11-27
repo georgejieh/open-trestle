@@ -27,7 +27,7 @@ env:
   # The review refuses to start while either still begins with YOUR_.
   GENERATION_MODEL: YOUR_GENERATION_MODEL
   VERIFICATION_MODEL: YOUR_DIFFERENT_VERIFICATION_MODEL
-  # PLACEHOLDER: pin to a release tag or a full commit SHA once releases exist.
+  # PLACEHOLDER: pin to a release tag or a full commit SHA.
   OPEN_TRESTLE_REF: main
   OPEN_TRESTLE_REPOSITORY: https://github.com/georgejieh/open-trestle.git
 
@@ -62,9 +62,9 @@ jobs:
           fi
 
       # ---- Install Open Trestle ---------------------------------------------
-      # PLACEHOLDER (not usable today): no Open Trestle release artifact exists
-      # yet. When one does, replace the build-from-source step below with a
-      # download of a pinned version plus its checksum, for example:
+      # PLACEHOLDER (not usable as written): to install a release instead,
+      # replace the build-from-source step below with a download of a pinned
+      # version plus its checksum, for example:
       #
       #   - name: Install Open Trestle (PLACEHOLDER release artifact)
       #     run: |

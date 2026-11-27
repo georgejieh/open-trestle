@@ -7,20 +7,24 @@ system prompts, finds, verifies and ranks findings with memory of past reviews
 and a map of the codebase, and ties every finding to the source it concerns.
 
 This page has three parts: what exists in the source tree, what is next, and
-what is out of scope. Nothing is released yet. Items carry no dates, and each one
-ships with tests, documentation and a CHANGELOG entry.
+what is out of scope. The only release so far is the unsigned pre-release
+`v0.1.0-alpha.1`. Items carry no dates, and each one ships with tests,
+documentation and a CHANGELOG entry.
 
 ## Available now
 
 The code and its tests exist in the source tree. It does not mean the feature is
-released.
+in the pre-release.
 
 - **Guided setup.** `trestle init` asks where the two models run and fills in
   the rest. See [getting started](getting-started.md) and [API keys](keys.md).
 - **Everyday loop.** `trestle review` reviews the current branch against its
   merge base with the default branch, and `trestle` on its own opens a home
-  screen. Results are text, JSON, SARIF or Markdown, ranked and deduplicated,
-  with a walkthrough. See [local model review](local-model-review.md).
+  screen. `trestle status` prints the same card without the actions, and
+  `trestle doctor` checks the install, the repository and the setup. A review
+  shows live progress. Results are text, JSON, SARIF or Markdown, ranked, with
+  one defect reported by several reviewers merged, and a walkthrough. See
+  [local model review](local-model-review.md) and [commands](commands.md).
 - **Repository index and map.** A review builds an index of the base and head
   commits. The finder and the verifier see the definition around each changed
   hunk, the callers and tests of changed code and a ranked repository map.
@@ -32,7 +36,9 @@ released.
   frameworks and enforced checks from the repository's tests and CI
   configuration. See [commands](commands.md).
 - **Repository checks.** With your consent, a review runs the repository's own
-  tests in a sandbox with no network and gives the outcomes to both models. See
+  tests in a sandbox with no network and gives the outcomes to both models. With
+  `--model-checks`, the checker also writes a test for up to 3 verified findings
+  and keeps it only when it passes on base and fails on head. See
   [repository checks](repository-checks.md).
 - **Providers.** OpenRouter, Ollama Cloud, OpenCode Go, Ollama signed in to
   Ollama Cloud, and any OpenAI-compatible server on this machine. Remote
@@ -43,7 +49,9 @@ released.
   `trestle usage`. See [spending limits](spending-limits.md).
 - **Specialists.** Six packaged profiles can run as specialists, one at a time with
   `--profile` or as a set with `--specialists` (at most three at once when every route is
-  remote). See [agent profiles](agent-profiles.md).
+  remote). A review also reads project intent documents such as
+  `.trestle/scope.md` and `PRD.md`. See [agent profiles](agent-profiles.md) and
+  [project intent documents](local-model-review.md#project-intent-documents).
 - **Install.** A release workflow builds Linux and Windows amd64 archives, and
   one-line install scripts install them for your account. The pre-releases are
   unsigned. See [install](install.md).
@@ -51,7 +59,8 @@ released.
   key is pinned yet, so the release channel refuses. An install made by the
   scripts is updated by running the script again. See [updates](updates.md).
 - **GitHub Actions example.** A workflow that runs the direct review and uploads
-  SARIF. It has been tested offline only. See
+  SARIF. It has run on a GitHub-hosted runner in a private repository; only its
+  `upload-sarif` step is unverified. See
   [GitHub pull-request review](github-pr-review.md).
 - **VS Code.** **Open Trestle: Review Current Branch** runs `trestle review` and
   shows the findings in the Problems panel. See [VS Code](vscode.md).
@@ -73,8 +82,7 @@ released.
 - A desktop app, built from the web console in a native shell, that opens a
   repository, runs the setup wizard, starts a review and shows the findings.
 - A GitHub Action (`action.yml`) verified on a test repository.
-- Choosing which of the bundled checks to run for a pull request, and writing
-  new tests for a change.
+- Choosing which of the bundled checks to run for a pull request.
 - Sign in with ChatGPT as a provider option, so that a review can use a
   ChatGPT plan instead of an API key.
 - Syntax analysis for the languages used with game engines such as Godot, Unity

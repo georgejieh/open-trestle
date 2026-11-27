@@ -17,13 +17,14 @@ because that repository had no code scanning. Read the logs of your first run. S
 
 Make these five changes before you use the workflow.
 
-1. Check the install step. No Open Trestle release exists yet, so the workflow
-   builds the unsigned Linux candidate from source, following
+1. Check the install step. The workflow clones this repository at
+   `OPEN_TRESTLE_REF` (`main` as shipped) and builds the unsigned Linux
+   package from that source, following
    [operations](../../docs/operations.md). That step takes about four minutes.
    It installs into a private folder under `RUNNER_TEMP`, because
    `/usr/local/bin` on a hosted runner is writable by every user and the
    installer refuses a system install there. The commented `PLACEHOLDER` block shows where a
-   pinned release artifact and its checksum go once one exists. Set
+   pinned release artifact and its checksum would go. Set
    `OPEN_TRESTLE_REF` to a commit SHA.
 2. Set the models. Set `GENERATION_MODEL` and `VERIFICATION_MODEL` to two
    different models. The job refuses to run while they still begin with `YOUR_`.
