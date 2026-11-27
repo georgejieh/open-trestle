@@ -1,16 +1,14 @@
 # Contributing to Open Trestle
 
-Thank you for considering a contribution. This page explains what to do before
-you start, the principles the code follows, and what a pull request should
-contain.
+Thank you for considering a contribution.
 
 ## Before you begin
 
-Before you start a material design change, open an issue or a discussion. In it,
-describe the behavior that users will see, the public contract that is involved,
-and how you plan to verify the change. Do not include
-credentials, proprietary source, confidential configuration, copied
-documentation, or third-party data that you cannot redistribute.
+Before you start a material design change, open an issue or a discussion. In
+it, describe the behavior that users will see, the public contract involved,
+and how you plan to verify the change. Do not include credentials, proprietary
+source, confidential configuration, copied documentation, or third-party data
+that you cannot redistribute.
 
 ## Development principles
 
@@ -37,8 +35,8 @@ Keep internal planning records, authoring briefs, private research, local
 session state and credentials out of the public tree.
 
 Do not add temporary build output. The maintained `web/dist/` and
-`extensions/vscode/dist/` distributions are intentional exceptions. Changes to
-them must pass the reproducibility and freshness checks in CI.
+`extensions/vscode/dist/` distributions are deliberate exceptions, and changes
+to them must pass the reproducibility and freshness checks in CI.
 
 ## Reporting defects
 

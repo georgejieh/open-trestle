@@ -12,9 +12,9 @@ The command does not read provider credentials, contact provider endpoints or op
 
 ## What the command checks
 
-The validator uses the same decoders as `trestled`. It checks that the runtime policy is bound to the identity of the decoded inventory. It checks route evidence manifests and then discards them. It validates credential environment names without printing them.
+The validator uses the same decoders as `trestled` and checks that the runtime policy is bound to the identity of the decoded inventory. It checks route evidence manifests and then discards them, and it validates credential environment names without printing them.
 
-A runtime policy is accepted only when each adapter ID maps to one unambiguous route namespace across the inventory. The namespace is made up of the zone, provider, connection and content-logging authority. Several models may share one namespace. If one adapter ID has different provider, connection, zone or logging declarations, the policy is rejected before the daemon or setup is built.
+A runtime policy is accepted only when each adapter ID maps to one unambiguous route namespace across the inventory. A namespace is the combination of zone, provider, connection and content-logging authority, and several models may share one. If one adapter ID has different provider, connection, zone or logging declarations, the policy is rejected before the daemon or setup is built.
 
 Each connection endpoint must also match the zone its adapter supports: a numeric loopback address for `local`, and a non-loopback HTTPS address for `private_remote`. Conventional localhost names and non-unicast numeric addresses are rejected.
 
@@ -26,7 +26,7 @@ Validation confirms that the files are well formed and that their identities mat
 
 - Whether a route is healthy right now.
 - Whether a route has been approved.
-- Whether the generation model and verifier model you selected are an eligible pair. Use `config bind` to check that pair offline. Startup and dispatch also check eligibility.
+- Whether the generation model and verifier model you selected are an eligible pair. Use `config bind` to check the pair offline; startup and dispatch also check it.
 
 ## Stricter checks at daemon startup
 

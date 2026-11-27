@@ -1,8 +1,9 @@
 # Documentation
 
 This index groups the documentation by what you want to do. Open Trestle has
-a first unsigned pre-release, and each page describes what the code does today. The
-[roadmap](roadmap.md) says what is built, what is next and what is out of scope.
+one unsigned pre-release so far, and each page describes what the code does
+today. The roadmap, under Contribute, says what is built, what is next and
+what is out of scope.
 
 ## Start
 
@@ -23,7 +24,7 @@ a first unsigned pre-release, and each page describes what the code does today. 
 - [Model catalog](model-catalog.md): how setup learns model facts.
 - [Repository index](repository-index.md): `trestle index`, the map and the context a review reads from it.
 - [Repository checks](repository-checks.md): run the repository's own tests in a sandbox during a review.
-- [Review feedback](local-feedback.md): record your own notes on a past review so that later reviews can use them.
+- [Review feedback](local-feedback.md): record notes on a past review for later reviews to use.
 - Static local Git commands: [inspect](local-git-inspect.md), [change](local-git-change.md) and [debug-output review](local-git-review.md).
 
 ## Integrate
@@ -45,7 +46,7 @@ a first unsigned pre-release, and each page describes what the code does today. 
 
 ## Help
 
-- [Troubleshooting](troubleshooting.md): what each message means and how to fix it; start with `trestle doctor`.
+- [Troubleshooting](troubleshooting.md): what each message means and how to fix it. Start with `trestle doctor`.
 - [Privacy](privacy.md): what leaves your machine, when and where.
 - [Support](../SUPPORT.md) and [security reports](../SECURITY.md).
 
@@ -56,7 +57,7 @@ These pages are for running the daemon.
 - [Setup plan](setup.md) and [operations and recovery](operations.md).
 - [Configuration validation](configuration-validation.md).
 - [Remote workers](remote-workers.md) and [webhook ingress](webhook-ingress.md).
-- GitHub: [source acquisition](github-source-acquisition.md).
+- [GitHub source acquisition](github-source-acquisition.md).
 - [Passive vulnerability gate](vulnerability-gate.md).
 
 ## Contribute

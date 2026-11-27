@@ -3,18 +3,18 @@
 Open Trestle aims to be the best open-source code-review agent, one that runs
 wherever you work: the command line, your editor, a GitHub
 Action and a desktop app. A review steers its models with specialist skills and
-system prompts, finds, verifies and ranks findings with memory of past reviews
-and a map of the codebase, and ties every finding to the source it concerns.
+system prompts. It finds, verifies and ranks findings with memory of past
+reviews and a map of the codebase, and ties every finding to the source it
+concerns.
 
-This page has three parts: what exists in the source tree, what is next, and
-what is out of scope. The only release so far is the unsigned pre-release
-`v0.1.0-alpha.1`. Items carry no dates, and each one ships with tests,
-documentation and a CHANGELOG entry.
+The only release so far is the unsigned pre-release `v0.1.0-alpha.1`. Items
+carry no dates, and each one ships with tests, documentation and a CHANGELOG
+entry.
 
 ## Available now
 
-The code and its tests exist in the source tree. It does not mean the feature is
-in the pre-release.
+These items have code and tests in the source tree, which does not mean that
+they are in the pre-release.
 
 - **Guided setup.** `trestle init` asks where the two models run and fills in
   the rest. See [getting started](getting-started.md) and [API keys](keys.md).
@@ -22,12 +22,13 @@ in the pre-release.
   merge base with the default branch, and `trestle` on its own opens a home
   screen. `trestle status` prints the same card without the actions, and
   `trestle doctor` checks the install, the repository and the setup. A review
-  shows live progress. Results are text, JSON, SARIF or Markdown, ranked, with
-  one defect reported by several reviewers merged, and a walkthrough. See
+  shows live progress. Results come as text, JSON, SARIF or Markdown, with the
+  findings ranked, a defect that several reviewers report merged into one, and
+  a walkthrough. See
   [local model review](local-model-review.md) and [commands](commands.md).
 - **Repository index and map.** A review builds an index of the base and head
   commits. The finder and the verifier see the definition around each changed
-  hunk, the callers and tests of changed code and a ranked repository map.
+  hunk, the callers and tests of the changed code, and a ranked repository map.
   `trestle index` builds and queries the index. See
   [repository index](repository-index.md).
 - **Syntax analysis.** Java, JavaScript, TypeScript, Python, HTML, C, C++, C#,
@@ -37,8 +38,8 @@ in the pre-release.
   configuration. See [commands](commands.md).
 - **Repository checks.** With your consent, a review runs the repository's own
   tests in a sandbox with no network and gives the outcomes to both models. With
-  `--model-checks`, the checker also writes a test for up to 3 verified findings
-  and keeps it only when it passes on base and fails on head. See
+  `--model-checks`, the checker also writes a test for each of up to 3 verified
+  findings and keeps a test only when it passes on base and fails on head. See
   [repository checks](repository-checks.md).
 - **Providers.** OpenRouter, Ollama Cloud, OpenCode Go, Ollama signed in to
   Ollama Cloud, and any OpenAI-compatible server on this machine. Remote
@@ -59,8 +60,8 @@ in the pre-release.
   key is pinned yet, so the release channel refuses. An install made by the
   scripts is updated by running the script again. See [updates](updates.md).
 - **GitHub Actions example.** A workflow that runs the direct review and uploads
-  SARIF. It has run on a GitHub-hosted runner in a private repository; only its
-  `upload-sarif` step is unverified. See
+  SARIF. It has run on a GitHub-hosted runner in a private repository, and only
+  its `upload-sarif` step is unverified. See
   [GitHub pull-request review](github-pr-review.md).
 - **VS Code.** **Open Trestle: Review Current Branch** runs `trestle review` and
   shows the findings in the Problems panel. See [VS Code](vscode.md).
@@ -77,8 +78,8 @@ in the pre-release.
 ## Next release
 
 - A signed release, and `trestle update` for the installs that the install
-  scripts make. The scripts themselves install unsigned pre-releases on Linux
-  and Windows (amd64) today; see [install](install.md).
+  scripts make. Today the scripts install unsigned pre-releases on Linux and
+  Windows (amd64). See [install](install.md).
 - A desktop app, built from the web console in a native shell, that opens a
   repository, runs the setup wizard, starts a review and shows the findings.
 - A GitHub Action (`action.yml`) verified on a test repository.
@@ -113,8 +114,12 @@ in the pre-release.
 
 ## Release gates
 
-A release candidate must show source lines cited for every published finding,
-no unapproved provider route, egress, command or source change, a pinned scan
-helper with its limits and the reviewed 11 of 14 coverage baseline, no blocking
-finding that rests only on model output, signed artifacts with an SBOM and
-provenance, and versioned quality evaluation with cost and latency evidence.
+A release candidate must show:
+
+- source lines cited for every published finding;
+- no unapproved provider route, egress, command or source change;
+- a pinned scan helper with its limits and the reviewed 11 of 14 coverage
+  baseline;
+- no blocking finding that rests only on model output;
+- signed artifacts with an SBOM and provenance;
+- versioned quality evaluation with cost and latency evidence.

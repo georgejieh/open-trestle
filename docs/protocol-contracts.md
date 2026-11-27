@@ -1,10 +1,10 @@
 # Protocol contracts
 
-Open Trestle publishes JSON Schema 2020-12 documents for people who implement its transports. This page lists those schemas and explains the rules that go with them. It is a reference for contributors and integrators.
+This page lists the JSON Schema 2020-12 documents that Open Trestle publishes for contributors and integrators who implement its transports, and the rules that go with them.
 
-The runtime parsers enforce the contracts, and passing a schema does not grant authority. Repository tests resolve every local fragment and every internal Open Trestle URN reference offline. An unknown target, a missing fragment, a malformed JSON Pointer or an external schema reference fails the test suite.
+The runtime parsers enforce the contracts, and passing a schema grants no authority. Repository tests resolve every local fragment and every internal Open Trestle URN reference offline. An unknown target, a missing fragment, a malformed JSON Pointer or an external schema reference fails the test suite.
 
-The setup-plan parsers replay the embedded checker catalog and the receipt chain before they accept readiness. They also require the following:
+Before they accept readiness, the setup-plan parsers replay the embedded checker catalog and the receipt chain. They also require:
 
 - canonical field order and encoding;
 - identities that are recomputed from content;
@@ -14,9 +14,9 @@ The setup-plan parsers replay the embedded checker catalog and the receipt chain
 - tenant lineage;
 - a bounded byte size.
 
-The runtime-status schemas constrain years to 1970 through 9999 and allow only valid Gregorian leap days. The runtime-status parsers also enforce calendar-valid UTC millisecond timestamps, the repository projection, unique and sorted handler kinds and components, backend compatibility, and conditional review, route, worker and publication rules that the schemas cannot express completely.
+The runtime-status schemas constrain years to 1970 through 9999 and allow only valid Gregorian leap days. The runtime-status parsers also enforce rules that the schemas cannot express completely: calendar-valid UTC millisecond timestamps, the repository projection, unique and sorted handler kinds and components, backend compatibility, and conditional review, route, worker and publication rules.
 
-The executable review-context packet is generation context version 11, and the verification-context packet is version 11. A verification context asks for `model-verification-batch-v2`, whose verdicts may carry an optional `check`; a version 1 answer is still read. The verification-context packet labels its candidates `c1`, `c2` and so on in `candidates[].candidate_id`, in candidate batch order, and a verdict names its candidate by that label; the host maps each label back to the candidate identity before the verdict checks. Counted source omissions are part of their request identities and coverage equations. Both may carry the optional `check_runs` object, the bounded outcomes of the repository's own checks (see [repository checks](repository-checks.md)); the sanitized-egress receipt names its scanned fields with the role `check_run_text`.
+The executable review-context packet is generation context version 11, and the verification-context packet is version 11. A verification context asks for `model-verification-batch-v2`, whose verdicts may carry an optional `check`, and a version 1 answer is still read. The verification-context packet labels its candidates `c1`, `c2` and so on in `candidates[].candidate_id`, in candidate batch order. A verdict names its candidate by that label, and the host maps each label back to the candidate identity before the verdict checks. Counted source omissions are part of the request identities and coverage equations of both packets. Both may carry the optional `check_runs` object, the bounded outcomes of the repository's own checks (see [repository checks](repository-checks.md)), and the sanitized-egress receipt names those scanned fields with the role `check_run_text`.
 
 Routing, policy, provider, and review schemas:
 
@@ -37,9 +37,9 @@ Routing, policy, provider, and review schemas:
 - `schemas/secret-scanner/secret-scan-request-v1.schema.json`
 - `schemas/secret-scanner/secret-scan-response-v1.schema.json`
 
-Route-reference schema v2 allows one optional final `:tag` in `model_id`. A tagged model ID requires an empty `model_version`. An untagged model ID needs a nonempty version selector.
+Route-reference schema v2 allows one optional final `:tag` in `model_id`. A tagged model ID requires an empty `model_version`, and an untagged one needs a nonempty version selector.
 
-Values that look like `host:port` or like an opaque URI in a tagged ID are inert model text. They never act as an endpoint, a filesystem path or a credential. The runtime inventory and the durable route authorization v1 schemas already bound these fields broadly, and native route validation enforces the stricter grammar. No schema version changes the route identity preimages (the exact bytes that identities are computed from).
+Values in a tagged ID that look like `host:port` or an opaque URI are inert model text. They never act as an endpoint, a filesystem path or a credential. The runtime inventory and the durable route authorization v1 schemas already bound these fields broadly, and native route validation enforces the stricter grammar. No schema version changes the route identity preimages (the exact bytes that identities are computed from).
 
 Native Go tests exercise the selector semantics. The schema tests check structure and do not perform full JSON Schema semantic validation.
 
@@ -48,15 +48,21 @@ Candidate batch schema v2 is the output schema of generation contexts. Schema v1
 - A required, closed `category`: `correctness`, `security`, `concurrency`, `performance`, `reliability`, `maintainability`, `style`, `documentation` or `testing`.
 - An optional `fix`, which is nonblank plain text of at most 256 characters. The schema sets this as `maxLength`. The host parser enforces the same 256-character bound plus a 1024-byte UTF-8 wire bound, which 256 characters can never exceed.
 
-Both fields are advisory model output. The fix is never applied and is not verified. At runtime, a candidate whose `source_range` names a `repository_context` source is dropped and counted. A candidate may instead be located in a `removed_lines` source, as a base-side finding.
+Both fields are advisory model output, and the fix is never applied or verified. At runtime, a candidate whose `source_range` names a `repository_context` source is dropped and counted. A candidate may instead be located in a `removed_lines` source, as a base-side finding.
 
 The investigation output schema uses a closed `oneOf`: the output is either a candidate batch or one host-defined snapshot tool call. A valid proposal is not permission to run a tool. Runtime parsing, the retained model response, the source bindings and the policy limits still decide what is accepted.
 
-No JSON Schema is published for the `open-trestle/local-git-model-review-result` receipt of `trestle local-git model-review`, at any of its versions 1 through 6. The fields, versions and readback rules are documented in [local model review](local-model-review.md#results-and-limits). The strict native parser, `localreview.ParseCompletedResult`, is the authority. The versions differ as follows.
+No JSON Schema is published for the `open-trestle/local-git-model-review-result` receipt of `trestle local-git model-review`, at any of its versions 1 through 6. The fields, versions and readback rules are documented in [local model review](local-model-review.md#results-and-limits), and the strict native parser, `localreview.ParseCompletedResult`, is the authority. The later versions differ as follows.
 
 - Version 5 adds optional style advice to the version 4 fields, or to the `investigation` object of a version 2 investigation result. The advice fields are `style_recommendations`, `style_withheld`, `style_configuration_unread` and `style_advice_unavailable`.
-- Version 6 keeps every earlier field. Open Trestle writes it for every run that opened, and for a review that was refused before it opened because a spending limit was reached (`failure_detail` `spending_limit_reached`, without `token_usage`). It adds `token_usage` and per-turn token counts on investigation turns. `token_usage` holds the provider-reported input, output and cached-input tokens, summed over the claimed route attempts, with generation and verification shares. The counts are absent unless every attempt reported usage.
-- A completed direct version 6 result also carries these fields, added in place. `rank` lists every distinct verified finding in rank order, with the duplicates merged into it. `pre_existing` lists findings on unchanged lines that the change provably cannot reach. It is advisory on import, where the readiness `ci_disposition` is required; only the evaluation reader (`localreview.ObserveCompletedResult`) also accepts a disposition it relaxed. `unproven_origin` lists findings on unchanged lines that the change may have caused; they block. `declaration_anchors` gives the changed declaration that holds a finding and is used only to merge duplicates. `walkthrough` is the summary of the review. `check_regressions` lists the tests the repository checks proved broken; a result that carries it must be `blocked` on import, and the evaluation reader does not relax that.
+- Version 6 keeps every earlier field and adds `token_usage` and per-turn token counts on investigation turns. Open Trestle writes it for every run that opened, and for a review refused before it opened because a spending limit was reached (`failure_detail` `spending_limit_reached`, without `token_usage`). `token_usage` holds the provider-reported input, output and cached-input tokens, summed over the claimed route attempts, with generation and verification shares. The counts are absent unless every attempt reported usage.
+- A completed direct version 6 result also carries the following fields, added in place:
+  - `rank` lists every distinct verified finding in rank order, with its duplicates merged into it.
+  - `pre_existing` lists findings on unchanged lines that the change provably cannot reach. It is advisory on import, where the readiness `ci_disposition` is required. Only the evaluation reader (`localreview.ObserveCompletedResult`) also accepts a disposition that it relaxed.
+  - `unproven_origin` lists findings on unchanged lines that the change may have caused. They block.
+  - `declaration_anchors` gives the changed declaration that holds a finding and is used only to merge duplicates.
+  - `walkthrough` is the summary of the review.
+  - `check_regressions` lists the tests that the repository checks proved broken. A result that carries it must be `blocked` on import, and the evaluation reader does not relax that.
 
 Control-plane schemas:
 
@@ -87,19 +93,19 @@ Control-plane schemas:
 - `schemas/controlplane/run-progress-response-v1.schema.json`
 - `schemas/controlplane/delivery-refusal-response-v1.schema.json`
 
-The `run` member of the API response v1 envelope is the canonical receipt v1, v2 or v3, whichever the run's state needs. Like its `diagnostics` member, it names the embedded record's own version. The task completion request v1 likewise carries task completion v1, v2 or v3.
+The `run` member of the API response v1 envelope is the canonical receipt v1, v2 or v3, whichever the run's state needs, and like the `diagnostics` member it names the embedded record's own version. The task completion request v1 likewise carries task completion v1, v2 or v3.
 
 The run-progress response v1 is a separate read-only HTTP envelope with exactly `contract`, `schema_version`, `request_id`, `run` and `progress`. It references the canonical receipt v1, v2 or v3. Its four axes are `change`, `deterministic`, `context` and `verification`. Each axis has a bounded state, an optional immutable artifact identity and only its declared count fields.
 
 The schema inventory contains 111 documents. The native client also validates the scope, the completed-task binding, the output identities other than context, the count equations and the checked-versus-applicable bounds. Schema validation cannot establish artifact lineage or consistency with the receipt head.
 
-The delivery-refusal response v1 is another read-only envelope, with exactly `contract`, `schema_version`, `request_id` and `refusal`. The `refusal` member is the canonical `open-trestle/webhook-delivery-refusal` v1 record. It describes an accepted webhook delivery that intake refused instead of opening its run. It holds the tenant, repository, source, deduplication key, delivery and planner identities, the reason token and the refusal time. It carries no delivery content. Errors use the api-response envelope.
+The delivery-refusal response v1 is another read-only envelope, with exactly `contract`, `schema_version`, `request_id` and `refusal`. The `refusal` member is the canonical `open-trestle/webhook-delivery-refusal` v1 record, which describes an accepted webhook delivery that intake refused instead of opening its run. It holds the tenant, repository, source, deduplication key, delivery and planner identities, the reason token and the refusal time, but no delivery content. Errors use the api-response envelope.
 
-In the progress response, `not_run` and `unavailable` carry no counts, and absent counts mean unknown, not zero. Only a deterministic check that is evidenced as incomplete uses `partial`. The available context artifact identity is the packet that the source evidence proves. After v6 settlement it can differ from the receipt's sanitized generation-input output. The other available axis identities equal the outputs of their completed tasks.
+In the progress response, `not_run` and `unavailable` carry no counts, and absent counts mean unknown, not zero. Only a deterministic check evidenced as incomplete uses `partial`. The available context artifact identity is the packet that the source evidence proves, which after v6 settlement can differ from the receipt's sanitized generation-input output. The other available axis identities equal the outputs of their completed tasks.
 
-To answer a progress request, the daemon uses at most ten indexed, scoped artifact loads and the existing canonical parsers. It checks that the receipt head has not changed, and returns `409 progress_changed` if it advanced. It writes no provisional diagnostics, grants no approval and performs no model or publication effect. `runs status --format progress` prints a single bound `{run, progress}` object rather than the HTTP envelope. See [read-only run progress](daemon-api.md#read-only-run-progress).
+To answer a progress request, the daemon uses at most ten indexed, scoped artifact loads and the existing canonical parsers. It checks that the receipt head has not changed and returns `409 progress_changed` if it advanced. It writes no provisional diagnostics, grants no approval and has no model or publication effect. `runs status --format progress` prints a single bound `{run, progress}` object rather than the HTTP envelope. See [read-only run progress](daemon-api.md#read-only-run-progress).
 
-The local file-backed full-review context worker writes a v3 `context_abstention_prepared` event before it writes any abstention artifact. The bounded canonical artifact envelope holds omission metadata only. It holds no repository source bytes and no model claim. Before a v2 failed-task event links the result, recovery must verify the exact scope, plan, task, provenance, failure class and artifact identity. Old v1 no-output failures and v2 linked failures remain readable. The PostgreSQL journal's current 1 MiB event limit does not qualify v3, so local full review rejects nonlocal stores.
+The local file-backed full-review context worker writes a v3 `context_abstention_prepared` event before it writes any abstention artifact. The bounded canonical artifact envelope holds omission metadata only, with no repository source bytes and no model claim. Before a v2 failed-task event links the result, recovery must verify the exact scope, plan, task, provenance, failure class and artifact identity. Old v1 no-output failures and v2 linked failures remain readable. The PostgreSQL journal's current 1 MiB event limit does not qualify v3, so local full review rejects nonlocal stores.
 
 A failed source acquisition may record one closed, content-free reason:
 
@@ -109,12 +115,12 @@ A failed source acquisition may record one closed, content-free reason:
 
 `NewSourceTaskFailureWithReason` binds the reason, the failure class, the plan and the task into a v3 task completion. The coordinator accepts it only for an `acquire_source` task of that plan, and records it in a v7 `task_failed` event with an empty output. Replay restores the reason on the task until a retry makes the task available again. A receipt with any task reason is receipt v3, whose task item adds `failure_reason`. The reason is never forge or repository text. Earlier event, completion and receipt versions keep their bytes and identities.
 
-A context assembly task that is refused before any model effect records one of two route reasons. The reason goes on the same v3 completion, v7 `task_failed` event and v3 receipt.
+A context assembly task that is refused before any model effect records one of two route reasons, on the same v3 completion, v7 `task_failed` event and v3 receipt:
 
 - `route_context_insufficient` applies when the request's byte-based reservation exceeds the declared context of every candidate route. The reservation is an upper bound on the request's input tokens plus the output allowance.
 - `no_eligible_route` applies to any other route refusal.
 
-`NewContextTaskRefusal` binds the policy failure, the reason, the plan and the `assemble_context` task. `route_context_insufficient` always carries, and only it carries, a `context_shortfall` object with these fields:
+`NewContextTaskRefusal` binds the policy failure, the reason, the plan and the `assemble_context` task. A `context_shortfall` object is carried with `route_context_insufficient`, and only with it. Its fields are:
 
 - `required_tokens`, which equals `estimated_input_tokens` plus `max_output_tokens`;
 - `estimated_input_tokens`;
@@ -123,7 +129,7 @@ A context assembly task that is refused before any model effect records one of t
 
 The counts are bound into the completion and event identities, and replay restores them. A source reason is accepted only for `acquire_source`, and a route reason only for `assemble_context`.
 
-When the provider answers a candidate generation or verification attempt with a refusal, the task records one of seven provider reasons. They go on the same v3 completion, v7 `task_failed` event and v3 receipt, and are named from the HTTP status alone. Six have failure class `policy`:
+When the provider answers a candidate generation or verification attempt with a refusal, the task records one of seven provider reasons, named from the HTTP status alone, on the same v3 completion, v7 `task_failed` event and v3 receipt. Six have failure class `policy`:
 
 - `provider_payment_required` (402);
 - `provider_model_unavailable` (404);
@@ -134,18 +140,18 @@ When the provider answers a candidate generation or verification attempt with a 
 
 The seventh, `provider_rate_limited` (429), has failure `transient`.
 
-The route failure class `request_rejected` is never retried. No published record can carry it. The route execution record v1 and the investigation turn v1 hold successful attempts only, so it appears only in the completed-attempt record, which is not in any release and reads it in place.
+The route failure class `request_rejected` is never retried, and no published record can carry it: the route execution record v1 and the investigation turn v1 hold successful attempts only, so the class appears only in the completed-attempt record, which is not in any release and reads it in place.
 
 Two more reasons have failure `internal`:
 
 - `provider_response_invalid` is recorded when the provider answered with a reply that the adapter refused. This is the route failure `invalid_response` after the request was sent: a malformed, truncated or otherwise unaccepted 200, or a status that no other class names, such as 409. The reason names neither the reply nor its fields.
-- `model_output_invalid` is recorded when the reply was accepted and stopped normally, but the review parser refused the answer as not a valid review document. That covers an answer that is not one JSON document, a refusal, the wrong shape, or a document that the review rules refuse. The reason names neither the answer nor its fields. A host input check, or a reply stopped at the output limit or by a content filter, records no such reason.
+- `model_output_invalid` is recorded when the reply was accepted and stopped normally, but the review parser refused the answer as not a valid review document: an answer that is not one JSON document, a refusal, the wrong shape, or a document that the review rules refuse. The reason names neither the answer nor its fields. A host input check, or a reply stopped at the output limit or by a content filter, records no such reason.
 
 `NewModelTaskFailureWithReason` binds the reason, its one failure, the plan, and a `generate_candidates` or `verify_candidates` task. The completion, the event, replay and the receipt all refuse any other pairing.
 
-A 429, or a 503 that names a `Retry-After` in seconds, is a `rate_limited` refusal with known zero usage. It reaches the task only after the model handler's same-route retries. Within the task's one attempt, `NewRateLimitedRetryAttemptAuthorization` grants each of at most two retries (`NewRateLimitRetryPolicy`) after a rate limit that settled at known zero usage (or, from an adapter that records none, unknown usage). Each retry is its own route attempt with the same request, route and terms. It takes over the refused attempt's reservation instead of reserving again, and `IsSameReservationRetryOf` recognizes that lineage when a generation result or rejection is read back. The task records `provider_rate_limited` when the last retry is also rate-limited or no retry is allowed.
+A 429, or a 503 that names a `Retry-After` in seconds, is a `rate_limited` refusal with known zero usage. It reaches the task only after the model handler's same-route retries. Within the task's one attempt, `NewRateLimitedRetryAttemptAuthorization` grants each of at most two retries (`NewRateLimitRetryPolicy`) after a rate limit that settled at known zero usage (or at unknown usage, from an adapter that records none). Each retry is its own route attempt with the same request, route and terms. It takes over the refused attempt's reservation instead of reserving again, and `IsSameReservationRetryOf` recognizes that lineage when a generation result or rejection is read back. The task records `provider_rate_limited` when the last retry is also rate-limited or no retry is allowed.
 
-The daemon's startup proofs read each refused attempt from the audit as a sequence of records. The sequence is a claim, a completed dispatch without a response and its reconciliation, and then a retry claim whose causal parents are the selection, the refused outcome and the retry decision. With the artifacts retained, `SameReservationRetryIdentity` derives the identity that each retry claim must carry, from the input's authorization and those recorded identities. No recorded format changes.
+The daemon's startup proofs read each refused attempt from the audit as a sequence: a claim, a completed dispatch without a response and its reconciliation, and then a retry claim whose causal parents are the selection, the refused outcome and the retry decision. With the artifacts retained, `SameReservationRetryIdentity` derives the identity that each retry claim must carry from the input's authorization and those recorded identities. No recorded format changes.
 
 A v4 `context_packet_prepared` event stores only the packet's artifact metadata and these values:
 
@@ -156,7 +162,7 @@ A v4 `context_packet_prepared` event stores only the packet's artifact metadata 
 
 The file journal syncs this checkpoint to disk before a caller may put packet bytes. This first checkpoint cannot settle success, renew or reclaim the lease, or authorize dispatch.
 
-Trusted recovery may terminally fail an expired packet-only preparation with a policy-class, no-output task failure that has no reason. Within the lease, its holder may instead settle the packet-only preparation as a recorded route refusal, no later than the lease expiry. That is the same no-output policy failure, carrying `route_context_insufficient` with its counts or `no_eligible_route`. Neither path can treat the preparatory packet as output.
+Trusted recovery may terminally fail an expired packet-only preparation with a policy-class, no-output task failure that has no reason. Within the lease, its holder may instead settle the preparation as a recorded route refusal, no later than the lease expiry. That is the same no-output policy failure, carrying `route_context_insufficient` with its counts or `no_eligible_route`. Neither path can treat the preparatory packet as output.
 
 This event does not implement the later sanitized-input checkpoint, and it does not verify packet bytes against immutable upstream sources. The v1, v2 and v3 event bytes remain unchanged.
 
@@ -201,7 +207,7 @@ Artifact schemas:
 - `schemas/artifact/verified-finding-set-v3.schema.json` (uncategorized findings that record removed base lines)
 - `schemas/artifact/model-verification-result-v1.schema.json` (its `verification_batch` is one of verification-batch v1 or v2, and its `verified_finding_set` one of verified-finding-set v1, v2 or v3; it names the scan helper by `scanner_helper_sha256`)
 
-Each of these versioned artifact schemas describes exactly one version, and later versions are separate files. The version 1 files of the candidate batch and the verified finding set are as first published. The generation input v1 file differs only in that it also accepts the identity of the v2 candidate schema, which a version 7 or later context requests.
+Each versioned artifact schema describes exactly one version, and later versions are separate files. The version 1 files of the candidate batch and the verified finding set are as first published. The generation input v1 file differs only in that it also accepts the identity of the v2 candidate schema, which a version 7 or later context requests.
 
 Evaluation schemas:
 
@@ -234,7 +240,7 @@ Spending schemas:
 - `schemas/runtime/spending-limit-v1.schema.json`
 - `schemas/runtime/usage-ledger-entry-v1.schema.json`
 
-A spending limit v1 (`open-trestle/spending-limit`) is the local limit for one API key. It holds these fields:
+A spending limit v1 (`open-trestle/spending-limit`) is the local limit for one API key. It holds:
 
 - the provider ID;
 - the key variable name and its credential reference identity, which is the same SHA-256 of `open-trestle/provider-credential-environment/` and the name that every runtime policy connection and setup witness records;
@@ -242,9 +248,15 @@ A spending limit v1 (`open-trestle/spending-limit`) is the local limit for one A
 - `limit_micro_usd`, in whole cents;
 - ascending `alert_percents`.
 
-A usage ledger entry v1 (`open-trestle/usage-ledger-entry`) records one review run that sent at least one request through a keyed route. It holds the time, the review run ID, the runtime policy identity, the keys and models used, the requests sent, `usage_known` and `cost_micro_usd`. The cost is the settled cost (`cost: settled_usage`). When usage was unknown, it is instead each such request at the cost reserved for it (`cost: reservation_upper_bound`). The entry always has `price_basis: route_max_price`.
+A usage ledger entry v1 (`open-trestle/usage-ledger-entry`) records one review run that sent at least one request through a keyed route. It holds the time, the review run ID, the runtime policy identity, the keys and models used, the requests sent, `usage_known` and `cost_micro_usd`. The cost is the settled cost (`cost: settled_usage`), or, when usage was unknown, each such request at the cost reserved for it (`cost: reservation_upper_bound`). The entry always has `price_basis: route_max_price`.
 
-`trestle` stores both in the private usage folder: `$XDG_STATE_HOME/open-trestle/usage`, by default `~/.local/state/open-trestle/usage`, with mode `0700` and files `0600`. They never hold a key, source, prompt or reply, and they are an upper-bound estimate, not a bill. The native parsers (`spending.ParseLimit` and `spending.ParseEntry`) additionally require the canonical encoding, the derived identities and sorted keys and models. A limit is best effort, and the provider's own limit is the guarantee. See [spending limits](spending-limits.md).
+`trestle` stores both in the private usage folder `$XDG_STATE_HOME/open-trestle/usage`, by default `~/.local/state/open-trestle/usage`, with mode `0700` and files `0600`. They never hold a key, source, prompt or reply, and they are an upper-bound estimate, not a bill. The native parsers (`spending.ParseLimit` and `spending.ParseEntry`) additionally require the canonical encoding, the derived identities and sorted keys and models. A limit is best effort, and the provider's own limit is the guarantee. See [spending limits](spending-limits.md).
+
+Runtime policy v1 keeps its original wire and identity contract. Its `preferred_route_record_identities` are ordered ranking hints, not a verifier-route grant.
+
+Runtime policy v2 requires `verification_route_record_identity`, an exact nonzero record identity in the bound route inventory. The policy binds that grant and the version into a distinct policy identity. The local route-pair resolver accepts only the v2 explicit grant plus a generation pin. It checks local eligibility and independence before it produces a preliminary pair, and it never derives verifier authority from the preferred-route list.
+
+This startup pair is not authorization for an actual sanitized request, does not permit fallback and does not enable dispatch by itself. Previously stored v1 plans and policy identities remain readable. New full-local admission requires an explicit v2 verifier grant, and an unbound or ineligible pair fails startup before a run is admitted. That failure is a refusal caused by the operator's configuration, not the explicit, durable abstention required when the verifier is lost or coverage has gaps after admission.
 
 Runtime policy v3 adds the closed `openrouter_zdr_chat_v1` profile and the eight-field `brokered_route_authority`. Versions 1 and 2 keep their schema bytes and accepted identity preimages.
 
@@ -259,27 +271,25 @@ Native v3 validation requires a typed version 2 `openrouter_privacy` witness ins
 - the explicit retention exceptions;
 - the exact validity window.
 
-A nonzero manifest digest alone is not privacy approval. The existing v3 schema bytes remain unchanged. The native parser and the common catalog enforce this requirement, and JSON Schema alone does not.
+A nonzero manifest digest alone is not privacy approval. The native parser and the common catalog enforce this requirement, which JSON Schema alone does not, and the v3 schema bytes remain unchanged.
 
-The binding follows a chain: the policy record identity and evidence digest, then the immutable manifest, then the typed witness. It also uses `account_policy_identity`, which is derived from the fixed versioned account subsection. There is no second policy approval list and no self-hash.
+The binding follows a chain from the policy record identity and evidence digest, through the immutable manifest, to the typed witness. It also uses `account_policy_identity`, which is derived from the fixed versioned account subsection. There is no second policy approval list and no self-hash.
 
-The named profile is refused at its next validation if any of these holds: typed evidence is missing or invalid, only the policy mismatches, or an arbitrary account digest is supplied. Generic opaque-manifest v1 and v2 admission is unchanged. Open Trestle does not rewrite or upgrade a setup receipt automatically. Renewed evidence changes the manifest, record, inventory and policy identities and needs fresh, exact setup approval. The daemon consumes protected configuration, not setup receipts.
-
-See [the profile contract and offline account calculation](openrouter-zdr-profile.md#what-is-recorded).
+The named profile is refused at its next validation if typed evidence is missing or invalid, if only the policy mismatches, or if an arbitrary account digest is supplied. Generic opaque-manifest v1 and v2 admission is unchanged. Open Trestle does not rewrite or upgrade a setup receipt automatically. Renewed evidence changes the manifest, record, inventory and policy identities and needs fresh, exact setup approval. The daemon consumes protected configuration, not setup receipts. See [the profile contract and offline account calculation](openrouter-zdr-profile.md#what-is-recorded).
 
 Runtime policy v4 adds only the finite `opencode_go_chat_v1` Chat profile and its seven-field `opencode_go_authority`. Generic connections and the existing v3 OpenRouter profile remain supported in v4. The two named authority fields are mutually exclusive, including a null value in one of them. The historical v1, v2 and v3 schema bytes and accepted identity preimages remain unchanged.
 
-Native validation binds the exact Go route and effective model selector, the immutable typed `opencode_go_privacy` evidence, the derived account and credential-reference identity, the tenant and repository, and the validity window. Structure alone cannot validate these bindings. The native schema tests inspect structure and the frozen legacy bytes, and they do not run a JSON Schema validator.
+Native validation binds the exact Go route and effective model selector, the immutable typed `opencode_go_privacy` evidence, the derived account and credential-reference identity, the tenant and repository, and the validity window. Structure alone cannot validate these bindings, and the native schema tests inspect only structure and the frozen legacy bytes.
 
-Runtime policy v6 is a generic policy with the v2 exact verifier grant and an optional boolean `local_structured_output`. When the option is true, the policy requires these three things:
+Runtime policy v6 is a generic policy with the v2 exact verifier grant and an optional boolean `local_structured_output`. When the option is true, the policy requires:
 
 - generic Chat Completions at a canonical numeric-loopback endpoint;
 - bearer or explicit no-auth credentials;
 - a local inventory namespace.
 
-V6 excludes all named request-profile and authority fields. The values false and omitted have the same v6 binding bytes and identity, which differ from the v2 identity. Native versions 1 through 5 reject the option, including false, and the published v1 through v4 schema bytes remain unchanged. The binder preserves an explicit v6 policy. It keeps historical templates that have no option on v2 and leaves their binding bytes and identity preimages unchanged. Native validation enforces inventory locality. See [local Chat schema transport](local-model-review.md).
+V6 excludes all named request-profile and authority fields. False and omitted have the same v6 binding bytes and identity, which differ from the v2 identity. Native versions 1 through 5 reject the option, even when it is false, and the published v1 through v4 schema bytes remain unchanged. The binder preserves an explicit v6 policy, but keeps historical templates that have no option on v2 and leaves their binding bytes and identity preimages unchanged. Native validation enforces inventory locality. See [local Chat schema transport](local-model-review.md).
 
-Runtime policy v7 carries only the closed `ollama_signin_chat_v1` profile. It is for a local Ollama daemon that relays Ollama Cloud models using the operator's `ollama signin` account. Every v7 connection must:
+Runtime policy v7 carries only the closed `ollama_signin_chat_v1` profile, for a local Ollama daemon that relays Ollama Cloud models using the operator's `ollama signin` account. Every v7 connection must:
 
 - name that profile;
 - use Chat Completions;
@@ -291,25 +301,17 @@ Its adapter namespace must hold only approved `private_remote` routes with provi
 
 This is the only loopback endpoint that may belong to a non-local zone. With no profile, or with any other profile at any version, a loopback endpoint still binds only the local zone. Because the zone is `private_remote`, the sanitizer, the secret scanner and the sanitized-dispatch proof apply, and local-only egress refuses the route.
 
-Native validation cannot see the daemon. `trestle setup bootstrap` checks that its `/api/tags` entries name `https://ollama.com` as `remote_host`. No v7 JSON Schema is published. See [Ollama signed in to Ollama Cloud](remote-model-review.md#ollama-signed-in-to-ollama-cloud).
+Native validation cannot see the daemon, so `trestle setup bootstrap` checks that its `/api/tags` entries name `https://ollama.com` as `remote_host`. No v7 JSON Schema is published. See [Ollama signed in to Ollama Cloud](remote-model-review.md#ollama-signed-in-to-ollama-cloud).
 
 Runtime policy v8 accepts generic connections and the `openrouter_zdr_chat_v2` profile. In that profile, `brokered_route_authority` has exactly `route_record_identity`, `evidence_manifest_digest`, `tenant_id`, `repository_id` and `provider_slugs`. The slugs are at most 32 distinct values and may be none. There is no account identity, single slug or validity window.
 
-The route's record must carry an OpenRouter privacy witness of schema version 3, which setup records from OpenRouter's public API. The witness holds the route, the credential reference, the scope, `zero_data_retention: required_per_request`, the pinned slugs and their source. It may also hold an optional observation with both API addresses, the SHA-256 and time of each response and the pinned endpoint facts. The observation is labelled as reported by the API and not reviewed.
+The route's record must carry an OpenRouter privacy witness of schema version 3, which setup records from OpenRouter's public API. The witness holds the route, the credential reference, the scope, `zero_data_retention: required_per_request`, the pinned slugs and their source. It may also hold an optional observation with both API addresses, the SHA-256 and time of each response and the pinned endpoint facts, labeled as reported by the API and not reviewed.
 
-Every request sets `provider.zdr` and `require_parameters`. When slugs are pinned, the request sends `only` with them and `allow_fallbacks` true, so OpenRouter may retry only inside the pinned slugs. It sends no `order`. The v1 profile pins its one slug with `only` and `order` and allows no fallback.
+Every request sets `provider.zdr` and `require_parameters`. When slugs are pinned, the request sends `only` with them and `allow_fallbacks` true, so OpenRouter may retry only inside the pinned slugs, and it sends no `order`. The v1 profile pins its one slug with `only` and `order` and allows no fallback.
 
 Versions 3 to 7, the `openrouter_zdr_chat_v1` profile and witness version 2 keep their bytes and identities. No v8 JSON Schema is published. See [OpenRouter zero data retention](openrouter-zdr-profile.md).
 
-Runtime policy v1 keeps its original wire and identity contract. Its `preferred_route_record_identities` are ordered ranking hints, not a verifier-route grant.
-
-Runtime policy v2 requires `verification_route_record_identity`, an exact nonzero record identity in the bound route inventory. The policy binds that grant and the version into a distinct policy identity. The local route-pair resolver accepts only the v2 explicit grant plus a generation pin. It checks local eligibility and independence before it produces a preliminary pair, and it never derives verifier authority from the preferred-route list.
-
-This startup pair is not authorization for an actual sanitized request, does not permit fallback and does not enable dispatch by itself. Previously stored v1 plans and policy identities remain readable. New full-local admission requires an explicit v2 verifier grant, and an unbound or ineligible pair fails startup before a run is admitted.
-
-That failure is a refusal caused by the operator's configuration. It is not the explicit, durable abstention that is required when the verifier is lost or coverage has gaps after admission.
-
-The source-broker descriptor v1 schema covers GitHub source brokering. The descriptor keeps its native 20 fields, `single_host_exclusive` ownership and explicit booleans for token creation and demand renewal. Its schema date pattern is structural. Native source parsing validates the dates and normalizes any trailing endpoint slashes it accepts.
+The source-broker descriptor v1 schema covers GitHub source brokering. The descriptor keeps its native 20 fields, `single_host_exclusive` ownership and explicit booleans for token creation and demand renewal. Its schema date pattern is structural, and native source parsing validates the dates and normalizes any trailing endpoint slashes it accepts.
 
 Setup schemas:
 
@@ -334,9 +336,9 @@ The daemon API response carries exactly one of these: a run receipt, an immutabl
 - Version 5 contains independently verified finding contracts.
 - Version 8 is version 5 plus a recorded line side on each finding. It is written exactly when a verified finding is on removed base lines.
 - Version 6 contains deterministic observations and does not present them as verified findings.
-- Version 7 is a final-only full-review result with a terminal outcome and optional exact records: a version 6 deterministic record and a version 5 verified record (or, with a base-side finding, version 8). Absent verified evidence does not mean zero verified findings.
+- Version 7 is a final-only full-review result with a terminal outcome and optional exact records: a version 6 deterministic record and a version 5 verified record (or version 8, with a base-side finding). Absent verified evidence does not mean zero verified findings.
 
-A failed version 7 result without verified evidence also carries `context_refusal` when its context task recorded a route refusal. It holds the `reason` (`route_context_insufficient` or `no_eligible_route`) and, for the former, the same `context_shortfall` counts as the task. These are bound into the set identity.
+A failed version 7 result without verified evidence also carries `context_refusal` when its context task recorded a route refusal. It holds the `reason` (`route_context_insufficient` or `no_eligible_route`) and, for the former, the same `context_shortfall` counts as the task, all bound into the set identity.
 
 A version 7 result recorded after the run's evidence retention lapsed carries `evidence_expired: true`, has no `deterministic` or `verified` part and has an empty source. Its outcome is never `completed`, only what the run journal proves, and absent evidence means unknown, not clean.
 
@@ -346,8 +348,8 @@ Every schema has a stable, versioned `urn:open-trestle:schema:...` identity, rej
 
 A `review-task-lease` and a `task-notification-lease` contain bearer secrets, so they are suitable only for the authorized worker transport. Do not place either in logs, diagnostics, URLs, model context, audit events or public state. `review-run-receipt` and `review-run-event` are intentionally free of secrets.
 
-The v5 `context_input_prepared` event advances the exact v4 packet checkpoint under the same task, attempt, lease and worker. Its public descriptor is made of claims about artifact envelopes and route and scanner identities, and it names the scan helper by `scanner_helper_digest`. It is not proof of a scanner run, a route selection, a stored sanitized request or an authorization. It contains no recoverable request, receipt, input, authorization or repository bytes.
+The v5 `context_input_prepared` event advances the exact v4 packet checkpoint under the same task, attempt, lease and worker. Its public descriptor consists of claims about artifact envelopes and route and scanner identities, and it names the scan helper by `scanner_helper_digest`. It is not proof of a scanner run, a route selection, a stored sanitized request or an authorization, and it contains no recoverable request, receipt, input, authorization or repository bytes.
 
-Neither this event nor a route-audit subject grants task success or model authority. Ordinary completion, lease renewal and expiry reclaim remain blocked. After the lease expires, trusted recovery may append a no-output policy failure. A distinct, owner-only v6 `context_input_settled` event can settle a recorded v5 preparation, but only after exact proof of the stored bytes, the audit and the scoped selection. Generic task completion cannot do so. Existing v1 through v4 encodings and v3 abstention behavior remain unchanged.
+Neither this event nor a route-audit subject grants task success or model authority. Ordinary completion, lease renewal and expiry reclaim remain blocked. After the lease expires, trusted recovery may append a no-output policy failure. Only a distinct, owner-only v6 `context_input_settled` event can settle a recorded v5 preparation, and only after exact proof of the stored bytes, the audit and the scoped selection, so generic task completion cannot. Existing v1 through v4 encodings and v3 abstention behavior remain unchanged.
 
 Consumers must treat all strings, tool descriptions, repository material and webhook fields as data, not instructions, even after structural validation (see the [prompt-injection boundary](prompt-injection-boundary.md)). A schema-valid document does not imply publication authority, provider access or policy approval. Those decisions require the corresponding policy and effect receipts.

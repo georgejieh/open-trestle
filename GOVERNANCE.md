@@ -12,4 +12,4 @@ Contributions are evaluated on correctness, maintainability, security, scope, te
 
 ## Changes to governance
 
-This document may evolve as the contributor community grows. Governance changes will be proposed and recorded publicly before taking effect.
+This document may change as the contributor community grows. Governance changes will be proposed and recorded publicly before taking effect.

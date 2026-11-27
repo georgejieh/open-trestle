@@ -11,52 +11,52 @@ There are two ways to run Open Trestle on a GitHub pull request. They differ in 
 | Output | SARIF (code scanning alerts), inline review comments and a job summary | Run receipts and review diagnostics |
 | Fork pull requests | Not supported (no secrets, read-only token) | Not supported (the planner accepts only pull requests whose base and head are the configured repository) |
 
-The Actions example has run on a GitHub-hosted runner in a private repository, except for its `upload-sarif` step; the daemon path has not run against GitHub. Open Trestle ships no GitHub App of its own: on the daemon path you register an App on your own account and run the daemon yourself. There is also no packaged `action.yml` (see the [roadmap](roadmap.md#next-release)).
+The Actions example has run on a GitHub-hosted runner in a private repository, except for its `upload-sarif` step. The daemon path has not run against GitHub. Open Trestle ships no GitHub App of its own, so on the daemon path you register an App on your own account and run the daemon yourself. There is also no packaged `action.yml` (see the [roadmap](roadmap.md#next-release)).
 
-Use the Actions path to try Open Trestle on a repository you control, with no server. Use the daemon path when you need durable runs. For the daemon path, see [webhook ingress](webhook-ingress.md) and [source acquisition](github-source-acquisition.md).
+Use the Actions path to try Open Trestle on a repository you control without a server. Use the daemon path when you need durable runs, as described in [webhook ingress](webhook-ingress.md) and [source acquisition](github-source-acquisition.md).
 
 ## Which changes are reviewed
 
-Both paths review a pull request the way GitHub presents it: from the merge base of `pull_request.base.sha` and `pull_request.head.sha` up to the head. The Actions path computes the merge base with `git merge-base` in the checkout. The daemon path plans a `source-base` task that reads GitHub's merge base with one compare request and then acquires that commit. As a result, commits merged into the base branch after the branch point are never reported as reverse changes.
+Both paths review a pull request the way GitHub presents it: from the merge base of `pull_request.base.sha` and `pull_request.head.sha` up to the head. The Actions path computes the merge base with `git merge-base` in the checkout. The daemon path plans a `source-base` task that reads GitHub's merge base with one compare request and then acquires that commit. Because of this, commits merged into the base branch after the branch point are never reported as reverse changes.
 
 On the daemon path, a run fails in two cases:
 
 - If the head equals the base or is already contained in it, the run fails with policy and the recorded reason `nothing_to_review`.
-- If GitHub does not report a merge base, the run fails with `merge_base_unavailable`. This includes commits that share no history, because GitHub answers that compare with not found.
+- If GitHub does not report a merge base, the run fails with `merge_base_unavailable`. This includes commits that share no history, because GitHub answers that compare with "not found".
 
 The daemon does not fall back to reviewing `base.sha` directly.
 
 ## How the Actions path fits together
 
 1. `actions/checkout` runs with `fetch-depth: 0`, so the head, the base branch tip and the history between them are all present.
-2. A `trestle` binary with its secret scan helper is installed. A plain `go build` pins no helper and refuses every review; see [remote model review](remote-model-review.md#prerequisite-1-a-trestle-with-its-secret-scanner).
-3. `trestle setup bootstrap init --provider ...` and `check` write and verify the protected configuration and print the review command. That command carries `--specialists auto` unless `init` is given `--specialists none`. The provider key is passed through an environment variable whose name starts with `OPEN_TRESTLE_PROVIDER_`.
-4. `trestle local-git model-review ... --format sarif --exit-code-policy findings` runs with the merge base `git merge-base "$BASE_SHA" "$HEAD_SHA"` as the base and `head.sha` as the head. `BASE_SHA` is `github.event.pull_request.base.sha`, the tip of the base branch when the event fired. Both SHAs are passed through `env`, not interpolated into `run:`.
-5. The workflow uploads the SARIF only when the run succeeded (`trestleRunStatus` is `succeeded`). Uploading the empty result of a refused or failed run could close open alerts for the same category.
+2. A `trestle` binary with its secret scan helper is installed. A plain `go build` pins no helper, so it refuses every review; see [remote model review](remote-model-review.md#prerequisite-1-a-trestle-with-its-secret-scanner).
+3. `trestle setup bootstrap init --provider ...` and `check` write and verify the protected configuration and print the review command. That command includes `--specialists auto` unless `init` is given `--specialists none`. The provider key is passed in an environment variable whose name starts with `OPEN_TRESTLE_PROVIDER_`.
+4. `trestle local-git model-review ... --format sarif --exit-code-policy findings` runs with the merge base (`git merge-base "$BASE_SHA" "$HEAD_SHA"`) as the base and `head.sha` as the head. `BASE_SHA` is `github.event.pull_request.base.sha`, the tip of the base branch when the event fired. Both SHAs are passed through `env` and not interpolated into `run:`.
+5. The workflow uploads the SARIF only when the run succeeded (`trestleRunStatus` is `succeeded`), because uploading the empty result of a refused or failed run could close open alerts for the same category.
 
-The upload sets `sha` to the pull request head and `ref` to `refs/pull/<number>/head`, because `upload-sarif` otherwise uses `github.sha`, the temporary merge commit. These inputs follow the `upload-sarif` documentation and are unverified live.
+The upload sets `sha` to the pull request head and `ref` to `refs/pull/<number>/head`, because `upload-sarif` would otherwise use `github.sha`, the temporary merge commit. These inputs follow the `upload-sarif` documentation and have not been verified on a live run.
 
-After the upload, the workflow posts inline comments with reviewdog, writes a job summary, and fails the job from the recorded exit status. Both the comments and the summary are GitHub Markdown, so the example first escapes the finding text, fix guidance and paths with a small `jq` module that follows the rules of `--format markdown`.
+The workflow then posts inline comments with reviewdog, writes a job summary, and fails the job from the recorded exit status. Both are GitHub Markdown, so the example first escapes the finding text, fix guidance and paths with a small `jq` module that follows the rules of `--format markdown`.
 
-The step-by-step workflow, with its placeholders and caveats, is [`examples/github-actions/open-trestle-review.yml`](../examples/github-actions/open-trestle-review.yml) and its [README](../examples/github-actions/README.md). The SARIF mapping and the exit policy are specified in [local model review](local-model-review.md#headless-ci-use).
+The workflow, with its placeholders and caveats, is in [`examples/github-actions/open-trestle-review.yml`](../examples/github-actions/open-trestle-review.yml) and its [README](../examples/github-actions/README.md). The SARIF mapping and the exit policy are specified in [local model review](local-model-review.md#headless-ci-use).
 
 ## What a green job means
 
-`--exit-code-policy findings` exits 0 when the review ran to completion and no verified high or critical finding exists. Under this policy, the following do not fail the job:
+`--exit-code-policy findings` exits 0 when the review ran to completion and found no verified high or critical finding. Under this policy, the following do not fail the job:
 
 - Medium and low findings.
-- Pre-existing findings: on unchanged lines the change provably cannot reach (marked `trestlePreExisting` in the SARIF). A high or critical finding on unchanged lines that the change may affect (marked `trestleUnprovenOrigin`) still fails the job.
+- Pre-existing findings, which are on unchanged lines that the change provably cannot reach (marked `trestlePreExisting` in the SARIF). A high or critical finding on unchanged lines that the change may affect (marked `trestleUnprovenOrigin`) still fails the job.
 - Coverage gaps.
 
-They still appear in the SARIF and in the summary, listed in rank order.
+All three still appear in the SARIF and in the summary, listed in rank order.
 
-A green job does not mean the change is clear: abstentions and omitted source are listed as limitations in the SARIF, and `comprehensive_clearance` is always false. A job that could not run the review fails. That covers a refused review, an unreadable change, a missing secret and a provider failure.
+A green job does not mean the change is clear. Abstentions and omitted source are listed as limitations in the SARIF, and `comprehensive_clearance` is always false. A job fails if it could not run the review, for example because the review was refused, the change was unreadable, a secret was missing or the provider failed.
 
 ## Status
 
 The status of the Actions path:
 
-- Tested offline in the repository tests, against synthetic model transports and inputs: the SARIF projection, the fingerprints, the exit policy, the diagnostics for shallow and partial checkouts, that the example workflow parses as YAML, and that its `jq` module escapes finding text, fix guidance and paths the way Open Trestle's Markdown renderer does.
-- Run on GitHub: the workflow has run on a GitHub-hosted `ubuntu-24.04` runner in a private repository with the `openrouter-zdr` provider. The source build of the packaged binary, the install, the setup, the review with repository checks, the reviewdog comments and the job summary worked. Not run: the `upload-sarif` step, because that repository had no code scanning, so its `sha` and `ref` inputs are written from documentation. The example pins action major versions only, and it tells you to pin commit SHAs. The release-artifact install in the workflow is a commented placeholder; the workflow builds the package from source.
-- Fork pull requests do not receive repository secrets and get a read-only `GITHUB_TOKEN`, so the example skips them. Do not switch to `pull_request_target` to work around this: it would run with secrets against code from the fork.
+- Tested offline in the repository tests, against synthetic model transports and inputs: the SARIF projection, the fingerprints, the exit policy, the diagnostics for shallow and partial checkouts, that the example workflow parses as YAML, and that its `jq` module escapes text the way Open Trestle's Markdown renderer does.
+- Run on GitHub: the workflow has run on a GitHub-hosted `ubuntu-24.04` runner in a private repository with the `openrouter-zdr` provider. The source build of the packaged binary, the install, the setup, the review with repository checks, the reviewdog comments and the job summary all worked. The `upload-sarif` step has not run, because that repository had no code scanning.
+- Fork pull requests do not receive repository secrets and get a read-only `GITHUB_TOKEN`, so the example skips them. Do not switch to `pull_request_target` to work around this, because it would run with secrets against code from the fork.
 - Source and findings are sent to the model provider you configure; see [privacy](privacy.md).

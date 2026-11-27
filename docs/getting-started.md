@@ -4,31 +4,30 @@ This page walks you through your first review. Run `trestle init` inside the
 Git repository you want reviewed. The wizard asks only the questions it cannot
 answer for itself, shows every setting in one panel, and saves a protected
 configuration. It then runs the setup checks and offers to run your first
-review. If something is missing, it tells you what is missing and what to do,
-and stops without guessing. See [commands](commands.md) for every command and
-the [documentation index](README.md) for every page.
+review. If something is missing, it says what is missing and what to do, and
+stops without guessing. [Commands](commands.md) lists every command and flag,
+and the [documentation index](README.md) lists every page.
 
 Every review scans each request for secrets with the secret scan helper before
 sending it, whether the models run on this machine or with a remote provider
 (OpenRouter, Ollama Cloud, OpenCode Go, or Ollama signed in to Ollama Cloud). A
-binary built with a plain `go build` pins no helper, so it refuses every
+binary built with a plain `go build` pins no helper, so it refuses to run any
 review. The [install scripts](install.md) install a release that includes the
-helper. See
-[platforms](platforms.md) for what works on each system today, and
+helper. [Platforms](platforms.md) says what works on each system today, and
 [prerequisite 1](remote-model-review.md#prerequisite-1-a-trestle-with-its-secret-scanner)
-for the scanner requirement.
+explains the scanner requirement.
 
 ```sh
 cd path/to/your-repository
 trestle init
 ```
 
-The wizard is a front end for the existing
+The wizard is a front end for the
 [local-first bootstrap](local-first-bootstrap.md) and
 [remote model review](remote-model-review.md) commands. It runs the same
-`trestle setup bootstrap init` and `check` code inside its own process, and it
-runs the same `trestle local-git model-review` command that those commands
-print. It shows you anything it fills in before you agree to it.
+`trestle setup bootstrap init` and `check` code inside its own process, and the
+same `trestle local-git model-review` command that those commands print. It
+shows you anything it fills in before you agree to it.
 
 ## Before you start
 
@@ -60,31 +59,29 @@ You need four things.
    ```
 
    The first releases are unsigned pre-releases. To build from source instead,
-   see [install](install.md#build-from-source). A binary from a plain `go build`
-   pins no helper, so it refuses every review.
+   see [install](install.md#build-from-source).
 
 If you start `trestle init` with a binary from a plain `go build`, the wizard
-detects this before you choose a provider and explains why it cannot continue.
-It shows the `--development` command and, on Linux, also the packaged install
-commands from
-[operations](operations.md#build-and-inspect-the-unsigned-linux-amd64-candidate),
-including the passive vulnerability gate, in the order they run. If you save
-the setup anyway, its scanner check refuses. See
-[prerequisite 1](remote-model-review.md#prerequisite-1-a-trestle-with-its-secret-scanner).
+notices before you choose a provider and explains why it cannot continue. It
+shows the `--development` command and, on Linux, the packaged install commands
+from
+[operations](operations.md#build-and-inspect-the-unsigned-linux-amd64-candidate)
+in the order they run, including the passive vulnerability gate. If you save
+the setup anyway, its scanner check refuses.
 
-An ordinary clone works. Every mode, including local, uses the direct checkout
-review. It reads loose objects and ordinary pack files, and it verifies each
-object against its hash. As soon as you pick the commits, the wizard reads both
-of them the same way. It stops early only for storage that the review cannot
-read: alternates (clones made with `--shared` or
-`--reference`), a multi-pack-index, or partial-clone packs. In that case it
-prints a `git clone --no-local --no-hardlinks` command that makes a separate
-full copy. You need the private `0700` copy with loose objects, described in
+An ordinary clone works. Every mode, including local, reviews the checkout
+directly: it reads loose objects and ordinary pack files and verifies each
+object against its hash. The wizard reads both commits this way as soon as you
+pick them. It stops early only for storage that the review cannot read:
+alternates (clones made with `--shared` or `--reference`), a multi-pack-index,
+or partial-clone packs. In that case it prints a
+`git clone --no-local --no-hardlinks` command that makes a separate full copy.
+You need the private `0700` copy with loose objects, described in
 [choose the repository](local-first-bootstrap.md#choose-the-repository-and-model-pair),
 only if you use the optional background daemon.
 
-Setup never sends repository source. It does make a few network calls, and only
-the OpenRouter key check sends a key:
+Setup never sends repository source. It does make a few network calls, and
+only the OpenRouter key check sends a key:
 
 - It may fetch a provider's public model list. For OpenRouter, it also fetches
   the public list of zero-data-retention endpoints.
@@ -102,14 +99,13 @@ Your source goes to the models only when you agree to run a review. See
 ## What the wizard asks
 
 The wizard asks only what you alone can answer: where the models run, which two
-models to use, the API key if none is set yet (never shown), a
-spending limit for the key, and one confirmation of the settings and of where
-your source goes. On OpenRouter, that is six questions, followed by "Run
-the first review now?". If you answer yes, it also asks once whether reviews
-may run the repository's tests in a sandbox (see
-[repository checks](#repository-checks)). The wizard fills in everything else
-itself and shows it in a settings panel above the confirmation. Enter accepts
-each recommended default.
+models to use, the API key if none is set yet (never shown), a spending limit
+for the key, and one confirmation of the settings and of where your source
+goes. On OpenRouter, that is six questions, followed by "Run the first review
+now?". If you answer yes, it also asks once whether reviews may run the
+repository's tests in a sandbox (see [repository checks](#repository-checks)).
+Everything else the wizard fills in itself and shows in a settings panel above
+the confirmation. Enter accepts each recommended default.
 
 The wizard runs in five steps:
 
@@ -151,13 +147,13 @@ Each choice is a menu when standard input and output are both terminals,
 `TERM` is not `dumb`, and `--no-input` is not given. Up and Down (or `j` and
 `k`) move the pointer, Enter picks the highlighted item, and typing a number
 picks that item at once. The pointer starts on the recommended or current
-answer. A yes-or-no question is a menu of Yes and No, and `y` or `n` answers
-it. Esc or Left goes back to the previous question with your
-earlier answer selected, and `q` or Ctrl-C stops without writing anything. The
-menu redraws in place and leaves one line with your answer. The
-terminal is restored after every menu, including when you stop. On Windows, the
-wizard uses the console's own key and escape-sequence modes, but only Linux
-terminals have been tested (see [platforms](platforms.md)).
+answer. A yes-or-no question is a menu of Yes and No, and `y` or `n` also
+answers it. Esc or Left goes back to the previous question with your earlier
+answer selected, and `q` or Ctrl-C stops without writing anything. The menu
+redraws in place and leaves one line with your answer, and the terminal is
+restored after every menu, including when you stop. On Windows, the wizard
+uses the console's own key and escape-sequence modes, but only Linux terminals
+have been tested (see [platforms](platforms.md)).
 
 Without such a terminal, each choice is a numbered list with a default, for
 example `Choose (1-5) [1]:`, and Enter takes the default. Typing `b` or `back`
@@ -170,14 +166,11 @@ start, with each earlier answer selected.
 
 ### Step 1: what will be reviewed
 
-The wizard picks the merge base of your default branch and `HEAD`. The default
-branch is the one `origin/HEAD` names. If that is not set, the wizard uses
-`main` or `master`, from your repository or from `origin`. When both copies
-exist, the newer merge base counts (see [which commits](#running-it-again)).
-The wizard runs only read-only Git queries, and the commit count and change
-summary come from the same two commits. It asks a question here only when it
-cannot find a default branch. To review other commits, pass `--base` and
-`--head`, or change them at the summary in step 4.
+The wizard picks the merge base of your default branch and `HEAD`, using only
+read-only Git queries (see [which commits](#running-it-again)). The commit
+count and change summary come from the same two commits. It asks a question
+here only when it cannot find a default branch. To review other commits, pass
+`--base` and `--head`, or change them at the summary in step 4.
 
 ### Step 2: where the models run
 
@@ -187,8 +180,7 @@ or "Ollama on this machine, signed in to Ollama Cloud".
 ### Step 3: the two models
 
 Pick each model from the provider's list. The checker must differ from the
-finder, and a checker from a different model family is recommended
-(see
+finder, and a checker from a different model family is recommended (see
 [the rationale](rationale.md#the-checker-should-come-from-a-different-model-family)).
 When both models come from one family (two Qwen models, for example), the
 wizard says so and asks whether to keep the checker. Enter keeps it, and `n`
@@ -197,35 +189,34 @@ same family as the finder.
 
 In a menu, each model question shows the provider's models ten at a time, in a
 list that scrolls as the pointer moves. Typing narrows the list to the IDs that
-contain what you typed (`Filter: claude_  2 of 312`). Backspace and Esc widen
-it again, and Enter picks the highlighted model. If nothing matches, Enter uses
-the text exactly as you typed it. Digits count as part of the filter here,
-because model IDs contain them.
+contain what you typed (`Filter: claude_  2 of 312`), and digits count as part
+of the filter because model IDs contain them. Backspace and Esc widen the list
+again, and Enter picks the highlighted model. If nothing matches, Enter uses
+the text exactly as you typed it.
 
 Without a menu, each model is a single question,
-`Number, model ID, or part of a name`. A number picks from the list shown, and
-a listed ID picks that model. Any other text narrows the list to the IDs that
-contain it, and the wizard asks the same question again under the shorter list.
-The list shows at most 40 entries. Text that matches no listed model is used
-exactly as typed, but only if you type it twice in a row. The wizard flags
-models that appear to have 7B parameters or fewer as weak. What happens next
-depends on the provider.
+`Number, model ID, or part of a name`, over a list of at most 40 entries. A
+number picks from the list, and a listed ID picks that model. Any other text
+narrows the list to the IDs that contain it, and the wizard asks again under
+the shorter list. Text that matches no listed model is used exactly as typed,
+but only if you type it twice in a row.
+
+The wizard flags models that appear to have 7B parameters or fewer as weak.
+What happens next depends on the provider:
 
 - With OpenRouter, the wizard reads OpenRouter's public model and
   zero-data-retention lists (no key or code is sent), shows what the API
-  reported for each model, and fills in the routing, limits and prices. It pins
-  only the zero-data-retention endpoints that allow 16384 output tokens, says
-  how many it left out, and lets each request write up to 16384 tokens. If none
-  of a model's endpoints allows that much, the wizard keeps that model's
-  endpoints anyway, says so, and uses the smallest output they allow. Every
-  request requires zero data retention. The wizard does not ask about this, and
-  `--without-zdr` turns it off. If a model has no zero-data-retention endpoint,
-  the wizard says so, warns that an account or key that enforces zero data
-  retention will refuse that model, and lists the models that have one. You can
-  pick one of them with a single answer, or press Enter to keep your model and
-  continue without zero data retention. The summary and the confirmation state
-  which you chose. See
-  [OpenRouter zero data retention](openrouter-zdr-profile.md).
+  reported for each model, and fills in the routing, limits and prices. Each
+  request may write up to 16384 tokens, or less when a model's endpoints allow
+  less, and every request requires zero data retention. The wizard does not ask
+  about this, and `--without-zdr` turns it off. If a model has no
+  zero-data-retention endpoint, the wizard warns that an account or key that
+  enforces zero data retention will refuse that model, and lists the models
+  that have one. Pick one of them with a single answer, or press Enter to keep
+  your model and continue without zero data retention. The summary and the
+  confirmation state which you chose.
+  [OpenRouter zero data retention](openrouter-zdr-profile.md) explains which
+  endpoints are pinned and how the output allowance is chosen.
 - With a local server, if exactly one server answers on its usual port (Ollama
   11434, LM Studio 1234, llama.cpp 8080, vLLM 8000), the wizard uses it without
   asking. If several answer, or none, you pick the server or type its
@@ -246,33 +237,27 @@ depends on the provider.
   model list does not state them, and it asks whether your plan charges per
   token.
 
-If the provider's key variable has no key yet, either in the environment or
-saved, and the wizard is running in a terminal, it asks for the key. Where
-menus are shown, each character you type or paste appears as `*` and Backspace
-works. Otherwise, the input is hidden. After you press Enter, the wizard shows
-only the key's length and last four characters, and if you paste the key
-twice, it asks for it again. It checks an OpenRouter key with one free call.
-Once the setup is saved, it saves the key without asking and prints the
-commands that change or remove it, `trestle keys set NAME` and
+If the provider's key variable has no key yet, in the environment or saved,
+and the wizard is running in a terminal, it asks for the key. Each character
+shows as `*`, and an OpenRouter key is checked with one free call. Once the
+setup is saved, the wizard saves the key without asking and prints the commands
+that change or remove it, `trestle keys set NAME` and
 `trestle keys remove NAME`. Without a terminal, or with `--no-input`, it never
-asks. See [API keys](keys.md).
+asks. [API keys](keys.md#typing-the-key-in-trestle-init) describes the prompt
+in full.
 
-The wizard does not ask how much a single model request may cost. Setup
-uses the cost of a request that fills the whole context and writes the
-whole output allowance, rounded up to a cent. The settings panel shows that
-figure and what a review of two requests can cost. `--max-cost-micro-usd` sets
-a different bound.
+The wizard does not ask how much a single model request may cost. It uses the
+cost of a request that fills the whole context and writes the whole output
+allowance, and the settings panel shows that figure and the cost of a review.
 
-For a provider that charges per token, the wizard then asks one question,
-"Spending limit for this key, USD per month [20]". Enter accepts $20 a month,
-and the wizard tells you so and prints the command that changes it. Typing
-`none` means no limit. The limit alerts at 80% and again when it is reached,
-and `--spending-limit` with `--spending-alert` sets a different percentage. For
-OpenRouter, when the key variable is set, the wizard first shows OpenRouter's
-own figures for the key. Open Trestle checks the limit before each review and
-counts its own upper-bound estimate, not a bill. Because the check is best
-effort, set a limit with your provider as well. A key that already has a limit
-keeps it. See [spending limits](spending-limits.md).
+For a provider that charges per token, the wizard then asks for a spending
+limit for the key. Enter accepts $20 a month, `none` means no limit, and the
+limit alerts at 80% and again when it is reached. For OpenRouter, when the key
+variable is set, the wizard first shows OpenRouter's own figures for the key.
+Open Trestle checks the limit before each review against its own upper-bound
+estimate, not a bill, so set a limit with your provider as well.
+[Spending limits](spending-limits.md#setting-a-limit) covers the question, the
+flags and what a review does at the limit.
 
 ### Step 4: your settings and consent
 
@@ -323,30 +308,28 @@ by one question:
   Confirm all of the above and save this setup? (Y/n):
 ```
 
+In this example, the endpoints allow 16000 output tokens, fewer than the 16384
+that setup aims for, so the `Limits` and `Cost` rows use 16000.
+
 The key variable has the provider's usual name. The `Key` row says where its
 key comes from: the environment, `~/.config/open-trestle/credentials`, a key to
 be saved with the setup, or not set yet. The key itself is never written to the
-setup folder. Only its length and last four characters are ever shown, and only
-once, when you enter it.
+setup folder. The names come from the URL of `origin` (its host, namespace and
+name, ignoring any credential in the URL) or from the folder name, and the
+owner comes from `$USER`.
 
-The names come from the URL of `origin` (its host, namespace and name, ignoring
-any credential in the URL) or from the folder name. The owner comes from
-`$USER`.
-
-Enter (or `y`) confirms every declaration shown and saves the setup. If
-you answer `n`, the wizard offers to change the commits, the names, the key
+Enter (or `y`) confirms every declaration shown and saves the setup. If you
+answer `n`, the wizard offers to change the commits, the names, the key
 variable, or the limits and prices, and then shows the panel and the
 declarations again. Its last option stops without writing anything. Every value
 also has a flag (see [non-interactive use](#non-interactive-use)). The spending
-limit is saved after the setup, in the usage folder that all setups share.
+limit is saved after the setup, in the usage folder that all setups share, and
 `trestle usage` shows and changes it.
 
 What you confirm depends on the provider:
 
-- For OpenRouter, you confirm that each review sends the selected source, after
-  secret scanning, to OpenRouter for the two models. You also confirm whether
-  zero data retention is required, and that you have not turned on prompt
-  logging for the key.
+- For OpenRouter, you confirm the declarations shown above, including whether
+  zero data retention is required.
 - For Ollama Cloud and OpenCode Go, you confirm the
   [route declaration](remote-model-review.md#common-declarations), which covers
   where the source is sent, capacity, structured output, logging being off,
@@ -355,10 +338,9 @@ What you confirm depends on the provider:
   summary, and the same answer confirms the
   [workspace declaration](remote-model-review.md#opencode-go). For a public
   page, the wizard offers to fetch it once and compute its SHA-256 on your
-  machine. The fetch is an `https` GET that follows at most two redirects and
-  sends no key, cookie, query or repository content. It goes only to public
-  addresses and is limited to 8 MiB and 20 seconds. The wizard does not fetch
-  account evidence, so save a copy of your own account page and give its path.
+  machine (see [privacy](privacy.md#other-network-requests) for what the fetch
+  sends). It does not fetch account evidence, so save a copy of your own
+  account page and give its path.
 - For Ollama signed in to Ollama Cloud, you confirm the
   [sign-in declaration](remote-model-review.md#ollama-signed-in-to-ollama-cloud),
   which says that your source is sent to Ollama Cloud under your signed-in
@@ -380,18 +362,16 @@ run `trestle init` again.
 
 ### How it looks
 
-Every line fits in 60 columns, the narrowest terminal the wizard supports. The
-only exceptions are commands meant for copying and links too long for one line.
-The wizard shortens long paths on screen (`~` for your home folder, `...` in
-the middle), while commands and `NEXT-STEPS.txt` keep the full paths.
+Every line fits in 60 columns, the narrowest terminal the wizard supports,
+except commands meant for copying and links too long for one line. The wizard
+shortens long paths on screen (`~` for your home folder, `...` in the middle),
+while commands and `NEXT-STEPS.txt` keep the full paths.
 
-On an interactive terminal, the wizard uses the web console's colors: cobalt
-for the title, the current step and questions; slate for rules and frames;
-green, amber and red for `✓`, `…` and `✗`; and dim text for hints. It uses
-24-bit color when `COLORTERM` is `truecolor` or `24bit`, and 256 colors
-otherwise. Body text keeps your terminal's own color, and every state still has
-its mark. The wizard prints no color when `NO_COLOR` is set to any value, when
-`TERM` is `dumb`, when the output is not a terminal, or with `--no-input`.
+The wizard uses the web console's colors: cobalt for the title, the current
+step and questions, and slate for rules and frames. It uses 24-bit color when
+`COLORTERM` is `truecolor` or `24bit`, and 256 colors otherwise. The other
+colors, and the cases in which the wizard prints no color, are listed in
+[terminal symbols and colors](commands.md#terminal-symbols-and-colors).
 
 ## Reading the check results
 
@@ -412,47 +392,44 @@ For a remote provider, the checks confirm that:
 - the review window is current (for OpenCode Go, and for OpenRouter setups made
   before zero data retention was detected);
 - the saved configuration loads;
-- a key is found for the API key variable (the line says where: in the
+- a key is found for the API key variable (the line says whether it is in the
   environment or saved);
 - the secret scan helper is present and matches the one the program pins.
 
 For OpenRouter, a last line says whether zero data retention is required on
 every request or not required by Open Trestle. For the Ollama Cloud sign-in
-option, a different check replaces the key check. It confirms that your local
-Ollama lists both models as Ollama Cloud models. The wizard offers a review
-only when all of these checks pass.
+option, a different check replaces the key check: it confirms that your local
+Ollama lists both models as Ollama Cloud models.
 
 For a local server, the checks run in the bootstrap's direct-review scope
 (`trestle setup bootstrap check --scope direct-review`). They confirm that the
 setup folder is private, that you are its owner, that the model configuration
-is approved, and that a dry run without models passes. The wizard offers a
-review only when all of them pass.
+is approved, and that a dry run without models passes. The wizard shows the
+daemon tokens and backup as one optional line, because they belong to the
+daemon steps in [check and resume](local-first-bootstrap.md#check-and-resume).
+It also offers two test requests to your local servers. They carry fixed sample
+code, not your source, and are sent only if you answer `y`.
 
-The wizard shows the daemon tokens and backup as one optional line. They belong
-to the daemon steps in
-[check and resume](local-first-bootstrap.md#check-and-resume). The wizard also
-offers two test requests to your local servers. They carry fixed sample code,
-not your source, and are sent only if you answer `y`. If a test request fails,
-you must fix the problem before the wizard offers a review.
+The wizard offers a review only when all of the checks pass. If a test request
+fails, you must fix the problem before the wizard offers a review.
 
 ## The first review
 
 The first review compares the two commits from step 1. The wizard shows the one
-command you use to review your latest change from now on, `trestle review` (see
-[running it again](#running-it-again)). It saves that command, together with
-the check command, in `NEXT-STEPS.txt` in the setup folder. Then it asks:
+command you use from now on to review your latest change, `trestle review` (see
+[running it again](#running-it-again)), and saves it with the check command in
+`NEXT-STEPS.txt` in the setup folder. Then it asks:
 
 ```text
   A review sends the selected source to OpenRouter (https://openrouter.ai/api/v1), zero data retention required on every request.
   Run the first review now? (y/N):
 ```
 
-Only `y` runs it. The review runs in the foreground and keeps nothing for
-resume, and it can take several minutes. A line on the terminal shows the
-current stage and how long it has taken (see
-[progress](local-model-review.md#progress)). The review first builds an index
-of the repository on this machine, without using the network, and the models
-see the index's context for the change.
+Only `y` runs it. The review runs in the foreground, keeps nothing for resume,
+and can take several minutes, so a line on the terminal shows the current stage
+and how long it has taken (see [progress](local-model-review.md#progress)). The
+review first builds an index of the repository on this machine, without using
+the network, and the models see the index's context for the change.
 
 ### Repository checks
 
@@ -460,35 +437,29 @@ When you answer yes to "Run the first review now?", the wizard asks once: "Run
 this repository's tests inside a sandbox on this machine? It has no network and
 no access to your home folder or keys." The answer is saved in `checks.json` in
 the setup folder, and the default is no. If no review runs, the wizard does not
-ask, and the first review asks instead. With `--no-input`, `--checks` answers
-yes. Later, `trestle checks on`, `off` and `status` change or show the answer.
-A review that has no saved answer asks in the terminal. See
-[repository checks](repository-checks.md).
+ask, and a later review without a saved answer asks in the terminal. With
+`--no-input`, `--checks` answers yes. Later, `trestle checks on`, `off` and
+`status` change or show the answer. See [repository checks](repository-checks.md).
 
 A new setup runs specialist reviews by default. The general review runs first,
 followed by up to three specialist reviews (such as `bug_hunter` or
 `security_probe`). Open Trestle picks the specialists from the change without
-calling a model, and each one is a full review with its own check. The settings
-panel shows this in a `Specialists` row that starts with `on:`. With remote
+calling a model, and each one is a full review with its own check. With remote
 models, the specialists run at the same time, up to three at once. With a model
-on this machine, they run one after another.
-
-To use the general review only, run `trestle init --specialists none` (the row
-then starts with `off:`), or run `trestle review --specialists none` for a
-single review. The spending warning counts every review the command may run.
-See [specialist review set](local-model-review.md#specialist-review-set-opt-in).
+on this machine, they run one after another. To use the general review only,
+run `trestle init --specialists none` (the `Specialists` row then starts with
+`off:` instead of `on:`), or `trestle review --specialists none` for a single
+review. The spending warning counts every review the command may run. See
+[specialist review set](local-model-review.md#specialist-review-set-opt-in).
 
 On a terminal, `trestle review` prints a short view: the verdict and exit
-status first, then the findings, and then a line on what was checked. See
-[the result on a terminal](local-model-review.md#the-result-on-a-terminal).
-With `trestle review --verbose`, or when the output is not a terminal, it
-prints the full text document described below.
-
-The text document starts with the status and the reviews that ran. Next comes a
-walkthrough of what was checked across all of them, followed by the confirmed
-findings, most important first, each with the reviews that confirmed it. This
-example comes from the offline test fixture, with the general review and two
-specialists:
+status first, then the findings, and then a line on what was checked (see
+[the result on a terminal](local-model-review.md#the-result-on-a-terminal)).
+With `--verbose`, or when the output is not a terminal, it prints the full text
+document. That document starts with the status and the reviews that ran, then a
+walkthrough of what was checked, then the confirmed findings, most important
+first, each with the reviews that confirmed it. This example comes from the
+offline test fixture, with the general review and two specialists:
 
 ```text
 status: findings
@@ -520,57 +491,43 @@ comprehensive clearance: false
 When two reviews describe the same problem at the same place in different
 words, Open Trestle lists it once and adds the other wording on an
 `also reported as:` line. A review that did not finish gets a `not finished:`
-line with a `hint:`. `trestle review --verbose` adds the details behind the
-summary: how the specialists were picked, each review's status, and the list of
-limitations.
+line with a `hint:`. `--verbose` also shows how the specialists were picked,
+each review's status, and the list of limitations.
 
 ### Reading the result
 
-The parts of the result mean the following:
-
 - `findings`: The finder proposed each listed finding, and the checker
-  confirmed it. Read them as you would a colleague's review comments. A finding
-  about code that the change removed points to the removed lines of the base
-  commit (`path removed base lines a-b`) rather than to head lines.
-- `walkthrough:` lines: These show what was verified: the secret scan of the
-  model requests, the scripted checks, style detection, the semantic-impact
-  analysis, and the checker's confirmed, rejected and inconclusive counts. They
-  also show each changed file with its line counts and changed Go declarations,
-  plus `missing verification:` notes for changed functions that no test file
+  confirmed it. Read them as you would a colleague's review comments.
+- `walkthrough:` lines: What was verified, what changed in each file, and
+  `missing verification:` notes for changed functions that no test file
   references. These notes are information, not defects. A `context used:` line
-  says how many enclosing definitions, callers, tests and repository map entries
-  the models saw alongside the changed code. A `check runs:` line says what ran
-  when [repository checks](#repository-checks) were on.
+  says how many enclosing definitions, callers, tests and repository map
+  entries the models saw alongside the changed code, and a `check runs:` line
+  says what ran when [repository checks](#repository-checks) were on.
 - `confirmed findings (ranked)`: High, critical and medium findings, most
-  important first, with findings that repeat one another merged. Lower-severity
-  findings are counted on a `hidden:` line, and `trestle review --all` lists
-  them. When every confirmed finding is low severity, up to ten of them are
-  listed, so the result never hides all of them.
+  important first. `trestle review --all` lists the lower-severity findings
+  that a `hidden:` line counts.
 - `pre-existing findings`: Confirmed problems on unchanged lines that the
-  change provably cannot reach. They are listed separately and never make the
-  review blocking. A confirmed problem on unchanged lines that the change may
-  affect, such as one in a caller of a changed function, stays with the
-  confirmed findings, gets an `origin: unproven` line, and blocks like a new
-  finding.
-- `ci: inconclusive` with `status: findings`: This is an advisory review. Every
-  confirmed finding is low severity or pre-existing, so none of them blocks CI
-  (exit `3` by default, or `0` with `--exit-code-policy findings`), and the
-  closing line says so. A review is `ci: blocked` (exit `4`) only when it has a
-  medium, high or critical finding that the change introduced or whose origin
-  is unproven.
+  change provably cannot reach. They never make the review blocking.
+- `ci: inconclusive` with `status: findings`: An advisory review, in which every
+  confirmed finding is low severity or pre-existing, and the closing line says
+  so. A review is `ci: blocked`
+  (exit `4`) only when it has a medium, high or critical finding that the
+  change introduced or whose origin is unproven.
 - `no_candidates`: Nothing was found and confirmed. This does not mean the
   change is correct.
 - `incomplete`: Part of the change was not covered. See the coverage and
   omission lines.
 - `refused`, `failed` or `canceled`: There is no usable result, and the wizard
   says what to try.
-- `style:` lines: When the base commit declares no style for a changed language
-  that has a style detector, the result suggests a standard one. This is advice,
-  not a finding, and it does not change the result. See
-  [style recommendations](local-model-review.md#style-recommendations).
+- `style:` lines: Advice on a standard style for a changed language that the
+  base commit declares none for. They do not change the result (see
+  [style recommendations](local-model-review.md#style-recommendations)).
 
-Every result says `comprehensive clearance: false`. See
-[local model review](local-model-review.md) for the full result format.
+Every result says `comprehensive clearance: false`.
+[Ranked findings and the walkthrough](local-model-review.md#ranked-findings-and-the-walkthrough)
+explains each part in full, including removed-code findings, unproven origins
+and advisory exit codes.
 
 ## Running it again
 
@@ -581,42 +538,42 @@ from anywhere in the repository:
 trestle review
 ```
 
-The command finds the setup the same way `trestle init` does: in the folder
-from step 5, or in the one you name with `--directory PATH`. It picks the two
-commits again, says what it compares and where the source goes, and runs the
-same review with the setup's routes, policy, names and egress. Because it does
-not reuse the commits saved at setup time, a setup keeps working after those
-commits are rewritten or garbage-collected.
+The command finds the setup the same way `trestle init` does, and runs the same
+review with the setup's routes, policy, names and egress. It picks the two
+commits again on every run, so a setup keeps working after the commits saved at
+setup time are rewritten or garbage-collected. It says what it compares and
+where the source goes before it sends anything.
 
 - The head is `HEAD`, the commit checked out now. The base is the newest commit
   that `HEAD` shares with the default branch, as your repository or `origin`
-  has it, whichever is newer: one `git merge-base HEAD main origin/main`. So a
-  local `main` that is behind `origin` does not pull commits that are already
-  upstream into the review. On the default branch itself, the base is `origin`'s copy, so your
-  unpushed commits are the change. The default branch is the one `origin/HEAD`
-  names, otherwise `main`, otherwise `master`. As in `trestle init`,
-  `--base REF` and `--head REF` pick exact commits. With `--head REF` alone,
+  has it, whichever is newer: one `git merge-base HEAD main origin/main`. A
+  local `main` that is behind `origin` therefore does not pull commits that are
+  already upstream into the review. On the default branch itself, the base is
+  `origin`'s copy, so your unpushed commits are the change. The default branch
+  is the one `origin/HEAD` names, otherwise `main`, otherwise `master`.
+  `--base REF` and `--head REF` pick exact commits, and with `--head REF` alone
   the base is the newest commit that REF shares with the default branch.
-- Uncommitted changes are not included, because only committed work is
-  reviewed. When you have uncommitted changes or untracked files, the review
-  says that they are not included and that committing them will include them.
-  It writes nothing into your repository and does not fetch.
-- The result goes to standard output in the setup's text format.
-  `--format json`, `--format sarif` or `--format markdown` prints a single
-  JSON, SARIF or pull request summary document there instead. Every other line
-  goes to standard error, including the egress, secret-scanning and spending
-  messages, which are those of `trestle local-git model-review`.
-  The options `--timeout`, `--profile`, `--specialists`, `--max-specialists`,
-  `--exit-code-policy`, `--all` and `--verbose` pass through to that command,
-  and `trestle review` returns its [exit codes](local-model-review.md). For
-  example, the exit code is `4` when a confirmed medium, high or critical
-  finding blocks the review, and `3` for an
-  [advisory](local-model-review.md#advisory-results) review whose findings are
-  all low severity or pre-existing.
+- When you have uncommitted changes or untracked files, the review says that
+  they are not included and that committing them will include them. It writes
+  nothing into your repository and does not fetch.
+- The result goes to standard output in the setup's text format, or as JSON,
+  SARIF or a pull request summary with `--format`. Every other line goes to
+  standard error. [`trestle review`](commands.md#trestle-review) lists the
+  flags, and [exit codes](exit-codes.md#trestle-review-and-trestle-local-git-model-review)
+  lists what it returns. For example, a review blocked by a confirmed medium,
+  high or critical finding exits `4`.
 - Nothing is sent when the repository has no setup (run `trestle init`), when
   there is no committed change to review, or when no API key is found
   (`trestle keys set NAME`). In each case, `trestle review` says so and exits
   `3`.
+
+`trestle init`, `trestle review` and the home screen use the most recently
+saved setup for this repository in `~/.local/state/open-trestle`, whether it is
+in the folder that setup proposes or in another folder beside it. A setup made
+with `--directory` in that location needs no flag later, but a setup saved
+anywhere else needs the same `--directory PATH` every time.
+
+### The home screen
 
 Running `trestle` on its own in a terminal shows a status card and numbered
 next actions, each two steps away (`trestle`, then the number):
@@ -649,14 +606,11 @@ next actions, each two steps away (`trestle`, then the number):
 
 The card reads only local files: the setup folder, the usage folder and the
 credential store. The `Last run` row comes from `last-review.json` in the setup
-folder. This small record holds the time, the status, the number of confirmed
-findings and the two commits, and nothing else. `trestle review`, the home
-screen and `trestle init` write it after each review. A review that you run
-directly with `trestle local-git model-review` is not recorded.
-
-In a repository without a setup, the only action is `trestle init`. Without a
-terminal on both sides, or with `NO_COLOR` set or `TERM=dumb`, `trestle` prints
-the usage text and exits `2`, as before.
+folder, a small record of the time, the status, the number of confirmed
+findings and the two commits. `trestle review`, the home screen and
+`trestle init` write it after each review, but a review that you run directly
+with `trestle local-git model-review` is not recorded. In a repository without
+a setup, the only action is `trestle init`.
 
 A row that needs action starts with `✗` or `…`, and the command that fixes it
 appears beneath it, inside the card:
@@ -667,35 +621,31 @@ appears beneath it, inside the card:
 │             OPEN_TRESTLE_PROVIDER_OPENROUTER             │
 ```
 
-On the packaged install, the home screen also adds a last action, "Update Open
-Trestle", which runs `trestle update`. When a newer version is available, the
-card's last row is `Update`, marked `…`. This comes from the home screen's only
-network request, a GET of the release list made at most once a day (see
-[updating](#updating)). `trestle status` prints the same card without the
-actions, and in a script it prints plain `Label:  value` lines (see
-[commands](commands.md#trestle-status)).
+On the packaged install, the home screen also offers a last action, "Update
+Open Trestle", which runs `trestle update`. When a newer version is available,
+the card's last row is `Update`, marked `…` (see [updating](#updating)).
+[`trestle status`](commands.md#trestle-status) prints the same card without the
+actions, and [`trestle`](commands.md#trestle) covers the cases without a
+terminal.
 
 ### Check your setup
 
 `trestle doctor` checks the install, this repository and its setup, the key,
 the spending limit, the repository checks and the cached update notice. It
-changes nothing and sends no source. Each problem comes with the command that
-fixes it, and the last line is either `All checks passed.` or a numbered list:
+changes nothing and sends no source, and it names the command that fixes each
+problem:
 
 ```sh
 trestle doctor          # exits 1 when something needs fixing
 trestle doctor --live   # also reads the provider's model list with the key
 ```
 
-See [commands](commands.md#trestle-doctor).
+See [`trestle doctor`](commands.md#trestle-doctor) for each section.
 
-Run `trestle init` again in the same repository to re-check the setup.
-`trestle init`, `trestle review` and the home screen use the most recently
-saved setup for this repository in `~/.local/state/open-trestle`, whether it is
-in the folder that setup proposes or in another folder beside it. So a setup
-made with `--directory` in that location needs no flag later, but a setup saved
-anywhere else needs the same `--directory` again. Running `trestle init` again
-offers:
+### Changing the setup
+
+Run `trestle init` again in the same repository to re-check or change the
+setup. It offers:
 
 ```text
     1) Review the latest change (sends it to OpenRouter)
@@ -705,10 +655,9 @@ offers:
 ```
 
 The first choice re-runs the checks and then reviews the latest change exactly
-as `trestle review` does. With `--no-input`, `--run-review` does the same. If
-the setup's key is missing, the wizard asks for it first (see
-[API keys](keys.md)). This choice does not re-initialize the setup or change
-the saved files.
+as `trestle review` does, and with `--no-input`, `--run-review` does the same.
+If the setup's key is missing, the wizard asks for it first. This choice does
+not re-initialize the setup or change the saved files.
 
 "Change a setting" lists the settings with their current values and asks again
 only about the one you pick, proposing its current value:
@@ -717,12 +666,12 @@ only about the one you pick, proposing its current value:
   the wizard makes a new setup in the next free folder beside it
   (`<repository>-<8 hex characters>-2`, then `-3`). It goes through steps 1 to
   5 and the same consent as a first setup, proposing the current provider and
-  models. The earlier folder stays as it was, and `trestle review`, the home
-  screen and `trestle init` then use the newest setup for this repository.
-- **API key.** It asks for the new key (showing one `*` per character), checks
-  it as a first setup does, and saves it in the credential store at once.
-  Enter on an empty line keeps the current key. A key exported in the
-  shell still takes precedence over a saved one, and the wizard tells you so.
+  models. The earlier folder stays as it was, and from then on `trestle review`,
+  the home screen and `trestle init` use the newest setup.
+- **API key.** It asks for the new key (one `*` per character), checks it as a
+  first setup does, and saves it in the credential store at once. Enter on an
+  empty line keeps the current key. A key exported in the shell still takes
+  precedence over a saved one, and the wizard tells you so.
 - **Spending limit.** It asks for the limit again and saves it in the usage
   folder at once. Typing `none` removes it. The period and alerts stay as they
   were.
@@ -730,8 +679,7 @@ only about the one you pick, proposing its current value:
   answer selected, and saves the answer in `checks.json`.
 
 Esc (or `b`) at the list returns to the first menu. To keep a setup and make
-another one beside it, you can still pass a new folder:
-`trestle init --directory NEW_FOLDER`.
+another one beside it, pass a new folder: `trestle init --directory NEW_FOLDER`.
 
 On a terminal, a finished setup or a changed setting ends with the commands for
 everyday use:
@@ -753,15 +701,10 @@ On the packaged Linux amd64 install, one command updates Open Trestle:
 trestle update
 ```
 
-It finds a newer version, shows it, asks you to confirm, and then runs that
-version's own upgrade with `sudo`, which asks for your password.
-`trestle update --check` only reports, and it exits `10` when an update is
-available.
-
-No release is signed yet, so for now it installs only an unsigned local build:
-either one left in `~/.local/share/open-trestle/updates/` for a development
-install, or a file that you name with `--from`. See [updates](updates.md) for
-the channels, the checks and `OPEN_TRESTLE_UPDATE_CHECK=off`.
+It shows the newer version, asks you to confirm, and then runs that version's
+own upgrade with `sudo`, which asks for your password. No release is signed
+yet, so for now it installs only an unsigned local build. See
+[updates](updates.md) for `--check`, the channels and the checks.
 
 ## Non-interactive use
 
@@ -773,8 +716,8 @@ provider decides which other answers are needed.
 With `--no-input`, the wizard still fills in everything it can work out for
 itself: the commits, names, owner, folder, key variable, and any limits and
 prices that a provider or model list states. A flag overrides anything it fills
-in. Facts that you must declare are not filled in. A complete `--no-input` run
-prints the settings panel without color.
+in, but facts that you must declare are never filled in. A complete
+`--no-input` run prints the settings panel without color.
 
 | Answer | Flag |
 | --- | --- |
@@ -787,11 +730,11 @@ prints the settings panel without color.
 | Review output allowance (optional, not asked) | `--max-output-tokens N`, from 4096 up to `--output-tokens` (default 4096; OpenRouter: 16384 or the most every pinned endpoint allows) |
 | Prices (remote) | `--input-micro-usd-per-million-tokens N`, `--output-micro-usd-per-million-tokens N` (OpenRouter: detected unless given) |
 | Per-request cost bound (optional, not asked) | `--max-cost-micro-usd N` (1 USD = 1000000; default: the cost of a request that fills the whole context, rounded up to a cent) |
-| Specialist reviews (optional, not asked) | `--specialists auto\|none` (default `auto`: the saved review runs the general review, then up to three specialist reviews picked from the change; `none` saves the general review only). `trestle setup bootstrap init` takes the same flag. |
-| Spending limit for the key (optional) | `--spending-limit USD`, `--spending-alert PERCENT` (default 80, with an alert at the limit too; the percentage is not asked interactively). Only for a remote provider that charges per token. With `--no-input` and no `--spending-limit`, there is no limit. See [spending limits](spending-limits.md). |
+| Specialist reviews (optional, not asked) | `--specialists auto\|none` (default `auto`: the general review, then up to three specialist reviews; `none`: the general review only). `trestle setup bootstrap init` takes the same flag. |
+| Spending limit for the key (optional) | `--spending-limit USD`, `--spending-alert PERCENT` (default 80, plus an alert at the limit). Only for a remote provider that charges per token. With `--no-input` and no `--spending-limit`, there is no limit. |
 | Key variable (default: the provider's usual name) | `--credential-env OPEN_TRESTLE_PROVIDER_NAME` |
 | Names (default: from `origin`, the folder and `$USER`) | `--owner`, `--tenant`, `--repository`, `--repository-authority`, `--repository-namespace`, `--repository-name` |
-| OpenRouter | `--without-zdr` (do not require zero data retention; also used interactively, since the wizard does not ask), `--generation-provider-slug SLUG[,SLUG]` and `--verification-provider-slug SLUG[,SLUG]` (override the detected ZDR endpoints) |
+| OpenRouter | `--without-zdr` (do not require zero data retention; the wizard never asks, so this flag also applies interactively), `--generation-provider-slug SLUG[,SLUG]` and `--verification-provider-slug SLUG[,SLUG]` (override the detected ZDR endpoints) |
 | OpenCode Go | `--generation-model-evidence`, `--verification-model-evidence` |
 | Evidence window | `--broker-evidence`, `--account-evidence`, `--evidence-retrieved-at`, `--reviewed-at`, `--valid-from`, `--valid-until` |
 | Declarations | `--declare-remote-route`, `--declare-opencode-go-account`, `--declare-ollama-cloud-signin`, `--declare-local-capabilities` |
@@ -826,28 +769,18 @@ trestle init --no-input --provider openrouter \
 
 This command requires zero data retention when both models have
 zero-data-retention endpoints. If one of them has none, it stops and names
-`--without-zdr`. With `--provider openrouter-zdr` it stops instead. If
-OpenRouter's API cannot be read, the command lists the capacity and price flags
-you need to add.
-
-The values above are placeholders, not recommendations.
+`--without-zdr`, and with `--provider openrouter-zdr` it stops without that
+hint. If OpenRouter's API cannot be read, the command lists the capacity and
+price flags you need to add. The values above are placeholders, not
+recommendations.
 
 ## Exit codes
 
-These are the exit codes of `trestle init`. See [exit codes](exit-codes.md) for
-the codes of every command, including `trestle review`.
-
-| Code | Meaning |
-| --- | --- |
-| `0` | Done: setup is ready (review declined), or the first review finished with `findings` or `no_candidates`. |
-| `3` | Pending: something must be fixed before a review can run, or the review was incomplete or canceled. |
-| `4` | Refused: a declaration was declined, setup was refused, a setup check refused (such as the scanner check of a build that pins no secret scan helper, in which case the setup is kept), or the review was refused. |
-| `2` | Usage: a missing or invalid answer, end of input (Ctrl-D), or three unusable answers in a row. |
-| `1` | Internal error, or the first review failed. |
-
-If you end input early, or give three unusable answers to one question, the
-wizard stops without writing anything, provided the setup has not been saved
-yet.
+[Exit codes](exit-codes.md#trestle-init) lists the codes of `trestle init`, and
+its first review uses those codes rather than the ones for `trestle review`.
+End of input (Ctrl-D) and three unusable answers to one question both exit `2`,
+and they stop the wizard without writing anything if the setup has not been
+saved yet.
 
 ## Limits
 
@@ -859,11 +792,10 @@ yet.
 - The wizard does not install software, download models, start servers,
   provision keys or change repository permissions.
 - A spending limit is Open Trestle's own best-effort check of its upper-bound
-  estimate. It is not your provider's bill or limit, so set a limit with your
-  provider too. See [spending limits](spending-limits.md).
+  estimate. It is not your provider's bill or limit.
 - The local model list and the remote catalogs show what is available. A
-  loopback address does not mean that a model runs locally. The wizard flags an
-  Ollama `:cloud` model because it would send source to Ollama's cloud.
+  loopback address does not mean that a model runs locally, so the wizard flags
+  an Ollama `:cloud` model, which would send source to Ollama's cloud.
 - A local setup made by the wizard is for the direct review only. It does not
   prepare the background daemon, which still needs a private `0700` source with
   loose objects. To set that up, use the

@@ -1,9 +1,9 @@
 # Platforms
 
-Open Trestle supports Linux and Windows. macOS is not supported; see
-[macOS](#macos). This page says what each system can do now, so that you
-can tell a missing feature from a mistake. See the
-[roadmap](roadmap.md#next-release) for what the next release adds.
+Open Trestle supports Linux and Windows, but not [macOS](#macos). This page
+says what each system can do now, so that you can tell a missing feature from a
+mistake. The [roadmap](roadmap.md#next-release) says what the next release
+adds.
 
 ## What works today
 
@@ -24,52 +24,53 @@ can tell a missing feature from a mistake. See the
 | `trestle update` | Yes | Refused | Refused |
 | Home screen | Yes | Yes | Untested |
 
-How to read the cells:
+The cells mean the following:
 
-- Yes means that the code supports the capability, and that a test or a run on
-  that system exercises it.
-- Compiles means that continuous integration builds the binary and its tests for
-  that system on amd64. It does not run them there.
-- Untested means that no platform guard in the code refuses the capability, and
-  that no test or recorded run exists on that system.
-- Refused means that the code stops and says why.
+- Yes: the code supports the capability, and a test or a run on that system
+  exercises it.
+- Compiles: continuous integration builds the binary and its tests for that
+  system on amd64, but does not run them there.
+- Untested: no platform guard in the code refuses the capability, but no test
+  or recorded run exists on that system.
+- Refused: the code stops and says why.
 
-Tested systems: end-to-end tests run a review through the real helper on Linux
-amd64 and Windows amd64 (with an offline fixture provider). arm64 on Linux and
-Windows builds but is untested.
-The packaged install and `trestle update` are Linux amd64 only.
+End-to-end tests run a review through the real helper on Linux amd64 and
+Windows amd64, with an offline fixture provider. arm64 on Linux and Windows
+builds but is untested. The packaged install and `trestle update` are Linux
+amd64 only.
 
 ## Why each refusal happens
 
-Every review scans every model request twice before it is sent, whether the
-model server is on this machine or remote. The scan runs in the secret scan
-helper. Snapshot investigations (`--investigation-policy`) are the exception:
-their requests are not scanned, so they run only with a model server on this
-machine. A plain `go build` pins no helper, so it refuses every review with
+Every review scans every model request twice in the secret scan helper before
+it is sent, whether the model server is on this machine or remote. Snapshot
+investigations (`--investigation-policy`) are the exception: their requests are
+not scanned, so they run only with a model server on this machine. A binary
+from a plain `go build` pins no helper, so it refuses every review with
 `this build pins no secret scan helper; build trestle with its helper by
 python3 tools/package_secret_scanner.py --development DIR`. See
 [remote model review](remote-model-review.md#prerequisite-1-a-trestle-with-its-secret-scanner).
 
-`trestle update` is refused off Linux amd64. It updates only the packaged install,
-the one with a receipt at
-`/usr/local/share/open-trestle/distribution/receipt.json`, and it says so without
-changing anything elsewhere. In an install made by the install scripts it prints
-the install command to run again instead. See [updates](updates.md).
+`trestle update` is refused on systems other than Linux amd64. It updates only
+the packaged install, which has a receipt at
+`/usr/local/share/open-trestle/distribution/receipt.json`, and anywhere else it
+says so without changing anything. In an install made by the install scripts,
+it prints the install command to run again instead. See [updates](updates.md).
 
 ## Paths
 
 The defaults use the XDG layout (`~/.config`, `~/.local/state`,
-`~/.local/share`). No separate locations exist yet for Windows. See [environment variables and files](environment-and-files.md#paths).
+`~/.local/share`), on Windows too, because it has no separate locations yet.
+See [environment variables and files](environment-and-files.md#paths).
 
 ## Protected files on Windows
 
 On Windows, Open Trestle checks the owner and access control list of setup,
-credential, usage and repository index files instead of their mode. Apart from your account and
-the system's own accounts (SYSTEM, Administrators and TrustedInstaller), no
-account may read or change them, and no other account may remove, rename or
-replace a folder above them. Open Trestle creates its folders and files that
-way. It refuses an existing folder or file that gives another account more
-access and does not change it. See
+credential, usage and repository index files instead of their mode. Only your
+account and the system's own accounts (SYSTEM, Administrators and
+TrustedInstaller) may read or change them, and no other account may remove,
+rename or replace a folder above them. Open Trestle creates its folders and
+files that way. It refuses an existing folder or file that gives another
+account more access, and leaves it unchanged. See
 [troubleshooting](troubleshooting.md#a-folder-is-refused-as-not-private).
 
 ## macOS
@@ -98,6 +99,6 @@ installer. See [CONTRIBUTING](../CONTRIBUTING.md).
 
 ## For a signed release
 
-A signed release needs signed archives, and `trestle update` for installs that the
-install scripts make, on Linux and Windows. Until then, running the install
-script again is how such an install is updated.
+A signed release needs signed archives, and a `trestle update` that works for
+installs made by the install scripts on Linux and Windows. Until then, you
+update such an install by running the install script again.
