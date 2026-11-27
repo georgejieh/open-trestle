@@ -36,6 +36,8 @@ Open Trestle · update
   ✓ Open Trestle is now 0.2.0 (source revision 1a2b3c4d5e6f).
 ```
 
+On a terminal the download and the archive check show a spinner with the time they have taken instead of the `Downloading` line; when standard error is not a terminal, the plain lines above are printed.
+
 `sudo` asks for your password on the same terminal. From the home screen
 (`trestle` in a terminal), "Update Open Trestle" runs the same command, so an
 update takes two steps there too.

@@ -26,6 +26,7 @@ and fails when it differs from the committed copy.
 
 1. Install the `trestle` CLI, and set up the repository once with
    `trestle init`. **Open Trestle: Set Up Repository** runs `trestle init` in a
+   terminal. **Open Trestle: Check Setup** runs `trestle doctor` in a
    terminal.
 2. Open a local folder of the repository as a trusted workspace. A subfolder
    works too.

@@ -265,6 +265,7 @@ func TestUpdateInstallsASignedRelease(t *testing.T) {
 	for _, want := range []string{
 		"Installed: 0.1.0, the packaged Linux amd64 install.",
 		"✓ Update available: 0.2.0, the signed release v0.2.0 on GitHub Releases.",
+		" and checking it.",
 		"Verified the copy: signed with release key ",
 		"This command runs:",
 		"Install 0.2.0 now? (y/N):",
@@ -279,6 +280,26 @@ func TestUpdateInstallsASignedRelease(t *testing.T) {
 	}
 	if left := f.workspaces(); len(left) != 0 {
 		t.Fatalf("temporary folders left: %v", left)
+	}
+}
+
+func TestUpdateShowsProgressOnATerminal(t *testing.T) {
+	f := useUpdateFakes(t, "0.1.0")
+	f.release("0.2.0", false)
+	f.upgradeTo = "0.2.0"
+	progress, terminal, _ := testProgress(true, false, 80)
+	var stdout, stderr bytes.Buffer
+	code := runUpdate(withReviewProgress(context.Background(), progress), []string{"--yes"}, strings.NewReader(""), &stdout, &stderr)
+	if code != 0 || stderr.Len() != 0 {
+		t.Fatalf("exit=%d\n%s\n%s", code, stdout.String(), stderr.String())
+	}
+	for _, want := range []string{"✓ Downloading ", " and checking it · 0s\n", "✓ Running the archive's own verify-archive · 0s\n"} {
+		if !strings.Contains(terminal.String(), want) {
+			t.Fatalf("progress lacks %q:\n%q", want, terminal.String())
+		}
+	}
+	if strings.Contains(stdout.String(), "Downloading") {
+		t.Fatalf("the plain line repeats the spinner:\n%s", stdout.String())
 	}
 }
 

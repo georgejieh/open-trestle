@@ -126,8 +126,9 @@ func runKeysList(ctx context.Context, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// keysListTerminal is the key list for a person: one row per variable whose
-// mark says whether a key is found, then the commands that change one.
+// keysListTerminal is the key list for a person: each variable on its own row
+// whose mark says whether a key is found, its state indented beneath, then
+// the commands that change one.
 func keysListTerminal(p outPrinter, store *credentialstore.Store, names []string, listErr error) {
 	p.heading("API keys")
 	p.hint("  The environment first, then the keys saved in " + providerCredentialDisplayDirectory() + ".")
@@ -139,25 +140,24 @@ func keysListTerminal(p outPrinter, store *credentialstore.Store, names []string
 		p.next("trestle keys set OPEN_TRESTLE_PROVIDER_NAME   (for example OPEN_TRESTLE_PROVIDER_OPENROUTER)")
 		return
 	}
-	rows := []outRow{}
 	for _, name := range names {
 		key, state := providerKey(name)
-		row := outRow{mark: p.ok, label: name, value: state.where()}
+		mark, where := p.ok, state.where()
 		switch {
 		case state.source == providerKeyFromStore:
-			row.value = "saved"
+			where = "saved"
 		case !state.available():
-			row.mark = p.bad
+			mark = p.bad
 		}
 		if keysBothSet(store, name, state) {
-			row.value += "; a saved key too, and the environment wins"
+			where += "; a saved key too, and the environment wins"
 		}
 		if suffix := keysMaskedSuffix(key); suffix != "" {
-			row.value += " · " + suffix
+			where += " · " + suffix
 		}
-		rows = append(rows, row)
+		p.rows(outRow{mark: mark, value: name})
+		p.detail(where, initToneBody)
 	}
-	p.rows(rows...)
 	p.next("trestle keys set NAME", "trestle keys remove NAME")
 }
 
