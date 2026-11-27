@@ -1,154 +1,140 @@
-# Open Trestle
+<p align="center">
+  <img src="docs/assets/banner.svg" alt="Open Trestle: code review that tests a change before a model judges it" width="880">
+</p>
 
-Open Trestle is an open-source AI code-review harness for pull requests. Before
-it judges a change, it builds an understanding of the whole codebase, works out
-what the pull request changes and what depends on that code, and tests the
-change. Then it reports the problems it found.
+<p align="center">
+  <a href="https://github.com/georgejieh/open-trestle/actions/workflows/verify-runtime.yml"><img src="https://github.com/georgejieh/open-trestle/actions/workflows/verify-runtime.yml/badge.svg?branch=main" alt="CI status"></a>
+  <a href="https://github.com/georgejieh/open-trestle/releases"><img src="https://img.shields.io/github/v/release/georgejieh/open-trestle?include_prereleases&sort=semver&label=release" alt="Latest release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/georgejieh/open-trestle" alt="License: Apache 2.0"></a>
+  <a href="go.mod"><img src="https://img.shields.io/github/go-mod/go-version/georgejieh/open-trestle" alt="Go version"></a>
+  <a href="docs/platforms.md"><img src="https://img.shields.io/badge/platforms-Linux%20%7C%20Windows-22343b" alt="Platforms: Linux and Windows"></a>
+</p>
 
-It works with the model providers you choose, including models running on your
-own hardware, and it is built to run where your code already lives: in your
-terminal, in a desktop app, in CI and in your editor.
+<p align="center">
+  <a href="#install"><img src="https://img.shields.io/badge/Install-1c5da8?style=for-the-badge" alt="Install"></a>
+  <a href="docs/getting-started.md"><img src="https://img.shields.io/badge/First%20review-347158?style=for-the-badge" alt="First review"></a>
+  <a href="docs/commands.md"><img src="https://img.shields.io/badge/Commands-22343b?style=for-the-badge" alt="Commands"></a>
+  <a href="docs/README.md"><img src="https://img.shields.io/badge/Docs-22343b?style=for-the-badge" alt="Documentation"></a>
+</p>
 
-Open Trestle is under active development and has no release yet. This README
-describes how Open Trestle is designed to work, then what is built today.
+Open Trestle is an open-source agent harness built for one job: reviewing
+code. It is a complete runtime of its own, with its own repository index,
+sandbox, model routing, secret scanning and spending limits, and every part of
+it is tuned for review.
 
-## How a review works
+It indexes the repository, works out what a change touches, runs the
+repository's own tests on the change in a sandbox, and only then asks a model
+to look for problems. A second model, from a different family, checks every
+problem before you see it.
 
-Open Trestle pairs fixed, scripted steps with models that work under narrow,
-carefully written instructions. The scripts do everything that code can decide
-on its own, and the models handle the judgment that code cannot. A review of a
-pull request goes through five stages.
+It runs in your terminal, in CI and in VS Code, with the model providers you
+choose, including models on your own hardware.
 
-1. Understand the codebase. Scripted analysis and an instructed model read
-   the repository: how it is structured, the conventions it follows, and the
-   tests and CI checks its maintainers already run. Those existing checks show
-   what the maintainers care about.
-2. Understand the change. Open Trestle works out what the pull request
-   changes, which other code depends on the changed code, and how the change fits
-   the rest of the codebase.
-3. Decide how to test it. It chooses which of the checks that ship with Open
-   Trestle, and which of the repository's own tests, to run. It also decides
-   whether the pull request needs new tests written for it, and writes them.
-4. Test the change and what depends on it. The tests run against the changed
-   code and against the code that relies on it, so a change cannot quietly break
-   something elsewhere. Code decides whether a test passes, not a model.
-5. Review with models from different families. One model looks for problems
-   and a second model checks each one. Open Trestle recommends that the second
-   model come from a different model family. Only problems that survive this
-   check are reported.
+<p align="center">
+  <img src="docs/assets/terminal.svg" alt="A trestle review in a terminal: the stages it ran, then one confirmed problem with its file, line and suggested fix" width="880">
+</p>
 
-The [design rationale](docs/rationale.md) explains why the scripted steps come
-first and why the second model should come from another family.
+## Install
 
-Each review opens with a short account of what was checked, followed by the
-confirmed problems, most important first. Problems in code that the pull request
-did not touch are listed separately and never block a merge on their own.
-
-### Languages
-
-Open Trestle reads source at the level of its syntax tree for Java, JavaScript,
-TypeScript, Python, HTML, C, C++, C#, Swift, Go, Rust, PHP and Ruby. Only Go
-also records where a variable, constant or function is used as a value.
-Support for the languages used with game engines such as Godot, Unity and
-Unreal Engine, and for the custom
-languages that large companies build in-house, is planned.
-
-### Privacy
-
-With a model server on your own machine, a review sends your code only to that
-server. Open Trestle scans each review request for secrets twice before
-sending it, whether the server is local or remote; investigation requests are
-not scanned and go only to a local server. It sends no telemetry. The
-[privacy](docs/privacy.md) page lists what is sent, when, and to whom.
-
-## Project status
-
-What works today, on Linux and Windows (macOS is not supported; see [platforms](docs/platforms.md)):
-
-- `trestle init` sets up a repository in one guided pass. It asks where the two
-  models run, takes API keys through hidden input, and stores them in an
-  owner-only credential file.
-- `trestle review` reviews every change on your current branch against your
-  default branch, which is the same set of changes a pull request shows. Running
-  `trestle` on its own opens a home screen with your setup, recent spending and
-  the last review.
-- A review builds an index of the repository first (`trestle index` builds and
-  queries it directly). The models see the definition around each changed hunk,
-  the callers and other uses of changed code, the tests that reference it and a
-  ranked map of the repository. `trestle profile` reads the repository's tests
-  and CI configuration.
-- Syntax analysis covers every language listed above.
-- With your consent, a review runs the repository's own tests in a sandbox
-  with no network, before any model call (`trestle checks on|off|status`). Both
-  models receive the outcomes. See [repository checks](docs/repository-checks.md).
-- The two-model review in stage 5 works. Results come as text in the terminal,
-  or as JSON, SARIF or Markdown for other tools.
-- The VS Code extension runs `trestle review` on the current branch and shows
-  the findings in the Problems panel. See [VS Code](docs/vscode.md).
-- Remote providers (OpenRouter, Ollama Cloud and OpenCode Go) and local model
-  servers (Ollama, llama.cpp, vLLM, LM Studio and other OpenAI-compatible
-  servers) are supported. Every request except an investigation request (local only) is scanned for
-  secrets twice by the secret scan helper before it is sent. It runs on Linux
-  and Windows (amd64 releases; arm64 from source).
-- You can set a spending limit for each API key. Open Trestle warns you as you
-  approach it and stops sending requests when you reach it. Its totals are
-  estimates, so your provider's own limits remain the real safeguard.
-
-What is not built yet:
-
-- Choosing which of the checks that ship with Open Trestle to run, and writing
-  new tests for a change (stage 3). Only the repository's own tests run.
-- Syntax analysis for the game-engine and in-house languages.
-- A desktop app.
-- The [GitHub Actions example](examples/github-actions/README.md) has been
-  tested offline but has not yet run on GitHub.
-- A signed release. The install scripts download unsigned pre-releases; a
-  checksum shows only that a download matches the release.
-
-The [roadmap](docs/roadmap.md) lists what is next.
-
-## Getting started
-
-Install Open Trestle for your account. On Linux (amd64):
+Linux (amd64):
 
 ```sh
 curl -fsSL https://georgejieh.dev/open-trestle/install.sh | bash
 ```
 
-On Windows (amd64), in PowerShell:
+Windows (amd64), in PowerShell:
 
 ```powershell
 irm https://georgejieh.dev/open-trestle/install.ps1 | iex
 ```
 
-The first releases are unsigned pre-releases. The [install](docs/install.md)
-guide says what the scripts do, and how to build from source instead (Go
-1.26.11 and Python 3).
-
-Then, inside the Git repository you want to review, with your changes committed
-on a branch:
+Then, in the Git repository you want reviewed, with your changes committed on
+a branch:
 
 ```sh
-trestle init      # guided setup; asks for an API key if the provider needs one
+trestle init      # guided setup: where the two models run, and an API key if needed
 trestle review    # review your branch against the default branch
-trestle           # home screen with status and next steps
+trestle           # home screen: setup, spending and the last review
 ```
 
-[Getting started](docs/getting-started.md) follows a first review from start to
-finish, and the [command reference](docs/commands.md) lists every command and
-flag.
+The current releases are unsigned pre-releases. [Install](docs/install.md)
+says what the scripts do and how to build from source, and
+[getting started](docs/getting-started.md) follows a first review from start
+to finish.
+
+## How a review runs
+
+<p align="center">
+  <img src="docs/assets/review-flow.svg" alt="Five stages: index, scope and check are decided by code; find and verify are judged by models; only confirmed problems are reported" width="880">
+</p>
+
+1. **Index.** Open Trestle reads the repository: its symbols, who calls what,
+   its tests and its CI configuration.
+2. **Scope.** It works out what the change touches and what depends on that
+   code, and reads what the change says it is for.
+3. **Check.** With your consent, it runs the repository's own tests on the
+   base commit and on your change, in a sandbox with no network. A test that
+   passed before and fails now is reported as a fact, not an opinion.
+4. **Find.** One model looks for problems, with the changed code, its callers
+   and the test results in front of it.
+5. **Verify.** A second model checks each problem against the source and
+   rejects what it cannot confirm.
+
+The [design rationale](docs/rationale.md) explains the order and why the
+second model should come from another family.
+
+## What you get
+
+| | |
+| --- | --- |
+| 🧪 **Tested before judged** | The repository's tests run on base and head before any model call. See [repository checks](docs/repository-checks.md). |
+| 🔁 **Two model families** | One model proposes, another verifies. Only confirmed problems are reported, ranked, with duplicates merged. |
+| 🧭 **Scope and leftovers** | A review compares the change with what it says it does and with the project's own intent documents, and points out unrequested scope and leftover code. See [specialist profiles](docs/agent-profiles.md). |
+| 📌 **Proof you can run** | With `--model-checks`, the verifier writes a test for a confirmed problem. It is kept only if it passes on base and fails on your change. |
+| 🔌 **Your models** | OpenRouter, Ollama Cloud and OpenCode Go, or a local server: Ollama, llama.cpp, vLLM, LM Studio and other OpenAI-compatible servers. |
+| 🔒 **Private by default** | Every remote request is scanned for secrets twice before it is sent. No telemetry. See [privacy](docs/privacy.md). |
+| 💸 **Spending limits** | Set a limit per API key. Open Trestle warns as you approach it and stops at it. See [spending limits](docs/spending-limits.md). |
+| 📄 **Output for people and tools** | Text in the terminal, or JSON, SARIF and Markdown. See [review output](docs/local-model-review.md). |
+| 🧩 **Where you work** | [VS Code](docs/vscode.md) shows findings in the Problems panel, and a [GitHub Actions example](examples/github-actions/README.md) reviews each pull request. |
+
+## Languages
+
+Open Trestle reads source at the level of its syntax tree for:
+
+`Go` `Python` `JavaScript` `TypeScript` `Java` `C` `C++` `C#` `Rust` `Swift` `PHP` `Ruby` `HTML`
+
+Go also gets value-level tracking of where a variable, constant or function is
+used. Repository checks run Go, Python and Node.js test suites. See
+[syntax analysis](docs/syntax-analysis.md).
+
+## Status
+
+Open Trestle is in pre-release on Linux and Windows (amd64). macOS builds but
+is not supported; see [platforms](docs/platforms.md).
+
+Not built yet:
+
+- A signed release. The install scripts download unsigned pre-releases, and a
+  checksum shows only that a download matches the release.
+- A desktop app.
+- Syntax analysis for game-engine languages.
+
+The [roadmap](docs/roadmap.md) lists what is next, and the
+[changelog](CHANGELOG.md) lists what changed.
 
 ## Documentation
 
-The [documentation index](docs/README.md) groups every page by task. If a
-review fails, [troubleshooting](docs/troubleshooting.md) explains each failure
-message and what to do about it. The guide to
-[how a review runs today](docs/local-model-review.md) covers the current review
-in detail.
+| | |
+| --- | --- |
+| [Getting started](docs/getting-started.md) | Setup and a first review |
+| [Commands](docs/commands.md) | Every command and flag |
+| [Review output](docs/local-model-review.md) | Results, ranking and specialists |
+| [Troubleshooting](docs/troubleshooting.md) | What each message means; start with `trestle doctor` |
+| [All pages](docs/README.md) | The full index, grouped by task |
 
 ## Contributing
 
-Contributions are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) before
+Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) before
 opening a pull request, and report security problems privately as described in
 [SECURITY.md](SECURITY.md).
 

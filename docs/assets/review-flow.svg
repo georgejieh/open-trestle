@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 300" role="img" aria-labelledby="t d">
+<title id="t">How a review runs</title>
+<desc id="d">Five stages: index the repository, scope the change, run the repository's tests in a sandbox, find problems with one model, verify each with a second model. Code decides the first three, models judge the last two, and only confirmed problems are reported.</desc>
+<rect width="1000" height="300" rx="18" fill="#1b2a30"/>
+<path d="M26 52h560" stroke="#7fc7a6" stroke-width="3" stroke-linecap="round"/><text x="26" y="38" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="13" font-weight="700" fill="#7fc7a6" letter-spacing="1">DECIDED BY CODE</text>
+<path d="M608 52h366" stroke="#77b7ff" stroke-width="3" stroke-linecap="round"/><text x="608" y="38" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="13" font-weight="700" fill="#77b7ff" letter-spacing="1">JUDGED BY MODELS</text>
+<rect x="26" y="84" width="172" height="112" rx="12" fill="#22343b" stroke="#496069"/>
+<circle cx="52" cy="112" r="13" fill="none" stroke="#7fc7a6" stroke-width="2"/><text x="52" y="117" text-anchor="middle" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="13" font-weight="700" fill="#7fc7a6">1</text>
+<text x="74" y="118" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="18" font-weight="700" fill="#f7f4ea">Index</text>
+<text x="40" y="152" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="12.5" fill="#c8d2d2">Symbols, callers, tests</text><text x="40" y="172" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="12.5" fill="#c8d2d2">and CI of the repository</text>
+<path d="M201 140h14m-5 -5l5 5l-5 5" fill="none" stroke="#8fa3a8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="220" y="84" width="172" height="112" rx="12" fill="#22343b" stroke="#496069"/>
+<circle cx="246" cy="112" r="13" fill="none" stroke="#7fc7a6" stroke-width="2"/><text x="246" y="117" text-anchor="middle" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="13" font-weight="700" fill="#7fc7a6">2</text>
+<text x="268" y="118" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="18" font-weight="700" fill="#f7f4ea">Scope</text>
+<text x="234" y="152" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="12.5" fill="#c8d2d2">What the change touches</text><text x="234" y="172" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="12.5" fill="#c8d2d2">and what depends on it</text>
+<path d="M395 140h14m-5 -5l5 5l-5 5" fill="none" stroke="#8fa3a8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="414" y="84" width="172" height="112" rx="12" fill="#22343b" stroke="#496069"/>
+<circle cx="440" cy="112" r="13" fill="none" stroke="#7fc7a6" stroke-width="2"/><text x="440" y="117" text-anchor="middle" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="13" font-weight="700" fill="#7fc7a6">3</text>
+<text x="462" y="118" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="18" font-weight="700" fill="#f7f4ea">Check</text>
+<text x="428" y="152" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="12.5" fill="#c8d2d2">Your tests, sandboxed,</text><text x="428" y="172" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="12.5" fill="#c8d2d2">on base and on head</text>
+<path d="M589 140h14m-5 -5l5 5l-5 5" fill="none" stroke="#8fa3a8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="608" y="84" width="172" height="112" rx="12" fill="#22343b" stroke="#496069"/>
+<circle cx="634" cy="112" r="13" fill="none" stroke="#77b7ff" stroke-width="2"/><text x="634" y="117" text-anchor="middle" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="13" font-weight="700" fill="#77b7ff">4</text>
+<text x="656" y="118" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="18" font-weight="700" fill="#f7f4ea">Find</text>
+<text x="622" y="152" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="12.5" fill="#c8d2d2">One model proposes</text><text x="622" y="172" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="12.5" fill="#c8d2d2">problems, with evidence</text>
+<path d="M783 140h14m-5 -5l5 5l-5 5" fill="none" stroke="#8fa3a8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="802" y="84" width="172" height="112" rx="12" fill="#22343b" stroke="#496069"/>
+<circle cx="828" cy="112" r="13" fill="none" stroke="#77b7ff" stroke-width="2"/><text x="828" y="117" text-anchor="middle" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="13" font-weight="700" fill="#77b7ff">5</text>
+<text x="850" y="118" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="18" font-weight="700" fill="#f7f4ea">Verify</text>
+<text x="816" y="152" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="12.5" fill="#c8d2d2">A second model family</text><text x="816" y="172" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="12.5" fill="#c8d2d2">confirms or rejects each</text>
+<path d="M888.0 196v26" stroke="#8fa3a8" stroke-width="2" stroke-linecap="round"/><path d="M883.0 217l5 5l5 -5" fill="none" stroke="#8fa3a8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="26" y="234" width="948" height="44" rx="12" fill="#f7f4ea"/><text x="44" y="262" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="15" font-weight="700" fill="#182329">Report</text><text x="110" y="262" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="14" fill="#34474e">Only confirmed problems, most important first: terminal, JSON, SARIF or Markdown</text>
+</svg>

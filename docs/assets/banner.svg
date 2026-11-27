@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 220" role="img" aria-labelledby="t d">
+<title id="t">Open Trestle</title>
+<desc id="d">Code review that tests a change before a model judges it.</desc>
+<rect width="960" height="220" rx="18" fill="#1b2a30"/>
+<g stroke="#2d454d" stroke-width="1">
+<path d="M0 176h960M96 176l44 44M184 176l-44 44M184 176l44 44M272 176l-44 44M272 176l44 44M360 176l-44 44M360 176l44 44M448 176l-44 44M448 176l44 44M536 176l-44 44M536 176l44 44M624 176l-44 44M624 176l44 44M712 176l-44 44M712 176l44 44M800 176l-44 44M800 176l44 44M888 176l-44 44"/>
+</g>
+<g transform="translate(96 52)">
+<rect width="88" height="88" rx="19" fill="#22343b" stroke="#496069"/>
+<path d="M27.5 22v44M27.5 30.25h23.4c6.9 0 11 4.1 11 11v16.5" fill="none" stroke="#f7f4ea" stroke-width="6.9" stroke-linecap="round"/>
+<circle cx="27.5" cy="20.6" r="8.25" fill="#77b7ff"/><circle cx="61.9" cy="64.6" r="8.25" fill="#77b7ff"/>
+</g>
+<text x="216" y="100" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="50" font-weight="700" fill="#f7f4ea" letter-spacing="-1">Open Trestle</text>
+<text x="218" y="136" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="19" fill="#b9c6c8">Code review that tests a change before a model judges it.</text>
+</svg>
