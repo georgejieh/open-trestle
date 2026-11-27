@@ -23,15 +23,15 @@ sandbox, model routing, secret scanning and spending limits, and every part of
 it is tuned for review.
 
 It indexes the repository, works out what a change touches, runs the
-repository's own tests on the change in a sandbox, and only then asks a model
-to look for problems. A second model, from a different family, checks every
-problem before you see it.
+repository's own tests on the change in a sandbox when you allow it, and only then asks a model
+to look for problems. A second model, ideally from a different family, checks
+every problem before you see it.
 
 It runs in your terminal, in CI and in VS Code, with the model providers you
 choose, including models on your own hardware.
 
 <p align="center">
-  <img src="docs/assets/terminal.svg" alt="A trestle review in a terminal: the stages it ran, then one confirmed problem with its file, line and suggested fix" width="880">
+  <img src="docs/assets/terminal.svg" alt="Abridged output of trestle review in a terminal: the stages it ran, two tests that regressed, and one confirmed problem with its file, line and suggested fix" width="880">
 </p>
 
 ## Install
@@ -77,7 +77,7 @@ to finish.
    passed before and fails now is reported as a fact, not an opinion.
 4. **Find.** One model looks for problems, with the changed code, its callers
    and the test results in front of it.
-5. **Verify.** A second model checks each problem against the source and
+5. **Verify.** A second, different model checks each problem against the source and
    rejects what it cannot confirm.
 
 The [design rationale](docs/rationale.md) explains the order and why the
@@ -87,13 +87,13 @@ second model should come from another family.
 
 | | |
 | --- | --- |
-| 🧪 **Tested before judged** | The repository's tests run on base and head before any model call. See [repository checks](docs/repository-checks.md). |
-| 🔁 **Two model families** | One model proposes, another verifies. Only confirmed problems are reported, ranked, with duplicates merged. |
+| 🧪 **Tested before judged** | With your consent, the repository's tests run on base and head before any model call. See [repository checks](docs/repository-checks.md). |
+| 🔁 **Two models** | One model proposes and a different one verifies; a model from another family is recommended. Only confirmed problems are reported, ranked, with duplicates merged. |
 | 🧭 **Scope and leftovers** | A review compares the change with what it says it does and with the project's own intent documents, and points out unrequested scope and leftover code. See [specialist profiles](docs/agent-profiles.md). |
-| 📌 **Proof you can run** | With `--model-checks`, the verifier writes a test for a confirmed problem. It is kept only if it passes on base and fails on your change. |
+| 📌 **Proof you can run** | With `--model-checks`, the verifier writes a test for a confirmed problem. It is kept only if it fails on your change and passes, or cannot be built, on the base commit. |
 | 🔌 **Your models** | OpenRouter, Ollama Cloud and OpenCode Go, or a local server: Ollama, llama.cpp, vLLM, LM Studio and other OpenAI-compatible servers. |
-| 🔒 **Private by default** | Every remote request is scanned for secrets twice before it is sent. No telemetry. See [privacy](docs/privacy.md). |
-| 💸 **Spending limits** | Set a limit per API key. Open Trestle warns as you approach it and stops at it. See [spending limits](docs/spending-limits.md). |
+| 🔒 **Private by default** | The source in every review request is scanned for secrets twice before it is sent. No telemetry. See [privacy](docs/privacy.md). |
+| 💸 **Spending limits** | Set a limit per API key. Open Trestle warns as you approach it and refuses a review once the recorded spend reaches it. The limit is best effort. See [spending limits](docs/spending-limits.md). |
 | 📄 **Output for people and tools** | Text in the terminal, or JSON, SARIF and Markdown. See [review output](docs/local-model-review.md). |
 | 🧩 **Where you work** | [VS Code](docs/vscode.md) shows findings in the Problems panel, and a [GitHub Actions example](examples/github-actions/README.md) reviews each pull request. |
 
@@ -101,10 +101,10 @@ second model should come from another family.
 
 Open Trestle reads source at the level of its syntax tree for:
 
-`Go` `Python` `JavaScript` `TypeScript` `Java` `C` `C++` `C#` `Rust` `Swift` `PHP` `Ruby` `HTML`
+`Go` `Python` `JavaScript` `TypeScript` `TSX` `Java` `C` `C++` `C#` `Rust` `Swift` `PHP` `Ruby` `HTML`
 
 Go also gets value-level tracking of where a variable, constant or function is
-used. Repository checks run Go, Python and Node.js test suites. See
+used. Repository checks run Go, Python, Node.js and Rust test suites. See
 [syntax analysis](docs/syntax-analysis.md).
 
 ## Status

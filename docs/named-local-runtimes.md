@@ -4,7 +4,7 @@ Four maintained configuration templates set up both review models to run on your
 
 Choose one template; none of them is a default. LM Studio's own requirements cover Apple Silicon on macOS 14 or later (not Intel Macs), but Open Trestle itself is not supported on macOS (see [platforms](platforms.md#macos)).
 
-`trestle init` does not use these templates. It looks for a server at the default ports (Ollama 11434, LM Studio 1234, llama.cpp 8080, vLLM 8000), offers whatever answers, and writes its own setup folder. Use the templates when you bind and check the configuration by hand.
+`trestle init` does not use these templates. It looks for a server at the default ports (Ollama 11434, LM Studio 1234, llama.cpp 9931 or 8080, vLLM 8000), offers whatever answers, and writes its own setup folder. Use the templates when you bind and check the configuration by hand.
 
 | Directory under `examples/named-local-runtimes/` | Generation API base | Verification API base | Model selectors |
 | --- | --- | --- | --- |

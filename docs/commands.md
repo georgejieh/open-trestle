@@ -97,7 +97,7 @@ It shows [progress](local-model-review.md#progress) on standard error and ends a
 | `--max-specialists N` | The most specialists a set runs. |
 | `--exit-code-policy default\|findings\|strict\|always-zero` | How a completed review maps to an exit status. See [exit codes](exit-codes.md#exit-code-policy). |
 | `--checks`, `--no-checks` | Run or skip the [repository checks](repository-checks.md) for this review, whatever the saved answer. |
-| `--model-checks` | Ask the checker to write a test for each of up to 3 verified findings, and keep the tests that pass on base and fail on head. Needs the repository checks and never changes the status. See [model-written checks](repository-checks.md#model-written-checks). |
+| `--model-checks` | Ask the checker to write a test for each of up to 3 verified findings, and keep the tests that fail on head and pass, or cannot be built, on base. Needs the repository checks and never changes the status. See [model-written checks](repository-checks.md#model-written-checks). |
 | `--stop-on-stdin-close` | Stop the review, as Ctrl-C does, when standard input reaches end of file, so a program can cancel it by closing its input. The checks question is not asked. |
 
 You cannot combine `--profile` and `--specialists`. `trestle review PATH`

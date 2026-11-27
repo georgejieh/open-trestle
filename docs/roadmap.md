@@ -39,7 +39,8 @@ they are in the pre-release.
 - **Repository checks.** With your consent, a review runs the repository's own
   tests in a sandbox with no network and gives the outcomes to both models. With
   `--model-checks`, the checker also writes a test for each of up to 3 verified
-  findings and keeps a test only when it passes on base and fails on head. See
+  findings and keeps a test only when it fails on head and passes, or cannot be
+  built, on base. See
   [repository checks](repository-checks.md).
 - **Providers.** OpenRouter, Ollama Cloud, OpenCode Go, Ollama signed in to
   Ollama Cloud, and any OpenAI-compatible server on this machine. Remote

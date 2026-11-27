@@ -31,7 +31,7 @@ shows you anything it fills in before you agree to it.
 
 ## Before you start
 
-You need four things.
+You need three things.
 
 1. A Git checkout with committed changes. Only committed work is reviewed, and
    uncommitted edits are ignored. The review compares exactly two commits and
@@ -218,7 +218,7 @@ What happens next depends on the provider:
   [OpenRouter zero data retention](openrouter-zdr-profile.md) explains which
   endpoints are pinned and how the output allowance is chosen.
 - With a local server, if exactly one server answers on its usual port (Ollama
-  11434, LM Studio 1234, llama.cpp 8080, vLLM 8000), the wizard uses it without
+  11434, LM Studio 1234, llama.cpp 9931 or 8080, vLLM 8000), the wizard uses it without
   asking. If several answer, or none, you pick the server or type its
   `127.0.0.1` address. The checker shares the server when the server lists two
   models. If both model lists can be read without a key, the wizard assumes the

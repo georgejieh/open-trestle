@@ -26,6 +26,8 @@ All notable changes to released versions of Open Trestle will be documented in t
 
 ### Fixed
 
+- `trestle init` also looks for a llama.cpp server on port 9931, the server's current default, as
+  well as on 8080.
 - A specialist review no longer lists one defect once per reviewer. Findings at one place that
   different reviewers worded differently now merge, and the other wordings stay listed under
   `also reported as:`. See
