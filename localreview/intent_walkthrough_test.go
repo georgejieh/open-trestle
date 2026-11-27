@@ -104,6 +104,39 @@ func TestDirectReviewCarriesCommitIntentAndPatternHygiene(t *testing.T) {
 	}
 }
 
+// An unchanged base intent document reaches the finder as repository_context,
+// and the change features record its path, never its text, as a linked doc.
+func TestDirectReviewRecordsDeclaredIntentDocument(t *testing.T) {
+	scope := []byte("Non-goal: a hosted service.\n")
+	f := newRmModelFixture(t, rmModelFixtureOptions{extraBase: map[string][]byte{"PRD.md": scope}, extraHead: map[string][]byte{"PRD.md": scope}})
+	options := rmOptions(t, f, rmNewClock())
+	options.ArtifactCapacity = 1024
+	s := rmSession(t, options)
+	p := rmPrepare(t, s, f, "intent-document")
+	if result, err := s.Run(context.Background(), p); err != nil || result.wire.RunStatus != "succeeded" {
+		t.Fatalf("review run: %v", err)
+	}
+	_, captures := f.generation.snapshot()
+	if len(captures) == 0 {
+		t.Fatal("the review sent no generation request")
+	}
+	supplied := false
+	for _, source := range captures[0].Packet.Sources {
+		supplied = supplied || source.Stage == "repository_context" && source.Path == "PRD.md" && source.Content == string(scope)
+	}
+	if !supplied {
+		t.Fatalf("intent document not supplied: %+v", captures[0].Packet.Sources)
+	}
+	features, _, err := s.ChangeFeatures(context.Background(), p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := features.MarshalJSON()
+	if err != nil || !bytes.Contains(encoded, []byte(`"linked_doc_paths":["PRD.md"]`)) || bytes.Contains(encoded, []byte("hosted service")) {
+		t.Fatalf("change features do not record the intent document path alone: %s, %v", encoded, err)
+	}
+}
+
 // A review whose head is an unrelated root commit still records that commit's
 // message, and a clean change records pattern hygiene with zero counts.
 func TestDirectReviewOfACleanChangeShowsZeroPatternHygiene(t *testing.T) {

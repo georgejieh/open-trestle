@@ -41,8 +41,9 @@ var ErrChangeFeaturesUnavailable = errors.New("local review change features unav
 // file that does not fit is skipped whole. unreadStyleConfig lists, in path
 // order, every recognized base style configuration file that was not supplied:
 // over a file bound, not valid UTF-8, or beyond the document bound. Intent is
-// declared when the run's generation context carried commit messages; only
-// that presence is recorded, never their text.
+// declared when the run's generation context carried commit messages or a
+// project intent document; only that presence and the documents' paths are
+// recorded, never their text.
 func (s *Session) ChangeFeatures(ctx context.Context, prepared runtimecatalog.PreparedReviewRun) (features agentprofile.ChangeFeatures, unreadStyleConfig []string, err error) {
 	if s == nil || ctx == nil || ctx.Err() != nil || prepared.Validate() != nil {
 		return agentprofile.ChangeFeatures{}, nil, ErrChangeFeaturesUnavailable
@@ -108,7 +109,8 @@ type routingInput struct {
 	changeIdentity string
 	files          []agentprofile.ChangedFileSpec
 	impact         semanticimpact.Profile
-	// intent is whether the run's context carried commit messages.
+	// intent is whether the run's context carried commit messages, and the
+	// paths of the project intent documents it carried.
 	intent agentprofile.IntentSpec
 	// fanOut counts the direct dependents of the changed definitions that
 	// the run's context manifest records.
@@ -169,15 +171,19 @@ func (s *Session) recordedContextPayload(ctx context.Context, scope audit.Review
 	return contextArtifact.Payload(), true
 }
 
-// recordedIntent reports whether a recorded generation context carried a
-// stated intent with at least one commit: declared change intent for the
-// drift_auditor's intent condition. It reads presence, never the text.
+// recordedIntent reports the declared intent a recorded generation context
+// carried, for the drift_auditor's intent condition: a stated intent with at
+// least one commit, and the project intent documents it supplied as linked
+// docs. It reads presence and paths, never the text.
 func recordedIntent(payload []byte) agentprofile.IntentSpec {
-	summary, err := review.ContextStatedIntent(payload)
-	if err != nil || !summary.Present || summary.Commits+summary.CommitsOmitted == 0 {
-		return agentprofile.IntentSpec{}
+	var intent agentprofile.IntentSpec
+	if summary, err := review.ContextStatedIntent(payload); err == nil && summary.Present && summary.Commits+summary.CommitsOmitted > 0 {
+		intent.DescriptionPresent = true
 	}
-	return agentprofile.IntentSpec{DescriptionPresent: true}
+	if documents, err := review.ContextDeclaredIntentDocuments(payload); err == nil {
+		intent.LinkedDocPaths = documents
+	}
+	return intent
 }
 
 // fitConfigFiles returns the configuration files routing's change-features

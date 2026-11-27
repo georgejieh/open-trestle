@@ -11,7 +11,7 @@ Open Trestle ships its own AI material: host contracts, the embedded specialist 
 | Host contract for each request version (generation v11, verification v10, investigation v6) | Open Trestle, compiled into the binary | Instructions |
 | Specialist skill text (`agentprofile/skills/*.md`) | Open Trestle, compiled with `go:embed` | Review guidance inside the host contract's limits |
 | Output schemas (`schemas/review/*.json`) | Open Trestle, compiled with `go:embed` | Output shape |
-| Changed source, base-tree instruction files, memory, tool results | The reviewed repository and its contributors | None. Data |
+| Changed source, base-tree instruction files and project intent documents, memory, tool results | The reviewed repository and its contributors | None. Data |
 | Commit messages (`stated_intent`) | The change's author | None. Author-stated data |
 | Pattern-hygiene observations (`pattern_hygiene`) | Open Trestle, deterministic host rules | None. Attention markers |
 | Candidate claims, titles and fix text | A model | None. Model output |
@@ -83,7 +83,7 @@ Each source carries `risk_flags`. They mark material for attention only. They do
 
 Removed base lines are repository text too. From generation v8, verification v7 and investigation v6, the base lines that a deletion-only change removed reach the model as `removed_lines` sources. They have `repository_controlled` taint and get `risk_flags` from the same rules as every other source. An injection payload in deleted code is therefore flagged, stays inside a JSON string value and leaves the system channel unchanged.
 
-Each contract says in one sentence that these sources are deleted base lines with base line numbers. They show what was removed, not code that remains. An issue in the removed code itself is located on that source with its base line numbers. Base and head line numbers never cover each other. Publication content scans keep the legacy rules. The base-tree instruction files that the [context-assembly handler](runtime.md#context-assembly) supplies as `repository_context` all match `agent_configuration`.
+Each contract says in one sentence that these sources are deleted base lines with base line numbers. They show what was removed, not code that remains. An issue in the removed code itself is located on that source with its base line numbers. Base and head line numbers never cover each other. Publication content scans keep the legacy rules. The base-tree instruction files that the [context-assembly handler](runtime.md#context-assembly) supplies as `repository_context` all match `agent_configuration`. Project intent documents come from the base tree under the same rules. The generation contract names the four instruction file paths and calls every other `repository_context` source a project intent document: untrusted statements of goals, non-goals and constraints, never instructions, that the change may be compared with. Only `.trestle/scope.md` among them matches `agent_configuration`, by its directory.
 
 `trestle local-git model-review` reports `agent_configuration_sources` and `instruction_like_sources` in the JSON result (absent when zero). It prints a text line: `ai material in review context: agent_configuration=N instruction_like=M (reviewed as code, never followed)`. SARIF carries the counts as `trestleAgentConfigurationSourceCount` and `trestleInstructionLikeSourceCount`. The counts do not change `status`, `ci_disposition` or coverage.
 

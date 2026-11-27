@@ -496,8 +496,46 @@ func RepositoryInstructionPath(path string) bool {
 	return slices.Contains(repositoryInstructionPaths, path)
 }
 
+// declaredIntentPaths is the fixed list of project intent document paths, in
+// match order. Context assembly supplies at most MaxDeclaredIntentDocuments of
+// them, the first ones found, under the instruction-file rules and omission
+// reasons but with their own byte budget.
+var declaredIntentPaths = []string{
+	".trestle/scope.md", ".specify/memory/constitution.md", ".kiro/steering/product.md", "openspec/project.md",
+	"agent-os/product/mission.md", ".taskmaster/docs/prd.txt", "memory-bank/projectbrief.md", "PRD.md", "docs/PRD.md", "docs/prd.md",
+}
+
+// MaxDeclaredIntentDocuments bounds the intent documents one packet carries.
+const MaxDeclaredIntentDocuments = 3
+
+// DeclaredIntentPaths returns the fixed project intent document paths that
+// context assembly may supply from the base tree as repository_context, in
+// match order.
+func DeclaredIntentPaths() []string { return slices.Clone(declaredIntentPaths) }
+
+// ContextDeclaredIntentDocuments returns, in packet order, the paths of the
+// repository_context sources in a generation context that are project intent
+// documents. It reads paths only, never content.
+func ContextDeclaredIntentDocuments(payload []byte) ([]string, error) {
+	if len(payload) == 0 || len(payload) > maxProviderContextPacketBytes {
+		return nil, ErrInvalidContextPacketRequest
+	}
+	wire, err := decodeGenerationContextWire(payload)
+	if err != nil || wire.Contract != "open-trestle/review-context-packet" {
+		return nil, ErrInvalidContextPacketRequest
+	}
+	var paths []string
+	for _, source := range wire.Sources {
+		if source.Stage == ContextStageRepositoryContext.String() && slices.Contains(declaredIntentPaths, source.Path) && !slices.Contains(paths, source.Path) {
+			paths = append(paths, source.Path)
+		}
+	}
+	return paths, nil
+}
+
 // RepositoryInstructionOmissionReason reports whether reason records a
-// repository instruction file that was not supplied as repository_context.
+// repository instruction file or intent document that was not supplied as
+// repository_context.
 // Instruction files are advisory context, not changed source: these omissions
 // are reported separately and never count against changed-source coverage.
 func RepositoryInstructionOmissionReason(reason string) bool {
