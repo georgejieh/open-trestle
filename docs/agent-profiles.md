@@ -23,7 +23,7 @@ This is mainly a **planning layer**. Its only production use is in the direct `t
 
 With `--specialists auto`, the command derives change features from the general review's own recorded change-model and semantic-impact artifacts, plus the declared style that it reads from the base tree's style configuration files (`localreview.Session.ChangeFeatures`, then `agentprofile.ChangeFeaturesFromFileSpecs`; see [Declared style in local reviews](#declared-style-in-local-reviews)). It then calls `Plan`, and keeps the activated, planned direct-review profiles in priority order, cut to `--max-specialists` (default 3, at most 6).
 
-It then runs the general review and each selected profile as its own verified run. On remote routes, the runs go concurrently (at most three at a time) when no spending limit could be passed, and one by one otherwise. The command merges the verified findings with the shared duplicate rule: near-identical statements first, then paraphrases at one place in one changed declaration.
+It then runs the general review and each selected profile as its own verified run. On remote routes, the runs go concurrently (at most three at a time) when no spending limit could be passed, and one by one otherwise. The command merges the verified findings with the shared duplicate rule: near-identical statements first, then paraphrases at one place in one changed declaration. Findings of different reviewers need less shared wording to merge than findings of one.
 
 The selection trace records the plan identity and every dropped profile with its reason. It is in the JSON output and in `--verbose` text, while the default text names the reviewers that ran. See [local model review](local-model-review.md#specialist-review-set-opt-in).
 

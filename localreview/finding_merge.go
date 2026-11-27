@@ -211,8 +211,10 @@ func MergedDuplicates(findings []MergedFinding) int {
 // declaration of the semantic-impact profile (ReportFinding.Anchor) or, when
 // no changed declaration holds either, one range of at most five lines, and
 // defect statements that share at least half of their combined distinctive
-// words and differ in no symbol. The location alone is no evidence of one
-// defect: a division by zero and an integer truncation on one line stay two
+// words and differ in no symbol. Groups that no origin contributed to both
+// need less: a fifth of their words shared, whatever symbols each adds
+// (overlappingStatements). The location alone is no evidence of one defect:
+// a division by zero and an integer truncation on one line stay two
 // findings. Security findings merge only by the strict rule.
 //
 // Only a representative's own range, statement and anchor decide a match, so
@@ -283,7 +285,8 @@ func deduplicateFindings(origins []FindingOrigin, locationOnly bool) []MergedFin
 		var target *MergedFinding
 		rule := ""
 		for _, candidate := range kept {
-			if matched, ok := sameDefectLocation(candidate.Finding, group.Finding); ok && (locationOnly || relatedStatements(candidate.tokens, group.tokens)) {
+			if matched, ok := sameDefectLocation(candidate.Finding, group.Finding); ok && (locationOnly || relatedStatements(candidate.tokens, group.tokens) ||
+				otherOrigins(candidate.labels, group.labels) && overlappingStatements(candidate.tokens, group.tokens)) {
 				target, rule = candidate, matched
 				break
 			}
@@ -326,6 +329,16 @@ func deduplicateFindings(origins []FindingOrigin, locationOnly bool) []MergedFin
 		out = append(out, *group)
 	}
 	return out
+}
+
+// otherOrigins reports two groups that no origin contributed to both.
+func otherOrigins(a, b map[string]bool) bool {
+	for label := range a {
+		if b[label] {
+			return false
+		}
+	}
+	return true
 }
 
 // sameDefectLocation reports whether two findings are at one place, where
@@ -513,6 +526,8 @@ const (
 	nearIdenticalDenominator = 5
 	relatedNumerator         = 1
 	relatedDenominator       = 2
+	overlappingNumerator     = 1
+	overlappingDenominator   = 5
 )
 
 // defectStatement is a finding's normalized title and claim: its distinctive
@@ -535,6 +550,23 @@ func nearIdentical(a, b defectStatement) bool {
 // the location pass needs before two findings at one place are one defect.
 func relatedStatements(a, b defectStatement) bool {
 	return sharedStatements(a, b, relatedNumerator, relatedDenominator)
+}
+
+// overlappingStatements reports two statements that share at least a fifth
+// of their combined distinctive words, whatever symbols each adds: the
+// wording evidence for findings of different origins at one place. Each
+// origin describes the defect in its own detail, naming a test or a line the
+// other leaves out, so their statements share fewer words than two findings
+// of one origin and differ in symbols.
+func overlappingStatements(a, b defectStatement) bool {
+	shared := 0
+	for word := range a.words {
+		if b.words[word] {
+			shared++
+		}
+	}
+	union := len(a.words) + len(b.words) - shared
+	return union > 0 && shared*overlappingDenominator >= union*overlappingNumerator
 }
 
 // sharedStatements reports two statements that differ in no symbol and share

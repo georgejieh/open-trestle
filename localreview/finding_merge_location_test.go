@@ -139,6 +139,30 @@ func TestDeduplicateFindingsMergesParaphrasesInOneDeclaration(t *testing.T) {
 	}
 }
 
+// Two reviewers describe one defect in their own detail: one names the
+// expression, the other the failing test and the removed guard. Their
+// statements share under half of their words and differ in symbols, so the
+// same two findings from one reviewer stay apart, and from two they merge.
+func TestDeduplicateFindingsMergesOtherReviewersDetailAtOnePlace(t *testing.T) {
+	const title, claim = "Avg divides by zero for an empty slice", "TestAvgEmpty fails: the guard on line 5 was removed, so Avg(nil) divides by zero."
+	divide := anchored(t, mergeFixture("a", divideTitle, divideClaim, diagnostics.SeverityError, "stats.go", 9, 9, "correctness", "hunk"))
+	detail := anchored(t, mergeFixture("b", title, claim, diagnostics.SeverityWarning, "stats.go", 4, 10, "reliability"))
+	one, other := defectStatementTokens(divideTitle, divideClaim), defectStatementTokens(title, claim)
+	if relatedStatements(one, other) || !overlappingStatements(one, other) {
+		t.Fatal("the statements do not exercise the rule for other origins")
+	}
+	merged := DeduplicateFindings([]FindingOrigin{{Label: "bug_hunter", Findings: []ReportFinding{divide}}, {Label: "backend", Findings: []ReportFinding{detail}}})
+	if len(merged) != 1 || merged[0].Origins != 2 || merged[0].Finding.Identity != "a" || merged[0].Contributors[1].MergedBy != MergeRuleSameDeclaration {
+		t.Fatalf("two reviewers' statements of one defect: %+v", merged)
+	}
+	if also := merged[0].AlsoReportedAs(); len(also) != 1 || also[0].Title != title {
+		t.Fatalf("also reported as = %+v", also)
+	}
+	if apart := DeduplicateFindings([]FindingOrigin{{Label: "general", Findings: []ReportFinding{divide, detail}}}); len(apart) != 2 {
+		t.Fatalf("one reviewer's two findings merged into %d groups", len(apart))
+	}
+}
+
 // Two genuinely distinct bugs on the same line stay apart when their
 // categories are of different families, and so do findings in different
 // declarations, an anchored and an unanchored finding, and uncategorized
