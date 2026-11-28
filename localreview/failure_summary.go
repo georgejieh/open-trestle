@@ -8,23 +8,6 @@ import "github.com/georgejieh/open-trestle/internal/routehint"
 // document.
 const FailureDetailModelOutputExhausted = "model_output_exhausted"
 
-// Provider refusal details record that the last model request a provider
-// answered was refused, from the HTTP status class alone: billing (402),
-// credential (401), account access (403), model or endpoint not served (404),
-// model retired (410), rate limit (429), or the request itself rejected as
-// invalid (400, 405, 415 or 422, for example an unknown model ID or a
-// parameter the model or endpoint does not accept). They never carry
-// provider text.
-const (
-	FailureDetailProviderPaymentRequired      = "provider_payment_required"
-	FailureDetailProviderModelUnavailable     = "provider_model_unavailable"
-	FailureDetailProviderModelRetired         = "provider_model_retired"
-	FailureDetailProviderAuthenticationFailed = "provider_authentication_failed"
-	FailureDetailProviderAuthorizationDenied  = "provider_authorization_denied"
-	FailureDetailProviderRateLimited          = "provider_rate_limited"
-	FailureDetailProviderRequestRejected      = "provider_request_rejected"
-)
-
 // FailureDetailProviderResponseInvalid records that the provider answered the
 // last model request but the adapter refused its reply: malformed, truncated,
 // empty or oversized, with an unrecognized field, or with an HTTP status it
