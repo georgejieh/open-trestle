@@ -278,7 +278,8 @@ by one question:
 │              turns them off)                             │
 │ Limits       context 128000 · output 16000 tokens        │
 │ Cost         $3.30 in · $16.50 out per million tokens ·  │
-│              up to $0.69 a request, $1.38 a review       │
+│              up to $0.69 a request and $1.38 a review,   │
+│              or $5.52 with 3 specialist reviews          │
 │ Spending     $20.00 a month for this key · alerts at 80% │
 │              and 100%                                    │
 │ Key          OPEN_TRESTLE_PROVIDER_OPENROUTER (from the  │

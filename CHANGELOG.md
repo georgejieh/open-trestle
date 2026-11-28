@@ -25,6 +25,8 @@ All notable changes to released versions of Open Trestle will be documented in t
   so a long name no longer pushes the state off a narrow terminal.
 - `trestle review --model-checks` says why each test it ran was discarded, for example
   `Check 1 was discarded: it did not show a regression.`
+- The setup summary of `trestle init` also shows the most a review can cost with its specialist
+  reviews, not only the cost of the general review.
 
 ### Fixed
 

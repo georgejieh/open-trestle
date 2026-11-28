@@ -111,7 +111,7 @@ func TestInitOpenRouterBothModelsWithZDRRequiresItByDefault(t *testing.T) {
 		"Spending limit for this key. Open Trestle adds up", "The total is an upper-bound estimate at the highest pinned price, not a bill, and the limit is best effort",
 		"OpenRouter's usage could not be read: OpenRouter could not be reached",
 		"Spending limit for this key, USD per month [20]:",
-		"$16.50 out per million tokens ·", "up to $0.69 a request, $1.38 a review", "Spending no limit (optional; trestle usage set adds",
+		"$16.50 out per million tokens ·", "up to $0.69 a request and $1.38 a review   ", "Spending no limit (optional; trestle usage set adds",
 		"Every request will require zero data retention and use only the endpoints listed above (--without-zdr turns this off).",
 		"Declaration: sending your source to OpenRouter", "each review sends the selected source, after secret scanning, to OpenRouter for vendor/generator and other/verifier",
 		"every request requires zero data retention, so OpenRouter uses only zero-data-retention endpoints",
