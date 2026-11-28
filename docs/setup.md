@@ -18,7 +18,7 @@ The only profile is `local_single_node`: local storage, local models only, no ne
 | `observer_credential_posture_validated` | Daemon only: the operator and observer tokens differ, and each is 32 to 512 printable ASCII characters with no spaces. |
 | `backup_validated` | Daemon only, with `--backup-directory`: a protected backup of the plan exists. |
 
-`trestle init` skips the two daemon-only checks. A direct review can therefore be ready while the plan is not: review readiness needs the checks above that apply to a direct review, plus the secret scanner.
+`trestle init` skips the two daemon-only checks, so a direct review can be ready while the plan is not. Review readiness needs the checks above that apply to a direct review, plus the secret scanner.
 
 A plan is `ready` only when every check in its own catalog has a passing receipt. Four requirements (`profile_selected`, `scope_valid`, `effect_posture_locked`, `recovery_owner_named`) pass when the plan is created and need no receipt. A blocked or unavailable check keeps the plan unready. Replacing the policy receipt resets the local-inference and dry-run checks to pending.
 
@@ -32,7 +32,7 @@ trestle setup inspect \
   --expected-root-identity "$RECORDED_INITIAL_PLAN_IDENTITY"
 ```
 
-It prints the canonical plan. `--expected-root-identity` is optional; with it, a plan whose initial identity differs is refused. Inspection changes nothing on disk.
+It prints the canonical plan and changes nothing on disk. With the optional `--expected-root-identity`, a plan whose initial identity differs is refused.
 
 ## Back up and restore
 
@@ -57,7 +57,7 @@ trestle setup backup restore \
   --expected-plan-identity "$BACKED_UP_PLAN_IDENTITY"
 ```
 
-Restore rebuilds the receipt ledger and validates the recorded receipts; it reruns no checks. It never overwrites, and it can resume an interrupted rebuild. Creating a snapshot does not record `backup_validated`; the bootstrap check does that. A snapshot is one protected copy; keeping it on separate media is your responsibility.
+Restore rebuilds the receipt ledger and validates the recorded receipts without rerunning any checks. It never overwrites, and it can resume an interrupted rebuild. Creating a snapshot does not record `backup_validated`; the bootstrap check records it. A snapshot is one protected copy; keeping it on separate media is up to you.
 
 On success both commands print an `open-trestle/setup-command-result` record and exit `0`. A failure exits `1` and a usage error exits `2`, each with a message on standard error.
 

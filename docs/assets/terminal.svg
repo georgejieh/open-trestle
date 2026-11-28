@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 703" role="img" aria-labelledby="t d">
+<title id="t">A review in a terminal</title>
+<desc id="d">Abridged output of trestle review on a change with a seeded defect: the stages it ran, two tests that regressed in the repository's own checks, and one confirmed finding with its file, line and suggested fix.</desc>
+<rect width="880" height="703" rx="14" fill="#1b2a30"/>
+<path d="M0 36h880" stroke="#2d454d"/>
+<circle cx="22" cy="18" r="6" fill="#496069"/><circle cx="42" cy="18" r="6" fill="#496069"/><circle cx="62" cy="18" r="6" fill="#496069"/>
+<text x="440.0" y="23" text-anchor="middle" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="12.5" fill="#8fa3a8">trestle review</text>
+<g font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,Liberation Mono,monospace" font-size="13">
+<text x="24" y="58"><tspan fill="#8fa3a8">$ </tspan><tspan fill="#e8ece8">trestle review</tspan></text>
+<text x="24" y="77"><tspan fill="#7fc7a6">✓</tspan><tspan fill="#e8ece8"> Indexing the repository · 0s</tspan></text>
+<text x="24" y="96"><tspan fill="#7fc7a6">✓</tspan><tspan fill="#e8ece8"> Repository checks · 2m 11s</tspan></text>
+<text x="24" y="115"><tspan fill="#e8ece8">ran 2 of 2 checks in the sandbox: 2 regressions, 0 flaky dropped</tspan></text>
+<text x="24" y="134"><tspan fill="#7fc7a6">✓</tspan><tspan fill="#e8ece8"> Preparing the review · 2s</tspan></text>
+<text x="24" y="153"><tspan fill="#7fc7a6">✓</tspan><tspan fill="#e8ece8"> Finding problems · 14s</tspan></text>
+<text x="24" y="172"><tspan fill="#7fc7a6">✓</tspan><tspan fill="#e8ece8"> Checking findings · 24s</tspan></text>
+<text x="24" y="191"><tspan fill="#e8ece8">Review took 2m 52s.</tspan></text>
+<text x="24" y="229"><tspan fill="#e8ece8">  </tspan><tspan fill="#e08a7b">✗</tspan><tspan fill="#e8ece8"> 1 confirmed finding · CI blocked (exit 4)</tspan></text>
+<text x="24" y="267"><tspan fill="#e8ece8">  </tspan><tspan fill="#e08a7b">✗</tspan><tspan fill="#e8ece8"> 2 check regressions: tests that passed on base fail on</tspan></text>
+<text x="24" y="286"><tspan fill="#e8ece8">    head</tspan></text>
+<text x="24" y="305"><tspan fill="#8fa3a8">    From the repository's own checks, not a model finding.</tspan></text>
+<text x="24" y="324"><tspan fill="#e8ece8">    go test ./middleware:</tspan></text>
+<text x="24" y="343"><tspan fill="#e8ece8">    github.com/go-chi/chi/v5/middleware.TestRequestSize</tspan></text>
+<text x="24" y="362"><tspan fill="#e8ece8">    go test ./middleware:</tspan></text>
+<text x="24" y="381"><tspan fill="#e8ece8">    github.com/go-chi/chi/v5/middleware.TestRequestSize/should_accept_a_body_exactly_at_the_limit</tspan></text>
+<text x="24" y="419"><tspan fill="#e8ece8">  1. </tspan><tspan fill="#e0b86a">warning</tspan><tspan fill="#e8ece8">  Early rejection condition incorrectly uses &gt;=</tspan></text>
+<text x="24" y="438"><tspan fill="#e8ece8">     instead of &gt;</tspan></text>
+<text x="24" y="457"><tspan fill="#8fa3a8">     middleware/request_size.go:16-16 · correctness</tspan></text>
+<text x="24" y="476"><tspan fill="#e8ece8">     The check r.ContentLength &gt;= bytes rejects requests</tspan></text>
+<text x="24" y="495"><tspan fill="#e8ece8">     when Content-Length exactly equals the limit, but the</tspan></text>
+<text x="24" y="514"><tspan fill="#e8ece8">     existing test expects acceptance at the limit while the</tspan></text>
+<text x="24" y="533"><tspan fill="#e8ece8">     commit message states rejection only when it exceeds</tspan></text>
+<text x="24" y="552"><tspan fill="#e8ece8">     the limit.</tspan></text>
+<text x="24" y="571"><tspan fill="#e8ece8">     Fix: Change &gt;= to &gt; to reject only when Content-Length</tspan></text>
+<text x="24" y="590"><tspan fill="#e8ece8">     exceeds the limit.</tspan></text>
+<text x="24" y="628"><tspan fill="#e8ece8">  Checked:  secret scan clean · checker confirmed 1 of 1</tspan></text>
+<text x="24" y="647"><tspan fill="#e8ece8">            candidate</tspan></text>
+<text x="24" y="666"><tspan fill="#8fa3a8">  Not a complete audit. Details: trestle review --verbose</tspan></text>
+</g></svg>

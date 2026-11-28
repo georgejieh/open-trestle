@@ -16,19 +16,19 @@ On Windows (amd64), in PowerShell:
 irm https://georgejieh.dev/open-trestle/install.ps1 | iex
 ```
 
-Then, inside the Git repository you want reviewed, run `trestle init`. See
-[getting started](getting-started.md).
+Then run `trestle init` inside the Git repository you want reviewed (see
+[getting started](getting-started.md)).
 
 The scripts install the newest release from
 [GitHub Releases](https://github.com/georgejieh/open-trestle/releases),
-pre-releases included, for your account only. They need no administrator
+pre-releases included, for your account only, and need no administrator
 rights. Apart from the folders below, they change only your user `PATH` on
 Windows.
 
 The first releases are unsigned pre-releases. The script checks each download
-against the release's `SHA256SUMS` file, which shows only that the download
-matches the files of that release. It does not show who built them. To read a
-script before you run it, download it first:
+against the release's `SHA256SUMS` file, which shows that the download matches
+the files of that release but not who built them. To read a script before you
+run it, download it first:
 
 ```sh
 curl -fsSLO https://raw.githubusercontent.com/georgejieh/open-trestle/main/install.sh
@@ -55,10 +55,10 @@ Each run:
 4. switches to the new version, then removes the previous one.
 
 Running the script again with the same version keeps the installed files. If a
-check fails before the switch, the version you had stays in place; if the new
-version does not start after the switch, the script switches back to it. If `~/.local/bin` is not on your
-`PATH`, the Linux script prints the line to add. Each run writes its log to
-`install.log` beside the version folders.
+check fails before the switch, the version you had stays in place, and if the
+new version does not start after the switch, the script switches back to it. If
+`~/.local/bin` is not on your `PATH`, the Linux script prints the line to add.
+Each run logs to `install.log` beside the version folders.
 
 ### Options
 
@@ -72,10 +72,10 @@ version does not start after the switch, the script switches back to it. If `~/.
 Options go after `bash -s --` when you pipe the script, for example
 `curl -fsSL https://georgejieh.dev/open-trestle/install.sh | bash -s -- --uninstall`.
 Under `irm | iex`, set the environment variable first, for example
-`$env:OPEN_TRESTLE_VERSION = '0.1.0-alpha.1'`. `NO_COLOR` turns off colour.
+`$env:OPEN_TRESTLE_VERSION = '0.1.0-alpha.1'`. `NO_COLOR` turns off color.
 
-macOS is not supported. Releases are built for amd64 only; on arm64, build from
-source. See [platforms](platforms.md).
+macOS is not supported. Releases are built for amd64 only, so on arm64, build
+from source. See [platforms](platforms.md).
 
 ## Build from source
 
@@ -89,16 +89,17 @@ DIR/bin/trestle build-info
 
 This writes `DIR/bin/trestle`, `DIR/bin/trestled` and the secret scan helper at
 `DIR/libexec/open-trestle/open-trestle-scan-helper` (`.exe` names on Windows).
-Keep the helper where it is: the program looks for it at
-`../libexec/open-trestle/open-trestle-scan-helper` next to its own folder.
-`DIR` is relative to the current directory. Add `--target GOOS/GOARCH` to build
-for another system. Run `DIR/bin/trestle` by its path. A plain `go build` pins no
-helper, so the program it makes refuses every review.
+`DIR` is relative to the current directory. Keep the helper where it is,
+because the program looks for it at
+`../libexec/open-trestle/open-trestle-scan-helper` relative to its own folder.
+Run `DIR/bin/trestle` by its path, and add `--target GOOS/GOARCH` to build for
+another system. A plain `go build` pins no helper, so the program it makes
+refuses to run any review.
 
 ## The packaged Linux amd64 install
 
 The package places `trestle`, `trestled` and the secret scan helper under
-`/usr/local`, owned by root, and is the install that `trestle update` updates.
+`/usr/local`, owned by root. It is the install that `trestle update` updates.
 Each release includes it as `open-trestle-linux-amd64.pyz` with a `.sha256`
 file. To build it yourself from a clean committed checkout, see
 [operations](operations.md#build-and-inspect-the-unsigned-linux-amd64-candidate).
@@ -119,16 +120,16 @@ service and creates no configuration.
 ## Update
 
 For an install made by the scripts, run the same command again. It installs
-the newest release and keeps your setup. `trestle update` says so too:
+the newest release and keeps your setup, as `trestle update` tells you:
 
 ```text
 trestle update: this is Open Trestle 0.1.0-alpha.1 from a release archive, and trestle update updates only the packaged Linux amd64 install. To update, run the installer again:
   curl -fsSL https://georgejieh.dev/open-trestle/install.sh | bash
 ```
 
-On the packaged install, `trestle update` finds a newer version, shows it, asks
-you to confirm, and runs that version's own `upgrade` with `sudo`. No release is
-signed yet, so today it installs only an unsigned local build left in
+On the packaged install, `trestle update` shows a newer version, asks you to
+confirm, and runs that version's own `upgrade` with `sudo`. No release is signed
+yet, so today it installs only an unsigned local build left in
 `~/.local/share/open-trestle/updates/`, or a file named with `--from`. See
 [updates](updates.md).
 
@@ -146,7 +147,7 @@ $env:OPEN_TRESTLE_UNINSTALL = '1'; irm https://georgejieh.dev/open-trestle/insta
 
 It removes the program folders, the links or the `PATH` entry, and nothing
 else. On Windows, if you turned on [repository checks](repository-checks.md),
-run `trestle checks off` first: it takes back the folder grants the checks
+run `trestle checks off` first. That takes back the folder grants the checks
 made, and the uninstall refuses while their record exists.
 
 For the packaged install:
@@ -159,8 +160,8 @@ The `rollback-version` action returns to the build that the last upgrade
 replaced, and `rollback` is the other complete removal action. See
 [the lifecycle](operations.md#candidate-lifecycle).
 
-Your setup folders, saved keys and usage records stay where they are in every
-case; see [environment variables and files](environment-and-files.md#paths).
+In every case, your setup folders, saved keys and usage records stay where
+they are (see [environment variables and files](environment-and-files.md#paths)).
 
 ## Check the install
 
@@ -169,6 +170,6 @@ trestle --version
 trestle --help
 ```
 
-`build-info` prints the version, for a release, and the source revision. If a
-command is not found or a step is refused, see
+`trestle build-info` prints the source revision and, for a release, the
+version. If a command is not found or a step is refused, see
 [troubleshooting](troubleshooting.md).

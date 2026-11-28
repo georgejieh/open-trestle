@@ -16,4 +16,4 @@ Maintainers aim to acknowledge a valid report within three business days. They t
 
 ## Security design commitments
 
-The project intends to enforce least privilege, tenant and repository scope, provider-route policy, default-deny networking for execution, and explicit authorization for dynamic validation. These controls are in the source tree, including the check sandbox with no network and the consent that repository tests need, but no release includes them yet.
+The project intends to enforce least privilege, tenant and repository scope, provider-route policy, default-deny networking for execution, and explicit authorization for dynamic validation. These controls, including the network-free check sandbox and the consent that repository tests need, are in the source tree. No signed release includes them yet.

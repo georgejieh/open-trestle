@@ -1,35 +1,34 @@
 # Troubleshooting
 
 Start with `trestle doctor` in the repository. It checks the install, the
-repository, the setup, the key, the spending limit and the repository checks,
-changes nothing, sends no source, and prints the command that fixes each
+repository, the setup, the key, the spending limit and the repository checks.
+It changes nothing, sends no source, and prints the command that fixes each
 problem. `trestle doctor --live` also reads the provider's model list with the
 key. See [commands](commands.md#trestle-doctor).
 
-This page lists the messages Open Trestle prints and what to do about each.
-Find the line you saw, then follow its fix. For a failed review, the `failure:`
-line names a [failure detail](failure-details.md). For an exit code, see
+This page lists the messages Open Trestle prints and the fix for each. For a failed review, the `failure:` line names a
+[failure detail](failure-details.md). For an exit code, see
 [exit codes](exit-codes.md).
 
 ## Setup and first run
 
 ### This folder is not inside a Git checkout
 
-`trestle init` and `trestle review` work inside a Git repository. Change into it
-and run the command again. To review a fixture file instead, run
+`trestle init` and `trestle review` work only inside a Git repository. Change into
+one and run the command again. To review a fixture file instead, run
 `trestle review PATH`.
 
 ### This repository has no Open Trestle setup yet
 
 Run `trestle init` in the repository. It asks a few questions, sends no source,
-and can run the first review. If the setup is in a folder you named with
+and can run the first review. If you saved the setup in a folder named with
 `--directory`, pass the same `--directory` to `trestle review`.
 
 ### The setup cannot be used
 
-`trestle review` refuses with `the setup in FOLDER cannot be used (REASON)`, and
-nothing was sent. Run `trestle doctor`: its Setup section names the folder, the
-reason and the command to run, usually
+`trestle review` refuses with `the setup in FOLDER cannot be used (REASON)`.
+Nothing was sent. Run `trestle doctor`. Its Setup section names the folder, the
+reason and the command to run. That command is usually
 `trestle setup bootstrap inspect --directory FOLDER` for details, or
 `trestle init` for a new setup.
 
@@ -42,85 +41,85 @@ trestle keys set OPEN_TRESTLE_PROVIDER_NAME
 ```
 
 Or export the variable in the shell that runs the review. The environment wins
-over a saved key. Run `trestle keys` to see each variable and where its key comes
+over a saved key. `trestle keys` shows each variable and where its key comes
 from. See [API keys](keys.md).
 
 ### The key was refused
 
-`trestle keys set` exits `4` when OpenRouter refuses the key, and it saves
-nothing. Copy the whole key again. For another provider, the first review checks
-the key and reports `provider_authentication_failed` if it fails.
+`trestle keys set` exits `4` and saves nothing when OpenRouter refuses the key.
+Copy the whole key again. For another provider, the first review checks the key
+and reports `provider_authentication_failed` if it fails.
 
 ### Hidden input is not available on this terminal
 
-Pipe the key in instead: `printf '%s' "$KEY" | trestle keys set NAME`, or export
-the variable. Do not put a key on a command line.
+Pipe the key in instead with `printf '%s' "$KEY" | trestle keys set NAME`, or
+export the variable. Never put a key on a command line.
 
 ### Nothing to review, or no default branch
 
 `trestle review` compares `HEAD` with its merge base on the default branch. It
 exits `3` and says why in two cases: `HEAD` is the default branch with nothing
-ahead of it, or no `main` or `master` exists. Commit your change, or pass
+ahead of it, or neither `main` nor `master` exists. Commit your change, or pass
 `--base REF`, for example `--base main`. Uncommitted changes are not reviewed.
 
 ### Setup refuses to send source to a remote provider
 
-A plain `go build` pins no secret scan helper, so it refuses every review with
-`this build pins no secret scan helper; build trestle with its helper by
-python3 tools/package_secret_scanner.py --development DIR`. A missing or changed helper is refused with a
-message too. The saved setup is kept. Build with
+A plain `go build` pins no secret scan helper, so the resulting build refuses
+every review with `this build pins no secret scan helper; build trestle with its helper by
+python3 tools/package_secret_scanner.py --development DIR`. A missing or changed
+helper is also refused, with its own message. Your saved setup is kept. Build with
 `python3 tools/package_secret_scanner.py --development DIR` and run
 `DIR/bin/trestle`, or use the packaged Linux amd64 install. See
 [install](install.md) and [platforms](platforms.md).
 
 ### The repository's storage cannot be read
 
-Reviews read loose objects and ordinary pack files. They cannot follow
-alternates (clones made with `--shared` or `--reference`), a multi-pack-index or
-partial-clone packs. Make a separate full copy with
+Reviews read loose objects and ordinary pack files. They cannot read repositories
+that use alternates (clones made with `--shared` or `--reference`), a
+multi-pack-index or partial-clone packs. Make a separate full copy with
 `git clone --no-local --no-hardlinks` and run `trestle init` there.
 
 ### A shallow clone or a partial clone
 
-The review does not fetch. In a shallow clone, fetch the missing base:
-`git fetch --no-tags --depth=N origin SHA`. In GitHub Actions use
+The review does not fetch. In a shallow clone, fetch the missing base with
+`git fetch --no-tags --depth=N origin SHA`. In GitHub Actions, use
 `actions/checkout` with `fetch-depth: 0`. In a partial clone, check out again
 without a filter. See
 [shallow and pull-request checkouts](local-model-review.md#shallow-and-pull-request-checkouts).
 
 ### A folder is refused as not private
 
-On Linux, the credential, usage and setup folders must be mode
-`0700`, and their files `0600`. You must own them, they must contain no
-symbolic links, and no parent may be writable by others. Fix the mode with
-`chmod 700 FOLDER`, or move the folder. The message names the folder and the mode it found. See
+On Linux, the credential, usage and setup folders must be mode `0700` and their
+files `0600`. You must own them, they must contain no symbolic links, and no
+parent may be writable by others. The message names the folder and the mode it
+found. Fix the mode with `chmod 700 FOLDER`, or move the folder. See
 [environment variables and files](environment-and-files.md#paths).
 
 The secret scanner cache (`~/.cache/open-trestle/scan-cache/`) follows the same
-rules. Deleting the cache folder is safe;
-the next review fills it again and prints `Preparing the secret scanner for
+rules. You can safely delete it. The next review refills it and prints `Preparing the secret scanner for
 first use; this can take a minute.`
 
 On Windows the folders and files must give no account other than yours and the
 system's own accounts access, and no parent may let another account remove,
 rename or replace its entries. `icacls FOLDER` lists the folder's access
-entries; those marked `(I)` are inherited from the folder above. In Command
-Prompt, this makes the folder and the files that inherit from it yours alone:
+entries, and those marked `(I)` are inherited from the folder above. In Command
+Prompt, this command makes the folder and the files that inherit from it yours
+alone:
 
 ```text
 icacls FOLDER /inheritance:r /grant:r "%USERNAME%:(OI)(CI)F"
 ```
 
 It stops inheriting entries from the folder above and gives your account full
-access. An entry the folder holds for another account without `(I)` stays;
-remove it with `icacls FOLDER /remove:g ACCOUNT`. You can also delete the
-folder so that Open Trestle creates it again. See
+access. An entry for another account that is not marked `(I)` stays. Remove it
+with `icacls FOLDER /remove:g ACCOUNT`. You can also delete the folder so that
+Open Trestle creates it again. See
 [platforms](platforms.md#protected-files-on-windows).
 
 ## A review failed
 
-Match the `failure_detail` on the `failure:` line. Open Trestle prints a hint
-with each failure, and the fixes below say what else to check.
+Find the `failure_detail` from the `failure:` line below. Each failure also
+prints a hint, and these fixes say what else to check.
 
 | `failure_detail` | Fix |
 | --- | --- |
@@ -132,7 +131,7 @@ with each failure, and the fixes below say what else to check.
 | `provider_request_rejected` | Check the model ID, the endpoint and that the model accepts structured output and the output allowance, then re-run setup. |
 | `provider_rate_limited` | Wait and run the review again. Open Trestle already retried twice. |
 | `provider_response_invalid` | Run the review again. If it repeats, choose another model or route. |
-| `model_output_invalid` | The hint names the class of the problem, for example `unknown_candidate` when the checker named a candidate the request does not have. Open Trestle already sent the request once more, unless the class is `refusal` or the retry could pass a spending limit. Run the review again. If the same class repeats, choose another model for that role. See [failure details](failure-details.md). |
+| `model_output_invalid` | The hint names the class of the problem, for example `unknown_candidate` when the checker named a candidate the request does not have. Open Trestle already sent the request once more, unless the class is `refusal` or the retry could pass a spending limit. Run the review again, and if the same class repeats, choose another model for that role. See [failure details](failure-details.md). |
 | `model_output_exhausted` | The model spent its output allowance on reasoning, on the one retry too. OpenRouter requests already ask for low reasoning effort where every pinned endpoint accepts it; the wizard says when a reasoning model's endpoints do not. Choose a model that does not reason at length for that role, or set up again with a larger allowance: `trestle init --directory NEW_FOLDER --max-output-tokens N`. |
 | `route_context_insufficient` | The route's declared context is too small. Raise `max_context_tokens` on the route and the model server's context length to at least the number the hint prints. See [named local runtimes](named-local-runtimes.md#context-length). |
 | `spending_limit_reached` | Run `trestle usage`, then raise or clear the limit (`trestle usage set`, `trestle usage clear`) or wait for the next period. Nothing was sent. |
@@ -150,10 +149,10 @@ clearance. Read the `limitations`, and run the review again with `--verbose`.
 
 ## Repository checks did not run
 
-The walkthrough says `could not run` for a check that was skipped, with the
-reason. The reasons are no sandbox on this machine (for example unprivileged user
+The walkthrough says `could not run` for a skipped check and gives the reason.
+The reasons are no sandbox on this machine (for example unprivileged user
 namespaces turned off or restricted by AppArmor on Linux, or the `NUL` device on
-Windows), a missing toolchain, a missing dependency (checks run offline) and a
+Windows), a missing toolchain, a missing dependency (checks run offline), or a
 limit reached. Run `trestle checks status` to see whether the sandbox is
 available. See [repository checks](repository-checks.md#could-not-run).
 
@@ -167,10 +166,10 @@ available. See [repository checks](repository-checks.md#could-not-run).
 | `installing needs your confirmation` | Run `trestle update` in a terminal, or pass `--yes`. Nothing was installed. |
 | A local folder `must be private (mode 0700, not 0755)` | `chmod 700 ~/.local/share/open-trestle/updates`. |
 
-To stop the once-a-day update notice, set `OPEN_TRESTLE_UPDATE_CHECK=off`.
+To stop the daily update notice, set `OPEN_TRESTLE_UPDATE_CHECK=off`.
 
 ## Still stuck
 
 Run the command again, keep its output, and read the `hint:` line. Do not paste
-keys or source into an issue. See [SUPPORT.md](../SUPPORT.md) for where to
-ask and [SECURITY.md](../SECURITY.md) for a vulnerability.
+keys or source into an issue. [SUPPORT.md](../SUPPORT.md) says where to ask, and
+[SECURITY.md](../SECURITY.md) covers vulnerabilities.

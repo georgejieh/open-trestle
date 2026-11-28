@@ -69,8 +69,14 @@ var initProviders = []initProviderInfo{
 var initLocalServers = []struct{ name, endpoint string }{
 	{"Ollama", "http://127.0.0.1:11434/v1"},
 	{"LM Studio", "http://127.0.0.1:1234/v1"},
-	{"llama.cpp", "http://127.0.0.1:8080/v1"},
+	{"llama.cpp", "http://127.0.0.1:9931/v1"},
 	{"vLLM", "http://127.0.0.1:8000/v1"},
+}
+
+// initEarlierLocalServers are addresses an older server build listens on.
+// They are looked for, and offered only when a server answers there.
+var initEarlierLocalServers = []struct{ name, endpoint string }{
+	{"llama.cpp", "http://127.0.0.1:8080/v1"},
 }
 
 var initStringFlags = []string{"directory", "base", "head", "provider", "endpoint", "verification-endpoint", "transport", "generation-model", "verification-model", "credential-env", "owner", "tenant", "repository", "repository-authority", "repository-namespace", "repository-name", "context-tokens", "output-tokens", "max-output-tokens", "input-micro-usd-per-million-tokens", "output-micro-usd-per-million-tokens", "max-cost-micro-usd", "spending-limit", "spending-alert", "specialists", "generation-provider-slug", "verification-provider-slug", "generation-model-evidence", "verification-model-evidence", "broker-evidence", "account-evidence", "evidence-retrieved-at", "reviewed-at", "valid-from", "valid-until"}
@@ -1213,7 +1219,7 @@ type initLocalServer struct {
 // list a model. Tests replace it so they never reach a real local server.
 var initDetectLocalServers = func(ctx context.Context) []initLocalServer {
 	found := []initLocalServer{}
-	for _, server := range initLocalServers {
+	for _, server := range slices.Concat(initLocalServers, initEarlierLocalServers) {
 		models, err := initListModels(ctx, modelcatalog.Source{ID: "local-server", Kind: "openai_models", URL: server.endpoint + "/models"}, false, nil)
 		if err == nil && len(models) > 0 {
 			found = append(found, initLocalServer{name: server.name, endpoint: server.endpoint, models: models})

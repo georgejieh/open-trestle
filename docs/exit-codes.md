@@ -1,11 +1,11 @@
 # Exit codes
 
-This page lists the exit codes of each `trestle` command, so that scripts and CI
-steps can react to them. The codes stay the same for a given command. Most
-commands use `0` for success, `1` for a failure and `2` for wrong usage. Reviews
-and setup bootstrap commands add `3` for work that is not finished and `4` for a refusal.
-Read the output as well, because a code alone does not say which refusal or
-failure it was. For a failed review, see [failure details](failure-details.md).
+This page lists the exit codes of each `trestle` command for scripts and CI
+steps. The codes stay the same for a given command. Most commands use `0` for
+success, `1` for a failure and `2` for wrong usage. Reviews and setup bootstrap
+commands add `3` for work that is not finished and `4` for a refusal. A code
+alone does not say which refusal or failure occurred, so read the output as
+well. For a failed review, see [failure details](failure-details.md).
 
 ## Reviews
 
@@ -16,13 +16,13 @@ the saved setup, and returns its code.
 
 | Code | Meaning |
 | --- | --- |
-| `0` | Never by default, even when the review finds nothing: a completed review is not a clearance. Only an [exit-code policy](#exit-code-policy) returns `0`. |
-| `4` | The result is blocked: a confirmed medium, high or critical finding, a test regression the [repository checks](repository-checks.md) proved (also when the model review failed), or a policy or resource refusal (a provider refused the request, a limit was reached, a spending limit stopped the review). |
-| `3` | The result is inconclusive: only low-severity or pre-existing findings (advisory), no candidates, incomplete coverage, or a canceled review. For `trestle review` alone, also nothing was sent: no setup (run `trestle init`), no committed change, or no API key (run `trestle keys set NAME`). |
+| `0` | Never by default, even when the review finds nothing, because a completed review is not a clearance. Only an [exit-code policy](#exit-code-policy) returns `0`. |
+| `4` | The result is blocked: a confirmed medium, high or critical finding, a test regression the [repository checks](repository-checks.md) proved (also when the model review failed), or a policy or resource refusal (a provider refused the request, a limit was reached, or a spending limit stopped the review). |
+| `3` | The result is inconclusive: only low-severity or pre-existing findings (advisory), no candidates, incomplete coverage, an unsupported source, or a canceled review. For `trestle review` alone, also when nothing was sent because there is no setup (run `trestle init`), no committed change, or no API key (run `trestle keys set NAME`). |
 | `2` | Invalid usage, for example an unknown `--format` or a `--base` that is not a commit. |
-| `1` | The run failed, for example a model reply could not be accepted or a provider failed temporarily. |
+| `1` | The run failed (for example, a model reply could not be accepted or a provider failed temporarily), or the result could not be written. |
 
-A review set (`--specialists`) merges the results of its members. The exit code
+A review set (`--specialists`) merges the results of its members. Its exit code
 is `4` when a member did not finish and the merged set has an introduced
 finding of high or critical severity, when every member finished and the set
 has an introduced finding of medium severity or higher, when a member was
@@ -33,19 +33,18 @@ refused, or when the repository checks proved a test regression. See
 
 `--exit-code-policy` changes only the process exit status. The result, its
 `status`, its `ci_disposition` and `comprehensive_clearance: false` are the same
-under every policy. Exit `0` is a pipeline decision, not a statement that the
-change is clear.
+under every policy, so exit `0` is only a pipeline decision.
 
 | Policy | Exit `0` when | Otherwise |
 | --- | --- | --- |
 | `default` (when the flag is absent) | never | `4`, `3`, `2` or `1` as above |
-| `findings` | the run succeeded, no verified finding that is not pre-existing has high or critical severity, including no candidates, medium or low findings only, and coverage gaps, and there is no check regression | the default code |
+| `findings` | the run succeeded, no verified finding that is not pre-existing has high or critical severity, and there is no check regression | the default code |
 | `strict` | the run succeeded with no candidates at all and no check regression | the default code, so any verified finding or check regression fails the step |
 | `always-zero` | a valid result was written, including a refused or failed run (for a review set, the general review must have succeeded) | `1` if the result could not be written, `2` for invalid usage |
 
-Under `always-zero`, a passing step says nothing about whether the review ran, so
-read the SARIF or the JSON `status`. For review sets, see
-[the exit policy on the merged set](local-model-review.md#specialist-review-set-opt-in).
+Under `findings`, a run with no candidates, with only medium or low findings, or
+with coverage gaps also exits with `0`. Under `always-zero`, a passing step says
+nothing about whether the review ran, so read the SARIF or the JSON `status`.
 
 ## `trestle init`
 
@@ -53,7 +52,7 @@ read the SARIF or the JSON `status`. For review sets, see
 | --- | --- |
 | `0` | Setup is ready and the review was declined, or the first review finished with `findings` or `no_candidates`. |
 | `3` | Something must be fixed before a review can run, or the review was incomplete or canceled. |
-| `4` | A declaration was declined, setup was refused, a setup check refused (for example the scanner check of a build that pins no secret scan helper; the setup is kept), or the review was refused. |
+| `4` | A declaration was declined, setup or a setup check refused (for example, the scanner check of a build that pins no secret scan helper, which keeps the setup), or the review was refused. |
 | `2` | A missing or invalid answer, end of input, or three unusable answers in a row. With `--no-input`, every missing flag is listed. |
 | `1` | An internal error, or the first review failed. |
 
@@ -79,7 +78,7 @@ The first review inside `trestle init` uses these codes, not the table for
 | `trestle usage`, `set`, `clear` | `0`; `2` for a bad flag or value; `1` when the usage folder cannot be found or used. |
 | `trestle doctor` | `0` when nothing needs fixing (rows marked `…` or `–` do not count); `1` when a row is marked `✗`; `2` for a bad flag. |
 | `trestle status` | `0` with a usable setup, also when a row needs action; `1` outside a Git checkout or without a usable setup; `2` for a bad flag. |
-| `trestle` | In a terminal: `0` after you quit or outside a Git repository, and a chosen action returns its own code. Without a terminal: `2`, with the usage on standard error. |
+| `trestle` | In a terminal, `0` after you quit or outside a Git repository, and a chosen action returns its own code. Without a terminal, `2`, with the usage on standard error. |
 | `--help`, `-h`, `help` | `0`, usage on standard output. |
 | `trestle COMMAND --help` | `0`, that command's usage on standard output. |
 | `--version`, `version` | `0`, one line on standard output. |
@@ -107,9 +106,10 @@ The first review inside `trestle init` uses these codes, not the table for
 | Command | Codes |
 | --- | --- |
 | `trestle review PATH` | `0` findings or no findings; `3` inconclusive; `4` blocked; `1` an error. |
-| `trestle ci --format=json PATH`, `--format=sarif PATH` | `0`, or `3` when inconclusive, or `4` when blocked, or `1`. |
+| `trestle ci --format=json PATH`, `--format=sarif PATH` | `0`; `3` when inconclusive; `4` when blocked; or `1`. |
 | `trestle validate-fixture PATH` | `0` valid; `1` invalid. |
-| `trestle evaluate static-debug` | `0` the built-in cases passed; `3` they did not; `1` failure. |
+| `trestle evaluate static-debug` | `0` the built-in cases passed; `3` they did not; `2` invalid usage; `1` failure. |
+| `trestle evaluate adjudication` | `4` scored, and the original result matched; `3` scored, and the original result had a mismatch; `2` invalid usage; `1` failure. |
 | `trestle evaluate deterministic-corpus-candidate` | `3` mismatch; `4` matched; `1` failure. |
 | `trestle evaluate model-contract-candidate` | `4` after printing the report; `1` failure. |
 

@@ -1,6 +1,6 @@
 # Local Git inspection
 
-`trestle local-git inspect` reads one loose Git commit from an object directory that you name. It checks that the commit, its tree and its files are intact, and it prints a short JSON record of what it found. Use it to confirm that Open Trestle can read a commit before you run a review on it.
+`trestle local-git inspect` reads one loose Git commit from an object directory that you name. It checks that the commit, its tree and its files are intact and prints a short JSON record of the result. Use it to confirm that Open Trestle can read a commit before you run a review on it.
 
 ```text
 trestle local-git inspect \
@@ -14,15 +14,15 @@ trestle local-git inspect \
 
 You must pass every flag, each exactly once. `PATH` is the object directory itself, normally `.git/objects`. The command does not look for a repository, add path components, resolve refs or `HEAD`, read the index or working tree, run Git, read Git configuration, use credentials, or use the network. It does not support packed objects or alternates, so it reads loose objects only.
 
-The repository authority, namespace and name are labels that you supply to describe the scope. They are not checked against the directory.
+The repository authority, namespace and name are labels that you supply to describe the scope. The command does not check them against the directory.
 
 ## Output
 
 On success the command writes one compact JSON object followed by a newline. The contract is `open-trestle/local-git-inspect-result`, schema version 1, and its schema is `schemas/review/local-git-inspect-result-v1.schema.json`.
 
-The object holds only a structural status, content coverage, and identities. An identity is a digest that stands for one item: the envelope, the repository label, the revision, the adapter, the request, the receipt, the acquisition execution, the profiled acquisition execution, the evidence binding, the manifest, the verified commit, the verified tree graph, the manifest correspondence, or the profile bundle.
+The object holds only a structural status, content coverage and identities. An identity is a digest that stands for one item: the envelope, the repository label, the revision, the adapter, the request, the receipt, the acquisition execution, the profiled acquisition execution, the evidence binding, the manifest, the verified commit, the verified tree graph, the manifest correspondence or the profile bundle.
 
-The command does not print the object-root path, the repository labels, the raw revision digest, file paths, repository content, profile internals, timestamps, host data or environment data. The status `supplied_evidence_bound` means that the structure agrees with itself.
+The object does not include the object-root path, the repository labels, the raw revision digest, file paths, repository content, profile internals, timestamps, host data or environment data. The status `supplied_evidence_bound` means that the structure agrees with itself.
 
 ## Exit codes
 
@@ -34,6 +34,6 @@ A nonzero exit comes with no success record.
 
 ## What the command checks
 
-The command reads only inside the directory you pass. It checks the hash of every commit, tree and blob it reads with the algorithm you selected, confirms that the whole supported tree matches its manifest, and builds both the structural binding and the repository profile from that single read.
+The command reads only inside the directory you pass. It checks the hash of every commit, tree and blob it reads against the algorithm you selected, confirms that the whole supported tree matches its manifest, and builds both the structural binding and the repository profile from that single read.
 
-It does not check that the directory belongs to the repository named by your labels, or ref reachability or the state of the working tree. It does not review anything, calculate a change, publish, run commands, modify source, or print content.
+It does not check that the directory belongs to the repository named by your labels, ref reachability or the state of the working tree. It does not review anything, calculate a change, publish, run commands, modify source or print content.
