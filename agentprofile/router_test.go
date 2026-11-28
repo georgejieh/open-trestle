@@ -12,7 +12,7 @@ import (
 )
 
 // goldenPlanIdentity pins broadChange planned with fullAssignments against the packaged catalog.
-const goldenPlanIdentity = "2992b7e181df7854d034fcbe7480e627edf534945264cc9f763b4f82262b6486"
+const goldenPlanIdentity = "bb9e8c33cdb529e0d4be2727891bd2bdfd0bd985c6ba5e2175386197ac04d8b8"
 
 func goChangeWithTest(addedLines uint32) ChangeFeaturesSpec {
 	return ChangeFeaturesSpec{Files: []ChangedFileSpec{

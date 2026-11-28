@@ -23,12 +23,6 @@ var (
 	ErrInvalidTier = errors.New("invalid agent profile tier")
 	// ErrInvalidSignal identifies an unknown change signal.
 	ErrInvalidSignal = errors.New("invalid change signal")
-	// ErrInvalidLanguage identifies an unknown language token.
-	ErrInvalidLanguage = errors.New("invalid language")
-	// ErrInvalidFileClass identifies an unknown file class token.
-	ErrInvalidFileClass = errors.New("invalid file class")
-	// ErrInvalidCondition identifies an unknown activation condition.
-	ErrInvalidCondition = errors.New("invalid activation condition")
 )
 
 // ProfileID identifies one packaged specialist profile.

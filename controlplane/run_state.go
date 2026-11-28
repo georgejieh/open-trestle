@@ -140,7 +140,6 @@ func (s TaskRuntimeState) ContextShortfall() (TaskFailureContextShortfall, bool)
 	return s.shortfall, s.shortfall.Present()
 }
 func (s TaskRuntimeState) RetryAt() time.Time        { return runMillisToTime(s.retryAtMillis) }
-func (s TaskRuntimeState) LastEventRevision() uint64 { return s.lastEventRevision }
 func (s TaskRuntimeState) LastEventIdentity() string { return s.lastEventIdentity }
 func (s TaskRuntimeState) LastEventAt() time.Time    { return runMillisToTime(s.lastEventAtMillis) }
 func (s TaskRuntimeState) RetryableAt(at time.Time) bool {

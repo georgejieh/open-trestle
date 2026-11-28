@@ -47,9 +47,6 @@ func NewVerificationAuthority(
 
 func (a VerificationAuthority) Identity() string        { return a.identity }
 func (a VerificationAuthority) RequestIdentity() string { return a.requestIdentity }
-func (a VerificationAuthority) GenerationExecutionIdentity() string {
-	return a.generationExecutionIdentity
-}
 func (a VerificationAuthority) Authorization() gateway.RouteAttemptAuthorization {
 	return a.authorization
 }

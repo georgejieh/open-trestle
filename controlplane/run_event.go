@@ -21,8 +21,6 @@ var (
 	ErrInvalidRunEventPreviousIdentity = errors.New("invalid run event previous identity")
 	// ErrInvalidRunEventTask identifies a malformed or unexpected task reference.
 	ErrInvalidRunEventTask = errors.New("invalid run event task")
-	// ErrInvalidRunEventAttempt identifies an attempt outside closed event semantics.
-	ErrInvalidRunEventAttempt = errors.New("invalid run event attempt")
 	// ErrInvalidRunEventLease identifies malformed lease ownership or expiry.
 	ErrInvalidRunEventLease = errors.New("invalid run event lease")
 	// ErrInvalidRunEventOutput identifies a malformed or unexpected output identity.

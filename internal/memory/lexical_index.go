@@ -344,14 +344,13 @@ type DeletionReceipt struct {
 	completedAtUnixMilliseconds int64
 }
 
-func (r DeletionReceipt) Identity() string                   { return r.identity }
-func (r DeletionReceipt) ScopeIdentity() string              { return r.scopeIdentity }
-func (r DeletionReceipt) PreviousRevision() uint64           { return r.previousRevision }
-func (r DeletionReceipt) NewRevision() uint64                { return r.newRevision }
-func (r DeletionReceipt) DeletedRecordCount() uint32         { return r.deletedRecordCount }
-func (r DeletionReceipt) CompletedAtUnixMilliseconds() int64 { return r.completedAtUnixMilliseconds }
-func (r DeletionReceipt) String() string                     { return "memory deletion receipt" }
-func (r DeletionReceipt) GoString() string                   { return "memory.DeletionReceipt{<redacted>}" }
+func (r DeletionReceipt) Identity() string           { return r.identity }
+func (r DeletionReceipt) ScopeIdentity() string      { return r.scopeIdentity }
+func (r DeletionReceipt) PreviousRevision() uint64   { return r.previousRevision }
+func (r DeletionReceipt) NewRevision() uint64        { return r.newRevision }
+func (r DeletionReceipt) DeletedRecordCount() uint32 { return r.deletedRecordCount }
+func (r DeletionReceipt) String() string             { return "memory deletion receipt" }
+func (r DeletionReceipt) GoString() string           { return "memory.DeletionReceipt{<redacted>}" }
 func (r DeletionReceipt) Format(state fmt.State, verb rune) {
 	writeRedactedMemoryFormat(state, verb, "memory deletion receipt", "memory.DeletionReceipt{<redacted>}")
 }

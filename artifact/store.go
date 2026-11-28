@@ -319,7 +319,7 @@ func (p *PendingFileStore) Close() error {
 	return store.Close()
 }
 
-// NewFileStore retains the immediate-recovery legacy contract.
+// NewFileStore opens the store at root and activates it before returning.
 func NewFileStore(root string) (*FileStore, error) {
 	pending, err := OpenPendingFileStore(root)
 	if err != nil {
