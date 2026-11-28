@@ -165,7 +165,7 @@ func (w *initWizard) summaryRows() [][2]string {
 			prices = "no per-token charge"
 		}
 		// The per-request bound is set for you; it is shown, not asked.
-		rows = append(rows, [2]string{"Cost", prices + " · up to " + initFormatUSD(limit) + " a request, " + initFormatUSD(2*limit) + " a review"})
+		rows = append(rows, [2]string{"Cost", prices + " · " + initCostBound(limit, w.specialists() != specialistModeNone)})
 	}
 	if row, ok := w.spendingRow(); ok {
 		rows = append(rows, [2]string{"Spending", row})
@@ -316,4 +316,14 @@ func (w *initWizard) changeLimits() error {
 		return err
 	}
 	return w.costLimit()
+}
+
+// initCostBound words the most one request and one review can cost. A review
+// sends two requests, and each specialist review is a review of its own.
+func initCostBound(limit uint64, specialists bool) string {
+	bound := "up to " + initFormatUSD(limit) + " a request and " + initFormatUSD(2*limit) + " a review"
+	if specialists {
+		bound += fmt.Sprintf(", or %s with %d specialist reviews", initFormatUSD(2*limit*(1+defaultMaxSpecialists)), defaultMaxSpecialists)
+	}
+	return bound
 }

@@ -141,7 +141,6 @@ func (r RefusalRecord) PlannerIdentity() string  { return r.plannerIdentity }
 func (r RefusalRecord) Reason() string           { return r.reason }
 func (r RefusalRecord) Scope() RepositoryScope   { return r.scope }
 func (r RefusalRecord) Source() Source           { return r.source }
-func (r RefusalRecord) RefusedAt() time.Time     { return time.UnixMilli(r.refusedAtMillis).UTC() }
 func (r RefusalRecord) RefusedAtMillis() int64   { return r.refusedAtMillis }
 func (r RefusalRecord) String() string           { return "webhook delivery refusal record" }
 func (r RefusalRecord) GoString() string         { return "webhook.RefusalRecord{<redacted>}" }

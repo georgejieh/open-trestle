@@ -1461,7 +1461,8 @@ func (w *initWizard) prices() error {
 
 // costLimit sets the per-request cost bound, max_cost_micro_usd: every model
 // request reserves its worst case against it, and a review sends two (the
-// finder's and the checker's), so a review costs at most twice the bound. It
+// finder's and the checker's), so a review costs at most twice the bound and
+// each specialist review as much again. It
 // is not asked: setup writes the cost of one request that fills the whole
 // context and writes the full output allowance, rounded up to a cent, and
 // the summary shows it. --max-cost-micro-usd sets another bound, for CI and

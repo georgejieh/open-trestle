@@ -23,8 +23,6 @@ const (
 	UnavailableErrorCode                = "rate_limit_unavailable"
 	Window                              = time.Minute
 	OperationTimeout                    = 15 * time.Second
-	RequestKeyAuthority                 = "canonical_ip_unmapped_direct_tcp_peer_no_forwarded_headers"
-	PrincipalKeyAuthority               = "sha256_tenant_and_principal_identity"
 )
 
 // RequestAuthorityKey derives an opaque authority from a direct TCP peer.

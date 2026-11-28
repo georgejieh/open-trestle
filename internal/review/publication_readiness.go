@@ -424,9 +424,6 @@ func (r PublicationReadiness) VerifiedFindingSetIdentity() string {
 }
 func (r PublicationReadiness) SelectionIdentity() string       { return r.selectionIdentity }
 func (r PublicationReadiness) Selection() PublicationSelection { return r.selection }
-func (r PublicationReadiness) ContentScanReceiptIdentity() string {
-	return r.contentScanReceiptIdentity
-}
 func (r PublicationReadiness) ContentScanReceipt() PublicationContentScanReceipt {
 	return r.contentScanReceipt
 }

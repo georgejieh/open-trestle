@@ -195,7 +195,7 @@ func streamFromJournal(j *FileRunJournal) func(ReviewRunPlan) ([]RunEvent, error
 	return func(plan ReviewRunPlan) ([]RunEvent, error) { return j.loadStream(plan.Scope()) }
 }
 
-// walkInventoryPlans preserves the legacy all-scope ordering for both entry sources.
+// walkInventoryPlans walks every scope in sorted order without collecting receipts.
 func walkInventoryPlans(ctx context.Context, historical bool, plans, streams map[string]struct{}, readPlan func(string) (ReviewRunPlan, error), loadStream func(ReviewRunPlan) ([]RunEvent, error)) (startupInventoryWalkResult, error) {
 	return walkInventoryPlansWithReceipts(ctx, historical, false, plans, streams, readPlan, loadStream)
 }

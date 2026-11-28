@@ -146,7 +146,7 @@ anyway.
 The per-request bound is not a spending limit. `trestle init` sets it to the
 cost of one request that fills the whole context and writes the whole output
 allowance, rounded up to a cent, and shows it in the summary panel ("up to $0.69
-a request, $1.38 a review"). For CI and advanced use, `--max-cost-micro-usd`
+a request and $1.38 a review, or $5.52 with 3 specialist reviews"). For CI and advanced use, `--max-cost-micro-usd`
 sets a different bound.
 
 ## Seeing the state

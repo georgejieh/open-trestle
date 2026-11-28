@@ -81,7 +81,6 @@ func (n TaskNotification) TaskKey() string                { return n.taskKey }
 func (n TaskNotification) TaskIdentity() string           { return n.taskIdentity }
 func (n TaskNotification) HandlerIdentity() string        { return n.handlerIdentity }
 func (n TaskNotification) Attempt() uint8                 { return n.attempt }
-func (n TaskNotification) AvailableAt() time.Time         { return runMillisToTime(n.availableAtMillis) }
 func (n TaskNotification) Validate() error {
 	if n.scope.Validate() != nil || !validControlPlaneDigest(n.planIdentity) || n.taskStateRevision == 0 || n.taskStateRevision > maxRunJournalStreamEvents || !validControlPlaneDigest(n.taskStateEventIdentity) || !validReviewTaskKey(n.taskKey) || !validControlPlaneDigest(n.taskIdentity) || !validControlPlaneDigest(n.handlerIdentity) || n.attempt == 0 || !validRunMillis(n.availableAtMillis) || n.identity != deriveTaskNotificationIdentity(n) {
 		return ErrInvalidTaskNotification

@@ -308,8 +308,8 @@ func detectContextRisks(content string) ContextRisk {
 	return risks
 }
 
-// detectSourceRisks applies the current rules: legacy content rules, the
-// extended instruction markers, and the agent_configuration path rule.
+// detectSourceRisks applies the content rules, the extended instruction
+// markers and the agent_configuration path rule.
 func detectSourceRisks(path, content string) ContextRisk {
 	risks := detectContextRisks(content)
 	if risks&ContextRiskInstructionLikeText == 0 && containsAnyMarker(strings.ToLower(content), extendedInstructionMarkers) {

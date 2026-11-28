@@ -193,21 +193,6 @@ func (s *LocalGitObjectStore) Close(ctx context.Context) error {
 	return ctx.Err()
 }
 
-func (s *LocalGitObjectStore) ValidateStable(ctx context.Context) error {
-	if s == nil || s.objectsRoot == nil {
-		return fmt.Errorf("local Git object store is nil")
-	}
-	if isNilInterface(ctx) {
-		return fmt.Errorf("Git object store validation context is nil")
-	}
-	if s.Profile() == LocalGitObjectStoreProfileLooseOnly {
-		return ctx.Err()
-	}
-	return s.withPackScope(ctx, func(scope *localGitPackScope) error {
-		return nil
-	})
-}
-
 // ReadCommit returns an exact verified commit payload.
 func (s *LocalGitObjectStore) ReadCommit(ctx context.Context, revision evidence.RevisionIdentity) ([]byte, error) {
 	canonicalRevision, err := evidence.NewRevisionIdentity(revision.Kind(), revision.Algorithm(), revision.Digest())
