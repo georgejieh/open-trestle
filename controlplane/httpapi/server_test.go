@@ -219,7 +219,7 @@ func TestServerRateLimitsAuthenticatedPrincipal(t *testing.T) {
 	coordinator, _ := controlplane.NewCoordinator(controlplane.NewMemoryRunJournal())
 	requestLimiter, _ := NewMemoryRateLimiter(10, time.Minute, 10)
 	principalLimiter, _ := NewMemoryRateLimiter(1, time.Minute, 10)
-	server, err := NewServerWithRateLimiters(coordinator, authenticator, fixedClock{at: time.Unix(1000, 0)}, requestLimiter, principalLimiter)
+	server, err := newServer(coordinator, authenticator, fixedClock{at: time.Unix(1000, 0)}, requestLimiter, principalLimiter, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -382,7 +382,7 @@ func TestServerFailsClosedWhenRateLimiterIsUnavailable(t *testing.T) {
 	authenticator, _ := NewStaticTokenAuthenticator([]StaticToken{{Token: testAPIToken, Principal: principal}})
 	coordinator, _ := controlplane.NewCoordinator(controlplane.NewMemoryRunJournal())
 	principalLimiter, _ := NewMemoryRateLimiter(10, time.Minute, 10)
-	server, err := NewServerWithRateLimiters(coordinator, authenticator, fixedClock{at: time.Unix(1000, 0)}, unavailableRateLimiter{}, principalLimiter)
+	server, err := newServer(coordinator, authenticator, fixedClock{at: time.Unix(1000, 0)}, unavailableRateLimiter{}, principalLimiter, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -393,7 +393,7 @@ func TestServerFailsClosedWhenRateLimiterIsUnavailable(t *testing.T) {
 		t.Fatalf("request limiter=%d %s", response.Code, response.Body.String())
 	}
 	requestLimiter, _ := NewMemoryRateLimiter(10, time.Minute, 10)
-	server, err = NewServerWithRateLimiters(coordinator, authenticator, fixedClock{at: time.Unix(1000, 0)}, requestLimiter, unavailableRateLimiter{})
+	server, err = newServer(coordinator, authenticator, fixedClock{at: time.Unix(1000, 0)}, requestLimiter, unavailableRateLimiter{}, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -429,10 +429,11 @@ func TestServerAdmitsLocalDeterministicIntentThroughExistingRunsEndpoint(t *test
 	coordinator, _ := controlplane.NewCoordinator(journal)
 	plan := apiPlan(t)
 	admitter := &localReviewAdmitterStub{coordinator: coordinator, plan: plan}
-	server, err := NewServerWithLocalDeterministicReview(coordinator, authenticator, fixedClock{at: time.UnixMilli(1000)}, admitter)
+	server, err := NewServer(coordinator, authenticator, fixedClock{at: time.UnixMilli(1000)})
 	if err != nil {
 		t.Fatal(err)
 	}
+	server.localReviewAdmitter = admitter
 	repository, _ := evidence.NewRepositoryIdentity("local.test", []string{"team"}, "repository")
 	base, _ := evidence.NewRevisionIdentity(evidence.RevisionKindGitCommit, evidence.RevisionAlgorithmSHA1, strings.Repeat("1", 40))
 	head, _ := evidence.NewRevisionIdentity(evidence.RevisionKindGitCommit, evidence.RevisionAlgorithmSHA1, strings.Repeat("2", 40))
@@ -478,10 +479,11 @@ func TestServerAdmitsAuthenticatedFullLocalIntentWithoutCrossScopeDispatch(t *te
 	coordinator, _ := controlplane.NewCoordinator(controlplane.NewMemoryRunJournal())
 	plan := apiPlan(t)
 	admitter := &localFullAdmitterStub{coordinator: coordinator, plan: plan}
-	server, err := NewServerWithLocalFullReview(coordinator, auth, fixedClock{at: time.UnixMilli(1000)}, admitter)
+	server, err := NewServer(coordinator, auth, fixedClock{at: time.UnixMilli(1000)})
 	if err != nil {
 		t.Fatal(err)
 	}
+	server.localFullAdmitter = admitter
 	repository, _ := evidence.NewRepositoryIdentity("local.test", []string{"team"}, "repository")
 	base, _ := evidence.NewRevisionIdentity(evidence.RevisionKindGitCommit, evidence.RevisionAlgorithmSHA1, strings.Repeat("1", 40))
 	head, _ := evidence.NewRevisionIdentity(evidence.RevisionKindGitCommit, evidence.RevisionAlgorithmSHA1, strings.Repeat("2", 40))

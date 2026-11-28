@@ -23,11 +23,12 @@ func runtimeStatusServer(t *testing.T, capabilities []Capability) *Server {
 	ready := make(chan struct{})
 	close(ready)
 	service, _ := runtimeadmin.NewService(configuration, []runtimeadmin.ReadinessProbe{{Name: "task_notifications", Ready: ready}})
-	journal := controlplane.NewMemoryRunJournal()
-	server, err := NewServerWithAdministration(journal, authenticator, fixedClock{at: time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)}, service)
+	coordinator, _ := controlplane.NewCoordinator(controlplane.NewMemoryRunJournal())
+	server, err := NewServer(coordinator, authenticator, fixedClock{at: time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)})
 	if err != nil {
 		t.Fatal(err)
 	}
+	server.runtimeStatus = service
 	return server
 }
 func TestServerReturnsScopedRuntimeStatus(t *testing.T) {

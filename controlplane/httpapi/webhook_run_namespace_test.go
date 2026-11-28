@@ -63,10 +63,11 @@ func TestServerRefusesCallerRunsInTheWebhookNamespace(t *testing.T) {
 	t.Run("local deterministic intent", func(t *testing.T) {
 		coordinator, _ := controlplane.NewCoordinator(controlplane.NewMemoryRunJournal())
 		admitter := &localReviewAdmitterStub{coordinator: coordinator, plan: plan}
-		server, err := NewServerWithLocalDeterministicReview(coordinator, authenticator, fixedClock{at: time.UnixMilli(1000)}, admitter)
+		server, err := NewServer(coordinator, authenticator, fixedClock{at: time.UnixMilli(1000)})
 		if err != nil {
 			t.Fatal(err)
 		}
+		server.localReviewAdmitter = admitter
 		intent, err := runtimecatalog.NewLocalDeterministicReviewIntent(plan.Scope(), repository, base, head, time.UnixMilli(1000))
 		if err != nil {
 			t.Fatal(err)
@@ -80,10 +81,11 @@ func TestServerRefusesCallerRunsInTheWebhookNamespace(t *testing.T) {
 	t.Run("local full intent", func(t *testing.T) {
 		coordinator, _ := controlplane.NewCoordinator(controlplane.NewMemoryRunJournal())
 		admitter := &localFullAdmitterStub{coordinator: coordinator, plan: plan}
-		server, err := NewServerWithLocalFullReview(coordinator, authenticator, fixedClock{at: time.UnixMilli(1000)}, admitter)
+		server, err := NewServer(coordinator, authenticator, fixedClock{at: time.UnixMilli(1000)})
 		if err != nil {
 			t.Fatal(err)
 		}
+		server.localFullAdmitter = admitter
 		intent, err := runtimecatalog.NewLocalFullReviewIntent(plan.Scope(), repository, base, head, strings.Repeat("a", 64), strings.Repeat("b", 64), strings.Repeat("c", 64), time.UnixMilli(1000))
 		if err != nil {
 			t.Fatal(err)

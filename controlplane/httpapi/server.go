@@ -84,54 +84,9 @@ func NewServer(coordinator *controlplane.Coordinator, authenticator Authenticato
 	return newServer(coordinator, authenticator, clock, requestLimiter, principalLimiter, nil, nil, nil)
 }
 
-// NewServerWithLocalDeterministicReview adds bounded local intent admission to the existing runs endpoint.
-func NewServerWithLocalDeterministicReview(coordinator *controlplane.Coordinator, authenticator Authenticator, clock Clock, admitter LocalDeterministicReviewAdmitter) (*Server, error) {
-	if isNilLocalReviewAdmitter(admitter) {
-		return nil, ErrInvalidServer
-	}
-	server, err := NewServer(coordinator, authenticator, clock)
-	if err != nil {
-		return nil, err
-	}
-	server.localReviewAdmitter = admitter
-	return server, nil
-}
-
-// NewServerWithLocalFullReview admits canonical full local intents on the runs endpoint.
-func NewServerWithLocalFullReview(coordinator *controlplane.Coordinator, authenticator Authenticator, clock Clock, admitter LocalFullReviewAdmitter) (*Server, error) {
-	if isNilLocalFullAdmitter(admitter) {
-		return nil, ErrInvalidServer
-	}
-	server, err := NewServer(coordinator, authenticator, clock)
-	if err != nil {
-		return nil, err
-	}
-	server.localFullAdmitter = admitter
-	return server, nil
-}
-
 // RuntimeStatusReader returns one repository-scoped, content-free runtime snapshot.
 type RuntimeStatusReader interface {
 	Snapshot(string, string, time.Time) (runtimeadmin.Snapshot, error)
-}
-
-// NewServerWithAdministration constructs a server with repository-scoped runtime inspection.
-func NewServerWithAdministration(journal controlplane.RunJournal, authenticator Authenticator, clock Clock, status RuntimeStatusReader) (*Server, error) {
-	if journal == nil || isNilRuntimeStatusReader(status) {
-		return nil, ErrInvalidServer
-	}
-	coordinator, err := controlplane.NewCoordinator(journal)
-	if err != nil {
-		return nil, ErrInvalidServer
-	}
-	requestLimiter, _ := NewMemoryRateLimiter(apilimit.RequestLimit, apilimit.Window, apilimit.RequestMaximumKeys)
-	principalLimiter, _ := NewMemoryRateLimiter(apilimit.PrincipalLimit, apilimit.Window, apilimit.PrincipalMaximumKeys)
-	server, err := newServer(coordinator, authenticator, clock, requestLimiter, principalLimiter, nil, nil, nil)
-	if err != nil {
-		return nil, err
-	}
-	server.runtimeStatus = status
-	return server, nil
 }
 
 // NewServerWithRuntimeAdministrationAndRateLimiters adds runtime services with explicit shared request guards.
@@ -185,11 +140,6 @@ func NewServerWithDiagnostics(coordinator *controlplane.Coordinator, authenticat
 	requestLimiter, _ := NewMemoryRateLimiter(apilimit.RequestLimit, apilimit.Window, apilimit.RequestMaximumKeys)
 	principalLimiter, _ := NewMemoryRateLimiter(apilimit.PrincipalLimit, apilimit.Window, apilimit.PrincipalMaximumKeys)
 	return newServer(coordinator, authenticator, clock, requestLimiter, principalLimiter, reader, nil, nil)
-}
-
-// NewServerWithRateLimiters constructs a server with explicit pre-authentication and principal limits.
-func NewServerWithRateLimiters(coordinator *controlplane.Coordinator, authenticator Authenticator, clock Clock, requestLimiter, principalLimiter RateLimiter) (*Server, error) {
-	return newServer(coordinator, authenticator, clock, requestLimiter, principalLimiter, nil, nil, nil)
 }
 
 // NewServerWithRuntimeServices adds scoped diagnostics and durable task notifications.
