@@ -21,7 +21,8 @@ shows the findings in the Problems panel.
   Ctrl-C does. One review runs at a time.
 - **Open Trestle: Clear Findings** removes the findings from the Problems panel.
 - **Open Trestle: Set Up Repository** opens a terminal that runs `trestle init`.
-- **Open Trestle: Check Setup** opens a terminal that runs `trestle doctor`, which checks the install, the repository, the setup and the keys.
+- **Open Trestle: Check Setup** opens a terminal that runs `trestle doctor`,
+  which checks the install, the repository, the setup and the keys.
 
 A finished review replaces the earlier findings and shows a one-line summary.
 A finding's message ends with its unverified fix guidance, when there is one,
