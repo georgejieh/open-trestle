@@ -143,23 +143,6 @@ func TestEncodeStaticDebugEvaluationIsCanonical(t *testing.T) {
 	if len(encoded) == 0 || encoded[len(encoded)-1] == '\n' {
 		t.Fatalf("encoded framing=%q", encoded)
 	}
-	parsed, err := ParseStaticDebugReport(encoded)
-	if err != nil || parsed.Identity() != report.Identity() || parsed.Validate() != nil {
-		t.Fatalf("parsed=%#v err=%v", parsed, err)
-	}
-	invalid := [][]byte{
-		append(append([]byte(nil), encoded...), '\n'),
-		append([]byte{' '}, encoded...),
-		append(append([]byte(nil), encoded[:len(encoded)-1]...), []byte(`,"extra":true}`)...),
-		bytes.Replace(encoded, []byte(`"contract":"open-trestle/static-debug-evaluation-result"`), []byte(`"contract":"other"`), 1),
-		bytes.Replace(encoded, []byte(`"status":"passed"`), []byte(`"status":"failed"`), 1),
-		append([]byte(`{"identity":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",`), encoded[1:]...),
-	}
-	for index, value := range invalid {
-		if parsed, err := ParseStaticDebugReport(value); err == nil || parsed.Identity() != "" {
-			t.Fatalf("invalid[%d] parsed=%#v err=%v", index, parsed, err)
-		}
-	}
 }
 
 func TestStaticDebugEvaluationMatchesPublishedGolden(t *testing.T) {

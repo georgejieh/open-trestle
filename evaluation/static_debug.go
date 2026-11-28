@@ -1,12 +1,10 @@
 package evaluation
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"io"
 	"strings"
 
 	"github.com/georgejieh/open-trestle/internal/evidence"
@@ -404,45 +402,6 @@ func EncodeStaticDebugReport(report StaticDebugReport) ([]byte, error) {
 		return nil, ErrInvalidStaticDebugEvaluation
 	}
 	return encoded, nil
-}
-
-// ParseStaticDebugReport accepts one canonical report for the known built-in suite.
-func ParseStaticDebugReport(encoded []byte) (StaticDebugReport, error) {
-	if len(encoded) == 0 || len(encoded) > maximumReportBytes {
-		return StaticDebugReport{}, ErrInvalidStaticDebugEvaluation
-	}
-	decoder := json.NewDecoder(bytes.NewReader(encoded))
-	decoder.DisallowUnknownFields()
-	var wire staticDebugReportWire
-	if decoder.Decode(&wire) != nil || decoder.Decode(&struct{}{}) != io.EOF || wire.Contract != "open-trestle/static-debug-evaluation-result" || wire.SchemaVersion != 1 || wire.RuleKey != staticDebugRuleKey || wire.RuleVersion != staticDebugRuleVersion {
-		return StaticDebugReport{}, ErrInvalidStaticDebugEvaluation
-	}
-	canonical, _ := json.Marshal(wire)
-	if !bytes.Equal(encoded, canonical) {
-		return StaticDebugReport{}, ErrInvalidStaticDebugEvaluation
-	}
-	report := StaticDebugReport{
-		identity: wire.Identity, suiteIdentity: wire.SuiteIdentity, evaluatorIdentity: wire.EvaluatorIdentity,
-		caseCount: wire.CaseCount, passedCount: wire.PassedCount, failedCount: wire.FailedCount,
-		expectedMatchCount: wire.ExpectedMatchCount, observedMatchCount: wire.ObservedMatchCount,
-		truePositiveCount: wire.TruePositiveCount, falsePositiveCount: wire.FalsePositiveCount, falseNegativeCount: wire.FalseNegativeCount,
-		precisionNumerator: wire.PrecisionNumerator, precisionDenominator: wire.PrecisionDenominator,
-		recallNumerator: wire.RecallNumerator, recallDenominator: wire.RecallDenominator,
-		cases: make([]StaticDebugCaseResult, len(wire.Cases)),
-	}
-	for index, value := range wire.Cases {
-		status := staticDebugCaseStatus(0)
-		for candidate := staticDebugCasePassed; candidate <= staticDebugCaseFailed; candidate++ {
-			if candidate.String() == value.Status {
-				status = candidate
-			}
-		}
-		report.cases[index] = StaticDebugCaseResult{value.ID, status, value.ExpectedCount, value.ObservedCount, value.TruePositiveCount, value.FalsePositiveCount, value.FalseNegativeCount}
-	}
-	if report.Validate() != nil {
-		return StaticDebugReport{}, ErrInvalidStaticDebugEvaluation
-	}
-	return report, nil
 }
 
 func digestEvaluation(value []byte) string {
