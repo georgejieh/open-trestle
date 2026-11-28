@@ -158,8 +158,8 @@ func TestProfileTierThresholdBoundaries(t *testing.T) {
 			spec.PublicAPIChanges, spec.ReferenceFanOut = test.publicAPI, test.fanOut
 			entry := mustEntry(t, mustPlan(t, catalog, assignments, mustFeatures(t, spec)), ProfileBugHunter)
 			difficulty, scored := entry.Difficulty()
-			if !scored || difficulty.Score != test.score || entry.ScoredTier() != test.tier || entry.RouteTier() != test.tier {
-				t.Fatalf("score = %d tier = %s route tier = %s, want %d %s", difficulty.Score, entry.ScoredTier(), entry.RouteTier(), test.score, test.tier)
+			if !scored || difficulty.Score != test.score || entry.ScoredTier() != test.tier || entry.generator.tier != test.tier {
+				t.Fatalf("score = %d tier = %s route tier = %s, want %d %s", difficulty.Score, entry.ScoredTier(), entry.generator.tier, test.score, test.tier)
 			}
 			var sum uint64
 			for _, row := range difficulty.Contributions {
@@ -226,7 +226,7 @@ func TestProfileEscalationIsExplicitAndRecorded(t *testing.T) {
 	if entry.Status() != EntryOmitted || reason != OmissionTierUnassigned || !strings.Contains(detail, "light") {
 		t.Fatalf("unassigned tier: status %s reason %s detail %q", entry.Status(), reason, detail)
 	}
-	if _, ok := entry.GeneratorRoute(); ok {
+	if entry.hasGenerator {
 		t.Fatal("omitted entry carries a route")
 	}
 	if !containsOmission(noEscalation.Omissions(), ProfileBugHunter, OmissionTierUnassigned) {
@@ -236,9 +236,9 @@ func TestProfileEscalationIsExplicitAndRecorded(t *testing.T) {
 	spec.EscalationOrder = []Tier{TierLight, TierStandard, TierDeep}
 	escalated := mustPlan(t, catalog, mustAssignments(t, catalog, spec), features)
 	entry = mustEntry(t, escalated, ProfileBugHunter)
-	route, ok := entry.GeneratorRoute()
-	if entry.Status() != EntryPlanned || !ok || route != standard || entry.RouteTier() != TierStandard || entry.ScoredTier() != TierLight || entry.generator.escalatedFrom != TierLight {
-		t.Fatalf("escalation: status %s route tier %s scored %s", entry.Status(), entry.RouteTier(), entry.ScoredTier())
+	route, ok := entry.generator.route, entry.hasGenerator
+	if entry.Status() != EntryPlanned || !ok || route != standard || entry.generator.tier != TierStandard || entry.ScoredTier() != TierLight || entry.generator.escalatedFrom != TierLight {
+		t.Fatalf("escalation: status %s route tier %s scored %s", entry.Status(), entry.generator.tier, entry.ScoredTier())
 	}
 	bugHunter, _ := catalog.Profile(ProfileBugHunter)
 	lightSpec, _ := bugHunter.TierSpec(TierLight)
@@ -264,13 +264,13 @@ func TestProfileOverrideWinsOverGlobal(t *testing.T) {
 	})
 	plan := mustPlan(t, catalog, assignments, mustFeatures(t, goChangeWithTest(1)))
 	backend, bug := mustEntry(t, plan, ProfileBackend), mustEntry(t, plan, ProfileBugHunter)
-	if route, _ := backend.GeneratorRoute(); route != override || backend.generator.source != routeSourceProfileOverride {
+	if route := backend.generator.route; route != override || backend.generator.source != routeSourceProfileOverride {
 		t.Fatal("profile override not applied")
 	}
-	if route, _ := bug.GeneratorRoute(); route != global || bug.generator.source != routeSourceGlobal {
+	if route := bug.generator.route; route != global || bug.generator.source != routeSourceGlobal {
 		t.Fatal("global assignment not applied")
 	}
-	ranking, ok := backend.RankingPolicy()
+	ranking, ok := backend.ranking, backend.hasGenerator
 	pinned, hasPin := ranking.PinnedRoute()
 	if !ok || !hasPin || pinned != override || len(ranking.PreferredRoutes()) != 0 || ranking.Validate() != nil {
 		t.Fatal("ranking policy is not pinned to the selected route")
@@ -308,13 +308,13 @@ func TestProfileVerifierIndependence(t *testing.T) {
 			if entry.Status() != EntryPlanned || verification != test.want || detail == "" {
 				t.Fatalf("verification = %s (%q), want %s", verification, detail, test.want)
 			}
-			route, hasVerifier := entry.VerifierRoute()
+			route, hasVerifier := entry.verifier.route, entry.hasVerifier
 			budget := uint64(entry.TokenBudget().InputTokenBudget) + uint64(entry.TokenBudget().OutputTokenBudget)
 			if test.want == VerificationIndependent {
 				if !hasVerifier || route != *test.verifier || entry.PlannedTokens() != 2*budget {
 					t.Fatal("independent verifier not bound or not budgeted")
 				}
-				ranking, _ := entry.VerifierRankingPolicy()
+				ranking := entry.verifierRanking
 				if pinned, ok := ranking.PinnedRoute(); !ok || pinned != *test.verifier {
 					t.Fatal("verifier ranking not pinned")
 				}
@@ -432,7 +432,7 @@ func TestProfileBudgetCapDropsLowestPriorityFirst(t *testing.T) {
 					t.Fatalf("drop %d = %+v, want %s", index, omission, wantOrder[index])
 				}
 				entry := mustEntry(t, plan, omission.ProfileID)
-				if _, ok := entry.GeneratorRoute(); ok || entry.Status() != EntryOmitted || entry.PlannedTokens() != 0 {
+				if entry.hasGenerator || entry.Status() != EntryOmitted || entry.PlannedTokens() != 0 {
 					t.Fatalf("dropped %s still carries a route or tokens", omission.ProfileID)
 				}
 			}

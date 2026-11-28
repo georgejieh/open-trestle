@@ -222,12 +222,12 @@ func TestLocalModelReviewNamesProviderRefusals(t *testing.T) {
 		code                           int
 		failure, task, detail, hint    string
 	}{
-		{"payment required", "refuse_402", "", 4, "policy", "candidates", localreview.FailureDetailProviderPaymentRequired, "the provider refused the request for billing: add credit or a subscription to the provider account, or choose another route"},
-		{"model retired at verification", "", "refuse_410", 4, "policy", "verification", localreview.FailureDetailProviderModelRetired, "the provider no longer serves this model: choose a model the provider lists as available and re-run setup"},
-		{"model unavailable", "refuse_404", "", 4, "policy", "candidates", localreview.FailureDetailProviderModelUnavailable, "the provider does not serve this model at this endpoint"},
-		{"authentication", "refuse_401", "", 4, "policy", "candidates", localreview.FailureDetailProviderAuthenticationFailed, "the provider did not accept the credential"},
-		{"authorization", "refuse_403", "", 4, "policy", "candidates", localreview.FailureDetailProviderAuthorizationDenied, "the provider refused this account access"},
-		{"rate limited", "refuse_429", "", 1, "transient", "candidates", localreview.FailureDetailProviderRateLimited, "the provider rate-limited the request on its last attempt"},
+		{"payment required", "refuse_402", "", 4, "policy", "candidates", "provider_payment_required", "the provider refused the request for billing: add credit or a subscription to the provider account, or choose another route"},
+		{"model retired at verification", "", "refuse_410", 4, "policy", "verification", "provider_model_retired", "the provider no longer serves this model: choose a model the provider lists as available and re-run setup"},
+		{"model unavailable", "refuse_404", "", 4, "policy", "candidates", "provider_model_unavailable", "the provider does not serve this model at this endpoint"},
+		{"authentication", "refuse_401", "", 4, "policy", "candidates", "provider_authentication_failed", "the provider did not accept the credential"},
+		{"authorization", "refuse_403", "", 4, "policy", "candidates", "provider_authorization_denied", "the provider refused this account access"},
+		{"rate limited", "refuse_429", "", 1, "transient", "candidates", "provider_rate_limited", "the provider rate-limited the request on its last attempt"},
 		// A reply the adapter refuses, or a status it does not classify, is named
 		// as a refused reply.
 		{"reply with an unknown field", "reply_unknown_field", "", 1, "internal", "candidates", localreview.FailureDetailProviderResponseInvalid, "the provider answered, but its reply did not match what Open Trestle accepts, for example malformed or truncated output, an unrecognized field or an unexpected HTTP status: run the review again; if it repeats, choose another model or route and report it"},
@@ -235,8 +235,8 @@ func TestLocalModelReviewNamesProviderRefusals(t *testing.T) {
 		{"unclassified status", "refuse_409", "", 1, "internal", "candidates", localreview.FailureDetailProviderResponseInvalid, "the provider answered, but its reply did not match"},
 		// A request the provider rejects as invalid, such as an unknown model ID,
 		// is named as a rejected request, not a refused reply.
-		{"request rejected", "refuse_400", "", 4, "policy", "candidates", localreview.FailureDetailProviderRequestRejected, "the provider rejected the request as invalid, for example an unknown model ID or a parameter the model or endpoint does not accept: check the model ID, the endpoint and its transport, and that the model and endpoint accept structured output and the requested output allowance; then re-run setup"},
-		{"request unprocessable at verification", "", "refuse_422", 4, "policy", "verification", localreview.FailureDetailProviderRequestRejected, "the provider rejected the request as invalid"},
+		{"request rejected", "refuse_400", "", 4, "policy", "candidates", "provider_request_rejected", "the provider rejected the request as invalid, for example an unknown model ID or a parameter the model or endpoint does not accept: check the model ID, the endpoint and its transport, and that the model and endpoint accept structured output and the requested output allowance; then re-run setup"},
+		{"request unprocessable at verification", "", "refuse_422", 4, "policy", "verification", "provider_request_rejected", "the provider rejected the request as invalid"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			options := localModelFixtureOptions{chatCompletions: true, generationMode: test.generation, verificationMode: test.verification}

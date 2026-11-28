@@ -14,10 +14,11 @@ func TestFullLocalServerRefusesDirectWorkerAndFinalizerMutation(t *testing.T) {
 	coordinator, _ := controlplane.NewCoordinator(controlplane.NewMemoryRunJournal())
 	principal, _ := NewPrincipal("worker-1", "tenant-a", []string{"repo-a"}, []Capability{CapabilityTaskClaim, CapabilityRunWrite})
 	auth, _ := NewStaticTokenAuthenticator([]StaticToken{{Token: testAPIToken, Principal: principal}})
-	server, err := NewServerWithLocalFullReview(coordinator, auth, fixedClock{at: time.UnixMilli(1000)}, &localFullAdmitterStub{coordinator: coordinator, plan: apiPlan(t)})
+	server, err := NewServer(coordinator, auth, fixedClock{at: time.UnixMilli(1000)})
 	if err != nil {
 		t.Fatal(err)
 	}
+	server.localFullAdmitter = &localFullAdmitterStub{coordinator: coordinator, plan: apiPlan(t)}
 	scope := apiPlan(t).Scope()
 	claim := httptest.NewRecorder()
 	server.handleWorkerOperation(context.Background(), claim, httptest.NewRequest(http.MethodPost, "https://trestle.test/", nil), "test", principal, scope, "source", "claim", time.UnixMilli(1000))

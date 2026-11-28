@@ -407,21 +407,6 @@ func NewInvestigationToolOperation(b InvestigationToolEvidence, e InvestigationT
 	return o, nil
 }
 
-func toolOperationWire(o InvestigationToolOperation) map[string]any {
-	e := o.expected
-	return map[string]any{"contract": "open-trestle/investigation-tool-operation", "schema_version": 1, "identity": o.identity, "scope_identity": e.Scope.Identity(), "session_identity": e.SessionIdentity, "policy_identity": e.PolicyIdentity, "snapshot_artifact_identity": e.HeadArtifactIdentity, "snapshot_identity": e.HeadSnapshotIdentity, "manifest_identity": e.HeadManifestIdentity, "snapshot_ref": o.SnapshotRef(), "tool": o.Tool(), "file_ref": o.FileRef(), "start_line": o.StartLine(), "end_line": o.EndLine(), "file_refs": o.FileRefs(), "literal": o.Literal()}
-}
-func EncodeInvestigationToolOperation(o InvestigationToolOperation) ([]byte, error) {
-	if o.Validate() != nil {
-		return nil, errToolRecord
-	}
-	encoded, err := json.Marshal(toolOperationWire(o))
-	if err != nil || len(encoded) > toolRecordPayloadLimit {
-		return nil, errToolRecord
-	}
-	return encoded, nil
-}
-
 // InvestigationToolInvocation retains a private association captured by the host.
 // Its content identity does not prove execution, negative search or atomic admission.
 type InvestigationToolInvocation struct {
@@ -744,11 +729,9 @@ func (r InvestigationToolResult) Files() []source.SnapshotFileRef {
 func (r InvestigationToolResult) Sources() []review.ContextSource {
 	return append([]review.ContextSource(nil), r.sources...)
 }
-func (r InvestigationToolResult) ScannedBytes() uint64          { return r.scanned }
-func (r InvestigationToolResult) ReaderSerializedBytes() uint64 { return r.readerBytes }
-func (r InvestigationToolResult) Complete() bool                { return r.identity != "" }
-func (r InvestigationToolResult) OmittedFileCount() int         { return r.omitted }
-func (r InvestigationToolResult) String() string                { return "investigation tool result" }
+func (r InvestigationToolResult) ScannedBytes() uint64 { return r.scanned }
+func (r InvestigationToolResult) Complete() bool       { return r.identity != "" }
+func (r InvestigationToolResult) String() string       { return "investigation tool result" }
 func (r InvestigationToolResult) GoString() string {
 	return "model.InvestigationToolResult{<redacted>}"
 }
@@ -864,12 +847,6 @@ func (r InvestigationToolResult) Validate() error {
 	}
 	return nil
 }
-func EncodeInvestigationToolResult(r InvestigationToolResult) ([]byte, error) {
-	if r.Validate() != nil {
-		return nil, errToolRecord
-	}
-	return []byte(r.payload), nil
-}
 func toolResultProvenance(o InvestigationToolOperation, i InvestigationToolInvocation) ([]string, error) {
 	e := o.expected
 	ids := []string{e.HeadArtifactIdentity, o.Identity(), e.TurnIdentity, e.ResponseIdentity, e.ContextArtifactIdentity, e.TurnArtifactIdentity}
@@ -926,24 +903,6 @@ func parseToolResultArtifact(variant string, value artifact.Artifact, o Investig
 		return InvestigationToolResult{}, errToolRecord
 	}
 	return result, nil
-}
-func NewInvestigationListToolResultArtifact(o InvestigationToolOperation, b InvestigationToolEvidence, i InvestigationToolInvocation, e InvestigationToolExpectations, at time.Time) (artifact.Artifact, error) {
-	return newToolResultArtifact("snapshot.list", o, b, i, e, at)
-}
-func NewInvestigationReadToolResultArtifact(o InvestigationToolOperation, b InvestigationToolEvidence, i InvestigationToolInvocation, e InvestigationToolExpectations, at time.Time) (artifact.Artifact, error) {
-	return newToolResultArtifact("snapshot.read", o, b, i, e, at)
-}
-func NewInvestigationSearchToolResultArtifact(o InvestigationToolOperation, b InvestigationToolEvidence, i InvestigationToolInvocation, e InvestigationToolExpectations, at time.Time) (artifact.Artifact, error) {
-	return newToolResultArtifact("snapshot.search", o, b, i, e, at)
-}
-func ParseInvestigationListToolResultArtifact(value artifact.Artifact, o InvestigationToolOperation, b InvestigationToolEvidence, i InvestigationToolInvocation, e InvestigationToolExpectations, at time.Time) (InvestigationToolResult, error) {
-	return parseToolResultArtifact("snapshot.list", value, o, b, i, e, at)
-}
-func ParseInvestigationReadToolResultArtifact(value artifact.Artifact, o InvestigationToolOperation, b InvestigationToolEvidence, i InvestigationToolInvocation, e InvestigationToolExpectations, at time.Time) (InvestigationToolResult, error) {
-	return parseToolResultArtifact("snapshot.read", value, o, b, i, e, at)
-}
-func ParseInvestigationSearchToolResultArtifact(value artifact.Artifact, o InvestigationToolOperation, b InvestigationToolEvidence, i InvestigationToolInvocation, e InvestigationToolExpectations, at time.Time) (InvestigationToolResult, error) {
-	return parseToolResultArtifact("snapshot.search", value, o, b, i, e, at)
 }
 
 type toolHeadFileWire struct {

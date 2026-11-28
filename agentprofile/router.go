@@ -108,20 +108,6 @@ func (e PlanEntry) ScoredTier() Tier { return e.scoredTier }
 // Omission returns the omission reason and detail for an omitted entry.
 func (e PlanEntry) Omission() (OmissionReason, string) { return e.omission, e.omissionDetail }
 
-// GeneratorRoute returns the exact generator route for a planned entry.
-func (e PlanEntry) GeneratorRoute() (provider.RouteReference, bool) {
-	return e.generator.route, e.hasGenerator
-}
-
-// RouteTier returns the tier whose assignment supplied the generator route; it differs from
-// ScoredTier only when an explicit escalation order was applied.
-func (e PlanEntry) RouteTier() Tier { return e.generator.tier }
-
-// RankingPolicy returns the gateway ranking policy pinned to the generator route.
-func (e PlanEntry) RankingPolicy() (gateway.RouteRankingPolicy, bool) {
-	return e.ranking, e.hasGenerator
-}
-
 // Requirements returns the model requirements for the scored tier.
 func (e PlanEntry) Requirements() provider.ModelRequirements { return e.requirements }
 
@@ -138,16 +124,6 @@ func (e PlanEntry) CostBudget(maxCostMicroUSD uint64) (provider.ModelCostBudget,
 
 // Verification returns the verification status and its explanation.
 func (e PlanEntry) Verification() (Verification, string) { return e.verification, e.verificationDetail }
-
-// VerifierRoute returns the exact independent verifier route, when one is assigned.
-func (e PlanEntry) VerifierRoute() (provider.RouteReference, bool) {
-	return e.verifier.route, e.hasVerifier
-}
-
-// VerifierRankingPolicy returns the gateway ranking policy pinned to the verifier route.
-func (e PlanEntry) VerifierRankingPolicy() (gateway.RouteRankingPolicy, bool) {
-	return e.verifierRanking, e.hasVerifier
-}
 
 // PlannedTokens returns the tokens counted toward the total cap (generator plus verifier budgets).
 func (e PlanEntry) PlannedTokens() uint64 { return e.plannedTokens }

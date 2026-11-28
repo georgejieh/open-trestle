@@ -23,8 +23,8 @@ func TestRouteObserverNamesAnOpenRouterEndpointRefusal(t *testing.T) {
 	}{
 		{"brokered OpenRouter", "openrouter", provider.ProviderZoneBrokeredRemote, []gateway.RouteDispatchResult{observedRefusal(t, gateway.RouteFailureModelUnavailable, gateway.RouteReplayNoSideEffect)}, FailureDetailProviderNoAllowedEndpoint},
 		{"generic OpenRouter", "openrouter", provider.ProviderZonePrivateRemote, []gateway.RouteDispatchResult{observedRefusal(t, gateway.RouteFailureModelUnavailable, gateway.RouteReplayNoSideEffect)}, FailureDetailProviderNoAllowedEndpoint},
-		{"another provider", "ollama-cloud", provider.ProviderZonePrivateRemote, []gateway.RouteDispatchResult{observedRefusal(t, gateway.RouteFailureModelUnavailable, gateway.RouteReplayNoSideEffect)}, FailureDetailProviderModelUnavailable},
-		{"other OpenRouter refusal", "openrouter", provider.ProviderZoneBrokeredRemote, []gateway.RouteDispatchResult{observedRefusal(t, gateway.RouteFailurePaymentRequired, gateway.RouteReplayNoSideEffect)}, FailureDetailProviderPaymentRequired},
+		{"another provider", "ollama-cloud", provider.ProviderZonePrivateRemote, []gateway.RouteDispatchResult{observedRefusal(t, gateway.RouteFailureModelUnavailable, gateway.RouteReplayNoSideEffect)}, "provider_model_unavailable"},
+		{"other OpenRouter refusal", "openrouter", provider.ProviderZoneBrokeredRemote, []gateway.RouteDispatchResult{observedRefusal(t, gateway.RouteFailurePaymentRequired, gateway.RouteReplayNoSideEffect)}, "provider_payment_required"},
 		{"outlived", "openrouter", provider.ProviderZoneBrokeredRemote, []gateway.RouteDispatchResult{observedRefusal(t, gateway.RouteFailureModelUnavailable, gateway.RouteReplayNoSideEffect), observerSuccess(t, observerUsage(t, 1, 1, 0))}, ""},
 	} {
 		t.Run(test.name, func(t *testing.T) {
