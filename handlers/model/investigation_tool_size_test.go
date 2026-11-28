@@ -369,7 +369,7 @@ func TestInvestigationToolSizeExactProvenance32And33(t *testing.T) {
 				return
 			}
 			x.OperationIdentity, x.InvocationIdentity = op.Identity(), capture.invocation.Identity()
-			if value, err := NewInvestigationListToolResultArtifact(op, b, capture.invocation, x, f.clock.Now()); err == nil || value.Identity() != "" {
+			if value, err := newToolResultArtifact("snapshot.list", op, b, capture.invocation, x, f.clock.Now()); err == nil || value.Identity() != "" {
 				t.Fatal("33-member provenance became a persistable result")
 			}
 		})

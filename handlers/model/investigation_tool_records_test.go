@@ -580,11 +580,6 @@ func toolRecordOperationPreimage(e InvestigationToolExpectations, proposal revie
 	slices.Sort(refs)
 	return []any{"open-trestle/investigation-tool-operation", 1, e.Scope.Identity(), e.SessionIdentity, e.PolicyIdentity, e.HeadArtifactIdentity, e.HeadSnapshotIdentity, e.HeadManifestIdentity, proposal.SnapshotRef(), proposal.Tool(), proposal.FileRef(), proposal.StartLine(), proposal.EndLine(), refs, proposal.Literal()}
 }
-func toolRecordOperationWire(e InvestigationToolExpectations, proposal review.InvestigationProposal, identity string) map[string]any {
-	refs := append([]string{}, proposal.FileRefs()...)
-	slices.Sort(refs)
-	return map[string]any{"contract": "open-trestle/investigation-tool-operation", "schema_version": 1, "identity": identity, "scope_identity": e.Scope.Identity(), "session_identity": e.SessionIdentity, "policy_identity": e.PolicyIdentity, "snapshot_artifact_identity": e.HeadArtifactIdentity, "snapshot_identity": e.HeadSnapshotIdentity, "manifest_identity": e.HeadManifestIdentity, "snapshot_ref": proposal.SnapshotRef(), "tool": proposal.Tool(), "file_ref": proposal.FileRef(), "start_line": proposal.StartLine(), "end_line": proposal.EndLine(), "file_refs": refs, "literal": proposal.Literal()}
-}
 func toolRecordOperation(t *testing.T, bundle InvestigationToolEvidence, expected InvestigationToolExpectations, proposal review.InvestigationProposal, at time.Time) InvestigationToolOperation {
 	t.Helper()
 	op, err := NewInvestigationToolOperation(bundle, expected, at)
@@ -592,11 +587,6 @@ func toolRecordOperation(t *testing.T, bundle InvestigationToolEvidence, expecte
 	preimage := toolRecordOperationPreimage(expected, proposal)
 	if len(preimage) != 15 || op.Identity() != toolRecordHash(toolRecordJSON(t, preimage)) || op.Validate() != nil {
 		t.Fatal("operation lost exact fifteen-element identity")
-	}
-	encoded, err := EncodeInvestigationToolOperation(op)
-	toolRecordCheck(t, err)
-	if !bytes.Equal(encoded, toolRecordJSON(t, toolRecordOperationWire(expected, proposal, op.Identity()))) {
-		t.Fatal("operation wire is not exact canonical normalized arguments")
 	}
 	return op
 }
@@ -631,22 +621,22 @@ func toolRecordResultPayload(t *testing.T, op InvestigationToolOperation, bundle
 func toolRecordNewResult(op InvestigationToolOperation, bundle InvestigationToolEvidence, invocation InvestigationToolInvocation, expected InvestigationToolExpectations, at time.Time) (artifact.Artifact, error) {
 	switch op.Tool() {
 	case "snapshot.list":
-		return NewInvestigationListToolResultArtifact(op, bundle, invocation, expected, at)
+		return newToolResultArtifact("snapshot.list", op, bundle, invocation, expected, at)
 	case "snapshot.read":
-		return NewInvestigationReadToolResultArtifact(op, bundle, invocation, expected, at)
+		return newToolResultArtifact("snapshot.read", op, bundle, invocation, expected, at)
 	case "snapshot.search":
-		return NewInvestigationSearchToolResultArtifact(op, bundle, invocation, expected, at)
+		return newToolResultArtifact("snapshot.search", op, bundle, invocation, expected, at)
 	}
 	return artifact.Artifact{}, errors.New("unsupported fixture operation")
 }
 func toolRecordParseResult(value artifact.Artifact, op InvestigationToolOperation, bundle InvestigationToolEvidence, invocation InvestigationToolInvocation, expected InvestigationToolExpectations, at time.Time) (InvestigationToolResult, error) {
 	switch op.Tool() {
 	case "snapshot.list":
-		return ParseInvestigationListToolResultArtifact(value, op, bundle, invocation, expected, at)
+		return parseToolResultArtifact("snapshot.list", value, op, bundle, invocation, expected, at)
 	case "snapshot.read":
-		return ParseInvestigationReadToolResultArtifact(value, op, bundle, invocation, expected, at)
+		return parseToolResultArtifact("snapshot.read", value, op, bundle, invocation, expected, at)
 	case "snapshot.search":
-		return ParseInvestigationSearchToolResultArtifact(value, op, bundle, invocation, expected, at)
+		return parseToolResultArtifact("snapshot.search", value, op, bundle, invocation, expected, at)
 	}
 	return InvestigationToolResult{}, errors.New("unsupported fixture operation")
 }
@@ -682,15 +672,14 @@ func (f *toolRecordFixture) result(op InvestigationToolOperation, bundle Investi
 	expected.ResultArtifactIdentity = value.Identity()
 	parsed, err := toolRecordParseResult(value, op, bundle, captured.invocation, expected, f.clock.Now())
 	toolRecordCheck(t, err)
-	encoded, err := EncodeInvestigationToolResult(parsed)
-	toolRecordCheck(t, err)
-	if !bytes.Equal(encoded, value.Payload()) || parsed.Validate() != nil || parsed.OperationIdentity() != op.Identity() || parsed.InvocationIdentity() != captured.invocation.Identity() || parsed.ScannedBytes() != captured.scanned || parsed.ReaderSerializedBytes() != captured.serialized {
+	encoded := []byte(parsed.payload)
+	if !bytes.Equal(encoded, value.Payload()) || parsed.Validate() != nil || parsed.OperationIdentity() != op.Identity() || parsed.InvocationIdentity() != captured.invocation.Identity() || parsed.ScannedBytes() != captured.scanned || parsed.readerBytes != captured.serialized {
 		t.Fatal("result readback lost actual invocation or byte accounting")
 	}
 	if parsed.Tool() != op.Tool() || parsed.CallID() != proposal.CallID() || parsed.RequestIdentity() != expected.RequestIdentity || parsed.ProposalIdentity() != proposal.Identity() || parsed.ResponseIdentity() != expected.ResponseIdentity || parsed.TurnIdentity() != expected.TurnIdentity || parsed.OutcomeIdentity() != expected.OutcomeIdentity {
 		t.Fatal("result getters lost complete owned proposal lineage")
 	}
-	if len(parsed.Sources()) != len(captured.sources) || len(parsed.Files()) != len(captured.files) || parsed.OmittedFileCount() != captured.omitted || !parsed.Complete() {
+	if len(parsed.Sources()) != len(captured.sources) || len(parsed.Files()) != len(captured.files) || parsed.omitted != captured.omitted || !parsed.Complete() {
 		t.Fatal("result invented or dropped reader outputs")
 	}
 	for i, file := range parsed.Files() {
@@ -708,8 +697,7 @@ func (f *toolRecordFixture) result(op InvestigationToolOperation, bundle Investi
 	if len(copySources) > 0 {
 		copySources[0] = review.ContextSource{}
 	}
-	again, err := EncodeInvestigationToolResult(parsed)
-	toolRecordCheck(t, err)
+	again := []byte(parsed.payload)
 	if !bytes.Equal(again, value.Payload()) {
 		t.Fatal("result getters or encoding alias internal state")
 	}
@@ -735,7 +723,7 @@ func (f *toolRecordFixture) advance(value artifact.Artifact, result Investigatio
 	toolRecordCheck(t, err)
 	envelope, err := artifact.Encode(value)
 	toolRecordCheck(t, err)
-	if uint64(len(envelope)) <= result.ReaderSerializedBytes() || len(envelope) <= len(value.Payload()) {
+	if uint64(len(envelope)) <= result.readerBytes || len(envelope) <= len(value.Payload()) {
 		t.Fatal("fixture did not separate reader projection, payload and full artifact framing")
 	}
 	f.state.Turn++
@@ -868,12 +856,12 @@ func TestInvestigationToolNoMatchWitnessesRequireCapturedInvocationAssociation(t
 			t.Fatal("no-match result invented sources or free input scans")
 		}
 	}
-	if _, err := ParseInvestigationSearchToolResultArtifact(artifactA, opA, bundleA, captureB.invocation, pinnedA, f.clock.Now()); err == nil {
+	if _, err := parseToolResultArtifact("snapshot.search", artifactA, opA, bundleA, captureB.invocation, pinnedA, f.clock.Now()); err == nil {
 		t.Fatal("equal naked result projection relabeled a foreign invocation under fixed expected association")
 	}
 	createA := pinnedA
 	createA.ResultArtifactIdentity = ""
-	if _, err := NewInvestigationSearchToolResultArtifact(opA, bundleA, captureB.invocation, createA, f.clock.Now()); err == nil {
+	if _, err := newToolResultArtifact("snapshot.search", opA, bundleA, captureB.invocation, createA, f.clock.Now()); err == nil {
 		t.Fatal("constructor re-derived association from current arguments plus a foreign no-match result")
 	}
 }
@@ -956,7 +944,7 @@ func TestInvestigationToolResultRequiresEveryPinnedBindingAndProtectedWitness(t 
 		t.Run(name, func(t *testing.T) {
 			changed := pinned
 			change(&changed)
-			if parsed, err := ParseInvestigationReadToolResultArtifact(value, op, bundle, captured.invocation, changed, f.clock.Now()); err == nil || parsed.Identity() != "" {
+			if parsed, err := parseToolResultArtifact("snapshot.read", value, op, bundle, captured.invocation, changed, f.clock.Now()); err == nil || parsed.Identity() != "" {
 				t.Fatal("result ignored an independently pinned expected binding")
 			}
 		})
@@ -973,19 +961,19 @@ func TestInvestigationToolResultRequiresEveryPinnedBindingAndProtectedWitness(t 
 		t.Run(name, func(t *testing.T) {
 			changed := bundle
 			change(&changed)
-			if _, err := ParseInvestigationReadToolResultArtifact(value, op, changed, captured.invocation, pinned, f.clock.Now()); err == nil {
+			if _, err := parseToolResultArtifact("snapshot.read", value, op, changed, captured.invocation, pinned, f.clock.Now()); err == nil {
 				t.Fatal("result was rehydrated without its complete host-held witness")
 			}
 		})
 	}
-	if _, err := ParseInvestigationReadToolResultArtifact(value, op, bundle, InvestigationToolInvocation{}, pinned, f.clock.Now()); err == nil {
+	if _, err := parseToolResultArtifact("snapshot.read", value, op, bundle, InvestigationToolInvocation{}, pinned, f.clock.Now()); err == nil {
 		t.Fatal("zero invocation became a successful reader witness")
 	}
-	if _, err := ParseInvestigationListToolResultArtifact(value, op, bundle, captured.invocation, pinned, f.clock.Now()); err == nil {
+	if _, err := parseToolResultArtifact("snapshot.list", value, op, bundle, captured.invocation, pinned, f.clock.Now()); err == nil {
 		t.Fatal("read invocation accepted through the list variant")
 	}
 	for _, at := range []time.Time{time.UnixMilli(99), time.UnixMilli(6000)} {
-		if _, err := ParseInvestigationReadToolResultArtifact(value, op, bundle, captured.invocation, pinned, at); err == nil {
+		if _, err := parseToolResultArtifact("snapshot.read", value, op, bundle, captured.invocation, pinned, at); err == nil {
 			t.Fatal("readback ignored protected lifetime or session deadline")
 		}
 	}
@@ -995,7 +983,7 @@ func TestInvestigationToolResultRequiresEveryPinnedBindingAndProtectedWitness(t 
 		if changed.Identity() == value.Identity() {
 			t.Fatal("rehash mutation did not change protected bytes")
 		}
-		if _, err := ParseInvestigationReadToolResultArtifact(changed, op, bundle, captured.invocation, pinned, f.clock.Now()); err == nil {
+		if _, err := parseToolResultArtifact("snapshot.read", changed, op, bundle, captured.invocation, pinned, f.clock.Now()); err == nil {
 			t.Fatal("rehashed caller artifact replaced the fixed trusted protected record")
 		}
 	}
@@ -1039,12 +1027,6 @@ func TestInvestigationToolCaptureRejectsZeroAndMismatchedAssociationMetadata(t *
 	}
 	if (InvestigationToolInvocation{}).Validate() == nil || (InvestigationToolOperation{}).Validate() == nil || (InvestigationToolResult{}).Validate() == nil {
 		t.Fatal("zero pure record validated")
-	}
-	if encoded, err := EncodeInvestigationToolOperation(InvestigationToolOperation{}); err == nil || len(encoded) != 0 {
-		t.Fatal("zero operation encoded")
-	}
-	if encoded, err := EncodeInvestigationToolResult(InvestigationToolResult{}); err == nil || len(encoded) != 0 {
-		t.Fatal("zero result encoded")
 	}
 	for _, value := range []any{op, captured.invocation, InvestigationToolResult{}} {
 		kind := reflect.TypeOf(value)
@@ -1100,7 +1082,7 @@ func TestInvestigationToolResultCountsWrapperNotOnlyReaderProjection(t *testing.
 	if captured.serialized != f.policy.MaxResultBytes() {
 		t.Fatal("fixture did not reach a reader-valid projection-sized cap")
 	}
-	if value, err := NewInvestigationListToolResultArtifact(op, bundle, captured.invocation, expected, f.clock.Now()); err == nil || value.Identity() != "" {
+	if value, err := newToolResultArtifact("snapshot.list", op, bundle, captured.invocation, expected, f.clock.Now()); err == nil || value.Identity() != "" {
 		t.Fatal("projection-sized limit ignored full result wrapper and annotation budget")
 	}
 	// This post-read refusal is not a pre-effect admission gate or a spending refund.
@@ -1192,7 +1174,7 @@ func TestInvestigationToolResultRejectsOtherActualProtectedBundle(t *testing.T) 
 			case "sources":
 				changed.SourceArtifacts = append([]artifact.Artifact(nil), foreign.SourceArtifacts...)
 			}
-			if _, err := ParseInvestigationReadToolResultArtifact(value, op, changed, captured.invocation, pinned, f.clock.Now()); err == nil {
+			if _, err := parseToolResultArtifact("snapshot.read", value, op, changed, captured.invocation, pinned, f.clock.Now()); err == nil {
 				t.Fatal("another actual source/model bundle replaced fixed protected evidence")
 			}
 		})
@@ -1264,11 +1246,11 @@ func TestInvestigationToolRecordConstructionUsesOnlyPriorStageExpectations(t *te
 	captured, err := f.capture(f.ctx, op, turn)
 	toolRecordCheck(t, err)
 	_, _, pinned := f.result(op, bundle, expected, proposal, captured)
-	if _, err := NewInvestigationListToolResultArtifact(op, bundle, captured.invocation, pinned, f.clock.Now()); err == nil {
+	if _, err := newToolResultArtifact("snapshot.list", op, bundle, captured.invocation, pinned, f.clock.Now()); err == nil {
 		t.Fatal("result construction accepted its own future artifact identity")
 	}
 	pinned.ResultArtifactIdentity, pinned.InvocationIdentity = "", ""
-	if _, err := NewInvestigationListToolResultArtifact(op, bundle, captured.invocation, pinned, f.clock.Now()); err == nil {
+	if _, err := newToolResultArtifact("snapshot.list", op, bundle, captured.invocation, pinned, f.clock.Now()); err == nil {
 		t.Fatal("result construction did not require actual host-pinned invocation")
 	}
 }
