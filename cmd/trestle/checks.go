@@ -476,9 +476,23 @@ func runModelWrittenChecks(ctx context.Context, objectsPath string, base, head e
 		fmt.Fprintf(stderr, "The tests the checker wrote could not run: %s.\n", terminalText(withoutHomeFolder(err.Error()), 500))
 	} else {
 		fmt.Fprintf(stderr, "Model-written checks: %d kept, %d discarded. They do not change the review's status.\n", len(kept), dropped)
+		for _, line := range discardedCheckLines(report.Results) {
+			fmt.Fprintln(stderr, line)
+		}
 	}
 	for _, leftover := range report.Leftovers {
 		fmt.Fprintf(stderr, "A check's scratch folder could not be removed: %s. A later review removes it, or delete it yourself.\n", terminalText(withoutHomeFolder(leftover), 500))
 	}
 	return localreview.NewModelWrittenChecks(kept, dropped)
+}
+
+// discardedCheckLines says why each check that ran was not kept.
+func discardedCheckLines(results []repochecks.AuthoredResult) []string {
+	var lines []string
+	for index, result := range results {
+		if result.Status == "" && result.Reason != "" {
+			lines = append(lines, fmt.Sprintf("Check %d was discarded: %s.", index+1, terminalText(withoutHomeFolder(result.Reason), 300)))
+		}
+	}
+	return lines
 }

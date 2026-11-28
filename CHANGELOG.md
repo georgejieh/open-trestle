@@ -23,6 +23,8 @@ All notable changes to released versions of Open Trestle will be documented in t
 
 - `trestle keys` on a terminal prints each variable name on its own row with its state beneath it,
   so a long name no longer pushes the state off a narrow terminal.
+- `trestle review --model-checks` says why each test it ran was discarded, for example
+  `Check 1 was discarded: it did not show a regression.`
 
 ### Fixed
 
